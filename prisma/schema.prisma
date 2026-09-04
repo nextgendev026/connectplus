@@ -1,0 +1,181 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  username      String    @unique
+  password      String
+  avatar        String?
+  bio           String?
+  role          String    @default("USER")
+  isVerified    Boolean   @default(false)
+  node          String?
+  followersCount Int      @default(0)
+  followingCount Int      @default(0)
+  posts         Post[]
+  comments      Comment[]
+  likes         Like[]
+  moderationLogs ModerationLog[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([username])
+  @@index([email])
+}
+
+model Post {
+  id            String    @id @default(cuid())
+  title         String
+  slug          String    @unique
+  content       String
+  excerpt       String?
+  coverImage    String?
+  authorId      String
+  author        User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  category      Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  categoryId    String?
+  tags          Tag[]
+  comments      Comment[]
+  likes         Like[]
+  moderationLogs ModerationLog[]
+  viewCount     Int       @default(0)
+  status        String    @default("DRAFT")
+  featured      Boolean   @default(false)
+  moderationStatus String @default("PENDING")
+  source        String?
+  sourceUrl     String?
+  moderatedAt  DateTime?
+  moderatedBy  String?
+  publishedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([slug])
+  @@index([authorId])
+  @@index([status])
+  @@index([categoryId])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  content   String
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  parentId  String?
+  parent    Comment? @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   Comment[] @relation("CommentReplies")
+  likes     Like[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([postId])
+  @@index([authorId])
+}
+
+model Tag {
+  id    String @id @default(cuid())
+  name  String @unique
+  slug  String @unique
+  posts Post[]
+
+  @@index([slug])
+}
+
+model Category {
+  id    String @id @default(cuid())
+  name  String @unique
+  slug  String @unique
+  icon  String?
+  posts Post[]
+
+  @@index([slug])
+}
+
+model Like {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  postId    String?
+  post      Post?    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  commentId String?
+  comment   Comment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, postId])
+  @@unique([userId, commentId])
+}
+
+model ModerationLog {
+  id        String   @id @default(cuid())
+  postId    String?
+  post      Post?    @relation(fields: [postId], references: [id], onDelete: SetNull)
+  moderatorId String
+  moderator User     @relation(fields: [moderatorId], references: [id], onDelete: Cascade)
+  action    String
+  reason    String?
+  aiScore   Float?
+  aiFlags   String?
+  createdAt DateTime @default(now())
+
+  @@index([postId])
+  @@index([moderatorId])
+}
+
+model PageView {
+  id        String   @id @default(cuid())
+  postId    String?
+  path      String
+  userAgent String?
+  ip        String?
+  country   String?
+  city      String?
+  referrer  String?
+  createdAt DateTime @default(now())
+
+  @@index([postId])
+  @@index([country])
+}
+
+model RssFeed {
+  id          String   @id @default(cuid())
+  name        String
+  url         String   @unique
+  siteUrl     String?
+  description String?
+  category    String?
+  icon        String?
+  isActive    Boolean  @default(true)
+  lastPolled  DateTime?
+  pollInterval Int     @default(3600)
+  articles    RssArticle[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model RssArticle {
+  id          String   @id @default(cuid())
+  feedId      String
+  feed        RssFeed  @relation(fields: [feedId], references: [id], onDelete: Cascade)
+  title       String
+  url         String   @unique
+  content     String?
+  summary     String?
+  author      String?
+  imageUrl    String?
+  publishedAt DateTime?
+  importedAt  DateTime @default(now())
+  postId      String?
+
+  @@index([feedId])
+  @@index([publishedAt])
+}
