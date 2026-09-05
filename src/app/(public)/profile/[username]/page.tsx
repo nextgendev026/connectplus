@@ -4,12 +4,33 @@ import {
   MapPin,
   Calendar,
   Eye,
-  FileText,
   Settings,
   ChevronRight,
 } from "lucide-react";
 import { prisma } from "@/lib/prisma";
-import { cn, formatDate, timeAgo, estimateReadTime } from "@/lib/utils";
+import { auth } from "@/lib/auth";
+import { formatDate } from "@/lib/utils";
+import { FollowButton } from "@/components/ui/FollowButton";
+import { ProfileTabs } from "@/components/profile/ProfileTabs";
+import type { ProfileTabPost } from "@/components/profile/ProfileTabs";
+
+function serializePosts(
+  posts: {
+    id: string;
+    slug: string;
+    title: string;
+    excerpt: string | null;
+    content: string;
+    viewCount: number;
+    createdAt: Date;
+  }[]
+): ProfileTabPost[] {
+  return posts.map((p) => ({
+    ...p,
+    createdAt: p.createdAt.toISOString(),
+    excerpt: p.excerpt,
+  }));
+}
 
 export default async function ProfilePage({
   params,
@@ -17,6 +38,8 @@ export default async function ProfilePage({
   params: Promise<{ username: string }>;
 }) {
   const { username } = await params;
+  const session = await auth();
+
   const user = await prisma.user.findUnique({
     where: { username },
     include: {
@@ -33,23 +56,81 @@ export default async function ProfilePage({
 
   const totalViews = viewsAgg._sum.viewCount ?? 0;
 
-  const posts = await prisma.post.findMany({
-    where: { authorId: user.id, status: "PUBLISHED" },
-    orderBy: { createdAt: "desc" },
-    include: {
-      category: { select: { id: true, name: true, slug: true } },
-      tags: { select: { id: true, name: true, slug: true } },
-      _count: { select: { comments: true, likes: true } },
-    },
-  });
+  const [posts, viewerFollow, bookmarkedPosts] = await Promise.all([
+    prisma.post.findMany({
+      where: { authorId: user.id, status: "PUBLISHED" },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        slug: true,
+        title: true,
+        excerpt: true,
+        content: true,
+        viewCount: true,
+        createdAt: true,
+      },
+    }),
+    session?.user?.id && session.user.id !== user.id
+      ? prisma.follow
+          .findUnique({
+            where: {
+              followerId_followingId: {
+                followerId: session.user.id,
+                followingId: user.id,
+              },
+            },
+            select: { id: true },
+          })
+          .then(Boolean)
+      : Promise.resolve(false),
+    session?.user?.id === user.id
+      ? prisma.bookmark.findMany({
+          where: { userId: user.id },
+          orderBy: { createdAt: "desc" },
+          include: {
+            post: {
+              select: {
+                id: true,
+                slug: true,
+                title: true,
+                excerpt: true,
+                content: true,
+                viewCount: true,
+                createdAt: true,
+                author: { select: { name: true, username: true } },
+              },
+            },
+          },
+        })
+      : Promise.resolve([]),
+  ]);
 
-  const tabs = ["Posts", "About", "Statistics"] as const;
+  const savedPosts: ProfileTabPost[] = bookmarkedPosts.map((b) => ({
+    id: b.post.id,
+    slug: b.post.slug,
+    title: b.post.title,
+    excerpt: b.post.excerpt,
+    content: b.post.content,
+    viewCount: b.post.viewCount,
+    createdAt: b.post.createdAt.toISOString(),
+    authorName: b.post.author.name ?? `@${b.post.author.username}`,
+  }));
 
   return (
     <div className="min-h-screen bg-surface-950">
       {/* Cover */}
-      <div className="h-48 bg-gradient-to-r from-brand-900/40 via-surface-900 to-accent-violet/20 sm:h-64">
-        <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
+      <div className="relative h-48 overflow-hidden sm:h-64">
+        {user.coverImage ? (
+          <img
+            src={user.coverImage}
+            alt=""
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <div className="h-full w-full bg-gradient-to-r from-brand-900/40 via-surface-900 to-accent-violet/20" />
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-surface-950 to-transparent" />
+        <div className="relative mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-full items-end pb-4">
             <Link
               href="/"
@@ -89,12 +170,20 @@ export default async function ProfilePage({
             <p className="text-surface-400">@{user.username}</p>
           </div>
           <div className="mt-4 flex gap-2 sm:mt-0 sm:pb-2">
-            <button className="rounded-lg bg-brand-500 px-6 py-2 text-sm font-medium text-white hover:bg-brand-600 transition-colors">
-              Follow
-            </button>
-            <button className="rounded-lg border border-surface-700 bg-surface-800 px-4 py-2 text-sm text-surface-300 hover:text-surface-50 transition-colors">
-              <Settings className="h-4 w-4" />
-            </button>
+            <FollowButton
+              targetId={user.id}
+              initialFollowing={viewerFollow}
+              followersCount={user.followersCount}
+            />
+            {session?.user?.id === user.id && (
+              <Link
+                href="/settings"
+                className="rounded-lg border border-surface-700 bg-surface-800 px-4 py-2 text-sm text-surface-300 hover:text-surface-50 transition-colors flex items-center justify-center gap-2"
+                aria-label="Settings"
+              >
+                <Settings className="h-4 w-4" />
+              </Link>
+            )}
           </div>
         </div>
 
@@ -144,55 +233,13 @@ export default async function ProfilePage({
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="mt-8 border-b border-surface-800">
-          <div className="flex gap-1">
-            {tabs.map((tab, i) => (
-              <button
-                key={tab}
-                className={cn(
-                  "px-4 py-3 text-sm font-medium transition-colors border-b-2 -mb-px",
-                  i === 0
-                    ? "border-brand-500 text-brand-400"
-                    : "border-transparent text-surface-500 hover:text-surface-50"
-                )}
-              >
-                {tab}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Posts Grid */}
-        <div className="py-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {posts.map((post) => (
-            <Link
-              key={post.slug}
-              href={`/article/${post.slug}`}
-              className="group rounded-2xl border border-surface-800 bg-surface-900/50 p-5 transition-all duration-300 hover:border-surface-700 hover:shadow-card-hover"
-            >
-              <h3 className="text-base font-bold text-surface-50 group-hover:text-brand-400 transition-colors">
-                {post.title}
-              </h3>
-              {post.excerpt && (
-                <p className="mt-2 text-sm text-surface-400 line-clamp-2">
-                  {post.excerpt}
-                </p>
-              )}
-              <div className="mt-4 flex items-center gap-3 text-xs text-surface-500">
-                <span>{timeAgo(post.createdAt)}</span>
-                <span className="flex items-center gap-1">
-                  <Eye className="h-3 w-3" />
-                  {post.viewCount.toLocaleString()}
-                </span>
-                <span className="flex items-center gap-1">
-                  <FileText className="h-3 w-3" />
-                  {estimateReadTime(post.content)}m
-                </span>
-              </div>
-            </Link>
-          ))}
-        </div>
+        <ProfileTabs
+          posts={serializePosts(posts)}
+          savedPosts={savedPosts}
+          ownProfile={session?.user?.id === user.id}
+          stats={{ totalViews, totalLikes: user._count.posts }}
+          about={user.bio}
+        />
       </div>
     </div>
   );

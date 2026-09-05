@@ -13,12 +13,13 @@ export async function GET(request: NextRequest) {
     const tag = searchParams.get("tag");
     const search = searchParams.get("search");
     const featured = searchParams.get("featured");
+    const mine = searchParams.get("mine") === "true";
 
     const skip = (page - 1) * limit;
 
-    const where: {
-      status: string;
-      moderationStatus: string;
+    const baseWhere: {
+      status?: string;
+      moderationStatus?: string;
       category?: { slug: string };
       tags?: { some: { slug: string } };
       OR?: { title?: { contains: string; mode: "insensitive" }; content?: { contains: string; mode: "insensitive" }; excerpt?: { contains: string; mode: "insensitive" } }[];
@@ -27,6 +28,19 @@ export async function GET(request: NextRequest) {
       status: "PUBLISHED",
       moderationStatus: "APPROVED",
     };
+
+    let authorId: string | null = null;
+    if (mine) {
+      const session = await auth();
+      if (!session?.user) {
+        return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+      }
+      authorId = session.user.id;
+    }
+
+    const where = authorId
+      ? { authorId, category: baseWhere.category, tags: baseWhere.tags, OR: baseWhere.OR, featured: baseWhere.featured }
+      : { ...baseWhere };
 
     if (category) {
       where.category = { slug: category };

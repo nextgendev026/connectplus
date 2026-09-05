@@ -6,11 +6,11 @@ import {
   Eye,
   MessageCircle,
   Clock,
-  Bookmark,
 } from "lucide-react";
 import { cn, estimateReadTime, truncate } from "@/lib/utils";
 import type { PostWithAuthor } from "@/types";
 import { TagBadge } from "./TagBadge";
+import { BookmarkButton } from "@/components/ui/BookmarkButton";
 
 interface PostCardProps {
   post: PostWithAuthor;
@@ -144,7 +144,7 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
             <div className="mt-4 flex items-center justify-between">
               <div className="flex flex-wrap gap-2">
                 {post.tags.slice(0, 3).map((tag) => (
-                  <TagBadge key={tag.id} tag={tag} size="sm" />
+                  <TagBadge key={tag.id} tag={tag} size="sm" showLink={false} />
                 ))}
               </div>
               <div className="flex items-center gap-4 text-xs text-surface-400">
@@ -261,22 +261,16 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
             {post.tags.length > 0 && (
               <div className="mt-4 flex flex-wrap gap-2">
                 {post.tags.slice(0, 4).map((tag) => (
-                  <TagBadge key={tag.id} tag={tag} size="sm" />
+                  <TagBadge key={tag.id} tag={tag} size="sm" showLink={false} />
                 ))}
               </div>
             )}
           </div>
 
-          <button
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-            }}
-            className="absolute right-6 top-6 rounded-full bg-surface-900/60 p-2.5 text-surface-300 backdrop-blur-sm transition-all hover:bg-brand-500/20 hover:text-brand-400"
-            aria-label="Bookmark post"
-          >
-            <Bookmark className="h-5 w-5" />
-          </button>
+          <BookmarkButton
+            postId={post.id}
+            className="absolute right-6 top-6 p-2.5"
+          />
         </article>
       </Link>
     );
@@ -315,16 +309,10 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
             </span>
           )}
 
-          <button
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-            }}
-            className="absolute right-4 top-4 rounded-full bg-surface-900/70 p-2 text-surface-300 opacity-0 backdrop-blur-sm transition-all duration-300 group-hover:opacity-100 hover:bg-brand-500/20 hover:text-brand-400"
-            aria-label="Bookmark post"
-          >
-            <Bookmark className="h-4 w-4" />
-          </button>
+          <BookmarkButton
+            postId={post.id}
+            className="absolute right-4 top-4 p-2 opacity-0 group-hover:opacity-100"
+          />
         </div>
 
         <div className="flex flex-1 flex-col p-5">
@@ -366,7 +354,7 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
           {post.tags.length > 0 && (
             <div className="mt-4 flex flex-wrap gap-1.5">
               {post.tags.slice(0, 3).map((tag) => (
-                <TagBadge key={tag.id} tag={tag} size="sm" />
+                <TagBadge key={tag.id} tag={tag} size="sm" showLink={false} />
               ))}
             </div>
           )}

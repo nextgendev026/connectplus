@@ -5,8 +5,8 @@ import Link from "next/link";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import SavannaMark from "@/components/ui/SavannaMark";
 import {
-  Zap,
   User,
   AtSign,
   Mail,
@@ -123,9 +123,7 @@ export default function SignUpPage() {
       <div className="relative w-full max-w-md py-10">
         {/* Logo */}
         <Link href="/" className="flex items-center justify-center gap-2 mb-8">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center">
-            <Zap className="w-5 h-5 text-white" />
-          </div>
+          <SavannaMark className="w-10 h-10" />
           <span className="text-xl font-display font-bold">
             connect<span className="text-brand-400">Plus</span>
           </span>

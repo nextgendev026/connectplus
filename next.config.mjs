@@ -15,7 +15,7 @@ const securityHeaders = [
       "img-src 'self' data: blob: https://*.supabase.co https://images.unsplash.com https://*.unsplash.com",
       "font-src 'self'",
       "connect-src 'self' https://*.supabase.co",
-      "frame-ancestors 'none",
+      "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
     ].join("; "),

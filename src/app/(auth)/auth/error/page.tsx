@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { Zap, AlertTriangle, ArrowLeft, LifeBuoy } from "lucide-react";
+import SavannaMark from "@/components/ui/SavannaMark";
+import { AlertTriangle, ArrowLeft, LifeBuoy } from "lucide-react";
 
 interface SearchParams {
   error?: string;
@@ -38,10 +39,8 @@ export default async function AuthErrorPage({ searchParams }: { searchParams: Pr
       <div className="relative w-full max-w-md">
         {/* Logo */}
         <Link href="/" className="flex items-center justify-center gap-2 mb-8">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center">
-            <Zap className="w-5 h-5 text-white" />
-          </div>
-          <span className="text-xl font-display font-bold">
+          <SavannaMark className="w-10 h-10" />
+          <span className="text-xl font-display font-bold text-surface-50">
             connect<span className="text-brand-400">Plus</span>
           </span>
         </Link>

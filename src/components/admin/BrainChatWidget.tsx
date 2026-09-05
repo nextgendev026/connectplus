@@ -32,6 +32,7 @@ const QUICK_QUERIES = [
   { label: "System health", query: "How is the platform health?" },
   { label: "Hive report", query: "Give me the hive mind report" },
   { label: "Recommend", query: "What should I read next?" },
+  { label: "Teach brains", query: "Run a sweep and teach the brains from new posts" },
   { label: "Trends", query: "What's trending right now?" },
 ];
 
@@ -286,7 +287,7 @@ export default function BrainChatWidget() {
               <div className="py-8 text-center">
                 <BrainCircuit className="mx-auto mb-2 h-8 w-8 text-surface-700" />
                 <p className="text-sm text-surface-400">Ask the combined brains anything.</p>
-                <p className="text-[11px] text-surface-600 mt-1">Neural Mind answers from platform data + external learning; Hive Brain feeds live signals and memory.</p>
+                <p className="text-[11px] text-surface-600 mt-1">Logical teaching loop ON — every question you ask teaches the brains your phrasing, so they understand you better each time.</p>
               </div>
             )}
             {messages.map((msg, i) => (

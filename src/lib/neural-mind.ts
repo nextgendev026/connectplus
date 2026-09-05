@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { classifyIntent, extractUrls, isUrl, type Intent } from "@/lib/neural-intent";
+import { classifyIntent, applyLearnedAliases, extractUrls, isUrl, type Intent } from "@/lib/neural-intent";
 import { extractKeywords, analyzeSentiment, extractEntities, summarizeText, stripHtml } from "@/lib/neural-text";
 import { hiveBrain } from "@/lib/hive-brain";
 
@@ -477,14 +477,59 @@ class NeuralMindEngine {
 
   // ── Unified Query Processor ──
 
+  // Consult the Hive Brain's learned intent-maps BEFORE static classification so
+  // the brains "grasp" phrasing the admin has used before.
+  async classifyIntentWithMemory(input: string) {
+    const learned = await this.getLearnedIntentMaps();
+    const learnedIntent = applyLearnedAliases(input, learned);
+    const classified = classifyIntent(input);
+
+    if (learnedIntent && (classified.intent === "unknown" || classified.confidence < 0.5)) {
+      return {
+        ...classified,
+        intent: learnedIntent,
+        confidence: Math.max(classified.confidence, 0.6),
+        fromMemory: true,
+      };
+    }
+    return { ...classified, fromMemory: false };
+  }
+
+  async getLearnedIntentMaps(): Promise<{ phrase: string; intent: Intent }[]> {
+    const maps = await prisma.neuralMemory.findMany({
+      where: { source: "ai", category: "intent-map" },
+      select: { content: true, metadata: true },
+      take: 32,
+    });
+    const out: { phrase: string; intent: Intent }[] = [];
+    for (const m of maps) {
+      const intent = m.content.replace(/^intent-map:/, "").trim() as Intent;
+      if (!intent) continue;
+      let meta: { phrases?: string[] } = {};
+      try {
+        meta = JSON.parse(m.metadata ?? "{}");
+      } catch {}
+      for (const p of meta.phrases ?? []) {
+        if (p && p.trim().length >= 3) out.push({ phrase: p.trim(), intent });
+      }
+    }
+    return out;
+  }
+
   async processQuery(input: string, history?: { role: string; content: string }[]): Promise<NeuralResponse> {
-    const { intent, confidence } = classifyIntent(input);
+    const { intent, confidence } = await this.classifyIntentWithMemory(input);
     const urls = extractUrls(input);
     const enginesUsed: ("internal" | "external" | "hive")[] = [];
     const sources: string[] = [];
     let data: any = {};
 
     switch (intent) {
+      case "run_sweep": {
+        enginesUsed.push("hive");
+        const [sweep, hive] = await Promise.all([hiveBrain.sweepInternal(), hiveBrain.status()]);
+        data = { sweep, hive };
+        break;
+      }
       case "system_health": {
         enginesUsed.push("internal", "hive");
         const [stats, anomalies, hive] = await Promise.all([this.getPlatformStats(), this.detectAnomalies(), hiveBrain.status()]);
@@ -827,6 +872,21 @@ class NeuralMindEngine {
         return lines.join("\n");
       }
 
+      case "run_sweep": {
+        const { sweep, hive } = data;
+        const activity = sweep.memoriesCreated > 30 ? "high activity" : sweep.memoriesCreated > 0 ? "normal" : "quiet";
+        return [
+          "**🧹 Learning Sweep Complete**",
+          "",
+          `• Posts scanned: ${sweep.postsScanned} · learned from ${sweep.postsLearned}`,
+          `• Comments scanned: ${sweep.commentsScanned} · learned from ${sweep.commentsLearned}`,
+          `• New memory entries: ${sweep.memoriesCreated}`,
+          `• Activity level: ${activity}`,
+          "",
+          `**Hive Brain is now at ${hive.total.toLocaleString()} knowledge entries.** The neural mind is freshly wired and ready — ask me anything again and I'll understand it better. 🐝`,
+        ].join("\n");
+      }
+
       default: {
         const { stats, hive } = data;
         return [
@@ -948,6 +1008,9 @@ class NeuralMindEngine {
 
   async learnFromInteraction(input: string, intent: Intent, answer: string): Promise<boolean> {
     if (intent === "unknown" || intent === "general_platform") return false;
+
+    await this.teachIntentPhrase(input, intent);
+
     const body = `${input} ${answer}`;
     const summary = summarizeText(stripHtml(body), 1).slice(0, 140);
     const keywords = extractKeywords(input, 4).map(k => k.keyword);
@@ -984,6 +1047,49 @@ class NeuralMindEngine {
       },
     });
     return true;
+  }
+
+  // The heart of the "feed logic" feature: every question the admin asks gets
+  // digested into an intent-map memory (shared with the Hive Brain). Next time
+  // the same — or a similar — phrasing shows up, BOTH brains recognise it via
+  // applyLearnedAliases even if it has no keywords the static classifier knows.
+  private async teachIntentPhrase(input: string, intent: Intent): Promise<void> {
+    const clean = input.toLowerCase().replace(/\s+/g, " ").trim();
+    if (clean.length < 3 || clean.length > 90) return;
+
+    // Skip trivially generic prompts that would add no signal.
+    if (/^(hi|hey|hello|sasa|jambo|hola|how are you|thanks|thank you|asante)[\s!.?]*$/i.test(clean)) return;
+
+    const map = await prisma.neuralMemory.findFirst({
+      where: { source: "ai", category: "intent-map", content: `intent-map:${intent}` },
+      select: { id: true, metadata: true },
+    });
+
+    let phrases: string[] = [];
+    if (map) {
+      try {
+        phrases = JSON.parse(map.metadata ?? "{}")?.phrases ?? [];
+      } catch {}
+    }
+    if (!phrases.includes(clean)) {
+      phrases = [clean, ...phrases].slice(0, 10);
+    }
+
+    const metadata = JSON.stringify({ phrases });
+    if (map) {
+      await prisma.neuralMemory.update({ where: { id: map.id }, data: { metadata, confidence: 0.8 } });
+    } else {
+      await prisma.neuralMemory.create({
+        data: {
+          source: "ai",
+          category: "intent-map",
+          content: `intent-map:${intent}`,
+          tags: `intent-map,${intent}`,
+          confidence: 0.8,
+          metadata,
+        },
+      });
+    }
   }
 }
 

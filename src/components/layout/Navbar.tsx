@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import { useState } from "react";
 import {
-  Search, Menu, X, PenLine, Shield, LogOut, User,
+  Search, Menu, X, PenLine, Shield, LogOut, User, Settings,
   Globe, Sun, Moon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -133,6 +133,13 @@ export default function Navbar() {
                       >
                         <User className="h-4 w-4" />
                         Profile
+                      </Link>
+                      <Link
+                        href="/settings"
+                        className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-surface-300 hover:bg-surface-800 hover:text-surface-50"
+                      >
+                        <Settings className="h-4 w-4" />
+                        Settings
                       </Link>
                       <button
                         onClick={() => signOut()}

@@ -1,11 +1,8 @@
 "use client";
 
-import { useState, useCallback } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import {
-  UserPlus,
-  UserCheck,
   FileText,
   Users,
   MapPin,
@@ -14,6 +11,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { FollowButton } from "@/components/ui/FollowButton";
 
 interface Author {
   id: string;
@@ -31,28 +29,17 @@ interface Author {
 interface AuthorCardProps {
   author: Author;
   currentUserId?: string;
+  initialFollowing?: boolean;
   className?: string;
 }
 
 export function AuthorCard({
   author,
   currentUserId,
+  initialFollowing = false,
   className,
 }: AuthorCardProps) {
-  const [isFollowing, setIsFollowing] = useState(false);
-  const [followerCount, setFollowerCount] = useState(author.followersCount);
-  const [isAnimating, setIsAnimating] = useState(false);
-
   const isOwnProfile = currentUserId === author.id;
-
-  const handleFollowToggle = useCallback(() => {
-    setIsAnimating(true);
-    setIsFollowing((prev) => {
-      setFollowerCount((count) => (prev ? count - 1 : count + 1));
-      return !prev;
-    });
-    setTimeout(() => setIsAnimating(false), 300);
-  }, []);
 
   return (
     <div
@@ -77,28 +64,11 @@ export function AuthorCard({
           </div>
 
           {!isOwnProfile && (
-            <button
-              onClick={handleFollowToggle}
-              className={cn(
-                "flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold transition-all duration-300",
-                isFollowing
-                  ? "border border-surface-600 bg-surface-800 text-surface-300 hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-400"
-                  : "bg-brand-600 text-white shadow-glow hover:bg-brand-500",
-                isAnimating && "scale-95"
-              )}
-            >
-              {isFollowing ? (
-                <>
-                  <UserCheck className="h-4 w-4" />
-                  Following
-                </>
-              ) : (
-                <>
-                  <UserPlus className="h-4 w-4" />
-                  Follow
-                </>
-              )}
-            </button>
+            <FollowButton
+              targetId={author.id}
+              initialFollowing={initialFollowing}
+              followersCount={author.followersCount}
+            />
           )}
         </div>
 
@@ -164,7 +134,7 @@ export function AuthorCard({
               <Users className="h-4 w-4 text-surface-500" />
               <div>
                 <span className="block text-sm font-bold text-white">
-                  {followerCount.toLocaleString()}
+                  {author.followersCount.toLocaleString()}
                 </span>
                 <span className="text-[11px] text-surface-500">Followers</span>
               </div>

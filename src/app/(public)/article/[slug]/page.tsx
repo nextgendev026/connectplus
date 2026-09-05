@@ -9,14 +9,17 @@ import {
   Send,
   Link2,
   Copy,
-  Bookmark,
   ChevronRight,
 } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { auth } from "@/lib/auth";
 import { timeAgo, formatDate, estimateReadTime } from "@/lib/utils";
+import { BookmarkButton } from "@/components/ui/BookmarkButton";
+import { FollowButton } from "@/components/ui/FollowButton";
 
 export default async function ArticlePage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
+  const session = await auth();
   const post = await prisma.post.findUnique({
     where: { slug },
     include: {
@@ -51,6 +54,30 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
       </div>
     );
   }
+
+  const [viewerIsFollowing, viewerSaved] = await Promise.all([
+    session?.user?.id
+      ? prisma.follow
+          .findUnique({
+            where: {
+              followerId_followingId: {
+                followerId: session.user.id,
+                followingId: post.authorId,
+              },
+            },
+            select: { id: true },
+          })
+          .then(Boolean)
+      : Promise.resolve(false),
+    session?.user?.id
+      ? prisma.bookmark
+          .findUnique({
+            where: { userId_postId: { userId: session.user.id, postId: post.id } },
+            select: { id: true },
+          })
+          .then(Boolean)
+      : Promise.resolve(false),
+  ]);
 
   // increment view count
   await prisma.post.update({
@@ -146,9 +173,11 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
                   <MessageCircle className="h-4 w-4" />
                   <span>{post._count.comments}</span>
                 </button>
-                <button className="flex items-center gap-2 rounded-full bg-surface-800 px-4 py-2 text-sm text-surface-300 hover:bg-surface-700 hover:text-surface-50 transition-colors">
-                  <Bookmark className="h-4 w-4" />
-                </button>
+                <BookmarkButton
+                  postId={post.id}
+                  fetchState
+                  variant="pill"
+                />
               </div>
               <div className="flex items-center gap-2">
                 <button className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-800 text-surface-400 hover:bg-surface-700 hover:text-surface-50 transition-colors">
@@ -237,9 +266,14 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
                   <span><strong className="text-surface-50">{post.author.followersCount.toLocaleString()}</strong> followers</span>
                   <span><strong className="text-surface-50">{post.author._count.posts}</strong> posts</span>
                 </div>
-                <button className="mt-4 w-full rounded-lg bg-brand-500 py-2 text-sm font-medium text-white hover:bg-brand-600 transition-colors">
-                  Follow
-                </button>
+                <div className="mt-4">
+                  <FollowButton
+                    targetId={post.authorId}
+                    initialFollowing={viewerIsFollowing}
+                    followersCount={post.author.followersCount}
+                    className="w-full"
+                  />
+                </div>
               </div>
 
               {/* Related Articles */}
@@ -275,10 +309,12 @@ function CommentForm({ postId }: { postId: string }) {
         "use server";
         const content = formData.get("content") as string;
         if (!content?.trim()) return;
+        const session = await auth();
+        if (!session?.user) return;
         await prisma.comment.create({
           data: {
             content: content.trim(),
-            authorId: "1",
+            authorId: session.user.id,
             postId,
           },
         });
