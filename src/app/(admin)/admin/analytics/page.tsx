@@ -149,7 +149,7 @@ export default function AnalyticsPage() {
       const res = await fetch("/api/admin/stats", { credentials: "include" });
       if (!res.ok) throw new Error(`Failed to fetch stats (${res.status})`);
       const data = await res.json();
-      setStats(data);
+      setStats(data.stats);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load analytics");
     } finally {
@@ -440,7 +440,9 @@ export default function AnalyticsPage() {
                       <Tooltip
                         content={({ active, payload }) => {
                           if (active && payload && payload.length) {
-                            const data = payload[0].payload as (typeof regionData)[0];
+                            const first = payload[0];
+                            if (!first) return null;
+                            const data = first.payload as (typeof regionData)[0];
                             return (
                               <div className="rounded-lg bg-surface-800 border border-surface-700 px-3 py-2 shadow-xl">
                                 <p className="text-xs font-medium text-surface-50">

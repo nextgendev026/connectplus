@@ -30,7 +30,7 @@ function getPlaceholderGradient(slug: string): string {
   for (let i = 0; i < slug.length; i++) {
     hash = slug.charCodeAt(i) + ((hash << 5) - hash);
   }
-  return GRADIENT_PLACEHOLDERS[Math.abs(hash) % GRADIENT_PLACEHOLDERS.length];
+  return GRADIENT_PLACEHOLDERS[Math.abs(hash) % GRADIENT_PLACEHOLDERS.length] ?? "";
 }
 
 export function PostCard({ post, variant = "default" }: PostCardProps) {

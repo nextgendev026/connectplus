@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -24,6 +24,7 @@ model User {
   comments      Comment[]
   likes         Like[]
   moderationLogs ModerationLog[]
+  conversations NeuralConversation[]
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -178,4 +179,50 @@ model RssArticle {
 
   @@index([feedId])
   @@index([publishedAt])
+}
+
+model NeuralMemory {
+  id           String    @id @default(cuid())
+  source       String
+  category     String
+  content      String
+  tags         String
+  confidence   Float     @default(0.5)
+  metadata     String?
+  sourceUrl    String?
+  sourceFeedId String?
+  accessCount  Int       @default(0)
+  lastAccessedAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([source])
+  @@index([category])
+  @@index([tags])
+}
+
+model NeuralConversation {
+  id        String           @id @default(cuid())
+  title     String
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  messages  NeuralMessage[]
+
+  @@index([userId])
+}
+
+model NeuralMessage {
+  id             String              @id @default(cuid())
+  conversationId String
+  conversation   NeuralConversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String
+  content        String
+  intent         String?
+  enginesUsed    String?
+  metadata       String?
+  createdAt      DateTime            @default(now())
+
+  @@index([conversationId])
 }

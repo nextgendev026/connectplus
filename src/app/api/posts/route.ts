@@ -1,16 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .trim();
-}
+import { slugify } from "@/lib/utils";
+import { hiveBrain } from "@/lib/hive-brain";
 
 export async function GET(request: NextRequest) {
   try {
@@ -24,7 +16,14 @@ export async function GET(request: NextRequest) {
 
     const skip = (page - 1) * limit;
 
-    const where: any = {
+    const where: {
+      status: string;
+      moderationStatus: string;
+      category?: { slug: string };
+      tags?: { some: { slug: string } };
+      OR?: { title?: { contains: string; mode: "insensitive" }; content?: { contains: string; mode: "insensitive" }; excerpt?: { contains: string; mode: "insensitive" } }[];
+      featured?: boolean;
+    } = {
       status: "PUBLISHED",
       moderationStatus: "APPROVED",
     };
@@ -56,34 +55,10 @@ export async function GET(request: NextRequest) {
         take: limit,
         orderBy: { createdAt: "desc" },
         include: {
-          author: {
-            select: {
-              id: true,
-              name: true,
-              username: true,
-              avatar: true,
-            },
-          },
-          category: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-            },
-          },
-          tags: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-            },
-          },
-          _count: {
-            select: {
-              comments: true,
-              likes: true,
-            },
-          },
+          author: { select: { id: true, name: true, username: true, avatar: true } },
+          category: { select: { id: true, name: true, slug: true } },
+          tags: { select: { id: true, name: true, slug: true } },
+          _count: { select: { comments: true, likes: true } },
         },
       }),
       prisma.post.count({ where }),
@@ -91,49 +66,32 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       posts,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
   } catch (error) {
     console.error("Error fetching posts:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await auth();
 
     if (!session?.user) {
-      return NextResponse.json(
-        { error: "Authentication required" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
 
-    const userId = (session.user as any).id;
+    const userId = session.user.id;
     const body = await request.json();
     const { title, content, excerpt, coverImage, categoryId, tags, status } = body;
 
     if (!title || typeof title !== "string" || title.trim().length === 0) {
-      return NextResponse.json(
-        { error: "Title is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Title is required" }, { status: 400 });
     }
 
     if (!content || typeof content !== "string" || content.trim().length === 0) {
-      return NextResponse.json(
-        { error: "Content is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Content is required" }, { status: 400 });
     }
 
     let slug = slugify(title);
@@ -151,10 +109,7 @@ export async function POST(request: NextRequest) {
             const tag = await prisma.tag.upsert({
               where: { slug: tagSlug },
               update: {},
-              create: {
-                name: tagName.trim(),
-                slug: tagSlug,
-              },
+              create: { name: tagName.trim().slice(0, 50), slug: tagSlug },
             });
             return { id: tag.id };
           })
@@ -163,57 +118,30 @@ export async function POST(request: NextRequest) {
 
     const post = await prisma.post.create({
       data: {
-        title: title.trim(),
+        title: title.trim().slice(0, 300),
         slug,
         content: content.trim(),
-        excerpt: excerpt?.trim() || null,
+        excerpt: excerpt?.trim().slice(0, 500) || null,
         coverImage: coverImage || null,
         authorId: userId,
         categoryId: categoryId || null,
         status: postStatus,
         publishedAt: postStatus === "PUBLISHED" ? new Date() : null,
-        tags: {
-          connect: tagConnections,
-        },
+        tags: { connect: tagConnections },
       },
       include: {
-        author: {
-          select: {
-            id: true,
-            name: true,
-            username: true,
-            avatar: true,
-          },
-        },
-        category: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-          },
-        },
-        tags: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-          },
-        },
-        _count: {
-          select: {
-            comments: true,
-            likes: true,
-          },
-        },
+        author: { select: { id: true, name: true, username: true, avatar: true } },
+        category: { select: { id: true, name: true, slug: true } },
+        tags: { select: { id: true, name: true, slug: true } },
+        _count: { select: { comments: true, likes: true } },
       },
     });
+
+    await hiveBrain.ingestPost(post).catch(() => {});
 
     return NextResponse.json({ post }, { status: 201 });
   } catch (error) {
     console.error("Error creating post:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

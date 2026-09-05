@@ -14,10 +14,11 @@ import { cn, formatDate, timeAgo, estimateReadTime } from "@/lib/utils";
 export default async function ProfilePage({
   params,
 }: {
-  params: { username: string };
+  params: Promise<{ username: string }>;
 }) {
+  const { username } = await params;
   const user = await prisma.user.findUnique({
-    where: { username: params.username },
+    where: { username },
     include: {
       _count: { select: { posts: true } },
     },

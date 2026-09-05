@@ -1,25 +1,24 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import {
   Users,
   FileText,
   Eye,
   Clock,
-  Send,
   Cpu,
   TrendingUp,
   Shield,
   Globe,
   Radio,
   BrainCircuit,
-  Sparkles,
   ArrowUpRight,
-  MessageSquare,
   AlertTriangle,
   Loader2,
   RefreshCw,
+  ExternalLink,
 } from "lucide-react";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 interface StatsData {
@@ -52,53 +51,6 @@ const trendingTopics = [
   { topic: "Rwanda Smart City", mentions: 534, trend: "+12%" },
 ];
 
-interface ChatMessage {
-  role: "user" | "ai";
-  content: string;
-}
-
-const initialMessages: ChatMessage[] = [
-  {
-    role: "ai",
-    content:
-      "Hive Mind Neural Engine online. Fetching live platform telemetry... Ready for analysis.",
-  },
-];
-
-function buildAiResponse(input: string, stats: StatsData | null): string {
-  const q = input.toLowerCase();
-  if (!stats) {
-    return "Unable to retrieve platform telemetry. Stats API is unreachable. Please check connectivity.";
-  }
-  if (q.includes("user") || q.includes("growth") || q.includes("signup")) {
-    return `User Intelligence Report: ${stats.totalUsers.toLocaleString()} total registered users. ${stats.usersThisWeek.toLocaleString()} new users joined this week. Regional leaders: ${Object.entries(stats.regionalBreakdown).sort((a, b) => b[1].users - a[1].users).slice(0, 3).map(([c, d]) => `${c} (${d.users})`).join(", ")}. Growth trajectory is ${stats.usersThisWeek > 100 ? "accelerating" : "steady"}.`;
-  }
-  if (q.includes("post") || q.includes("content") || q.includes("blog")) {
-    return `Content Analysis: ${stats.totalPosts.toLocaleString()} posts published to date. ${stats.postsThisWeek.toLocaleString()} posts this week. ${stats.totalComments.toLocaleString()} total comments across the platform. Engagement metrics indicate ${stats.totalViews > 1000000 ? "strong" : "growing"} readership at ${stats.totalViews.toLocaleString()} total views.`;
-  }
-  if (q.includes("moderat") || q.includes("flag") || q.includes("review")) {
-    return `Moderation Status: ${stats.pendingModeration} posts currently pending review. ${stats.pendingModeration > 20 ? "Queue is elevated — consider deploying additional reviewers." : "Queue is within normal parameters."} AI confidence on auto-moderation remains above 92%. Zero critical threats detected in the last 4 hours.`;
-  }
-  if (q.includes("region") || q.includes("city") || q.includes("node")) {
-    const regions = Object.entries(stats.regionalBreakdown)
-      .sort((a, b) => b[1].users - a[1].users);
-    const topRegion = regions[0];
-    return `Regional Network Analysis: ${regions.length} active nodes detected. Top node: ${topRegion[0]} with ${topRegion[1].users.toLocaleString()} users and ${topRegion[1].posts.toLocaleString()} posts. Total network footprint: ${stats.totalUsers.toLocaleString()} users across all regions. ${stats.totalViews.toLocaleString()} cumulative views.`;
-  }
-  if (q.includes("health") || q.includes("status") || q.includes("system")) {
-    return `System Health Diagnostics: All core services operational. ${stats.totalUsers.toLocaleString()} users connected. ${stats.totalViews.toLocaleString()} total views. Moderation pipeline processing ${stats.pendingModeration} items. Platform uptime: 99.7%. Latency: 14ms avg across nodes. No incidents logged in the past 72 hours.`;
-  }
-  if (q.includes("threat") || q.includes("security") || q.includes("attack")) {
-    return `Security Assessment: Threat level LOW. 2 suspicious IP ranges currently monitored. All admin accounts secured with 2FA. Bot detection system active across ${Object.keys(stats.regionalBreakdown).length} nodes. Zero data breaches in the last 30 days. Moderation queue has ${stats.pendingModeration} items flagged for review.`;
-  }
-  const responses = [
-    `Platform Overview: ${stats.totalUsers.toLocaleString()} users, ${stats.totalPosts.toLocaleString()} posts, ${stats.totalComments.toLocaleString()} comments, ${stats.totalViews.toLocaleString()} views. ${stats.pendingModeration} items in moderation queue. This week: +${stats.usersThisWeek} users, +${stats.postsThisWeek} posts.`,
-    `Neural analysis complete. Current platform snapshot — ${stats.totalUsers.toLocaleString()} active users generating content across ${Object.keys(stats.regionalBreakdown).length} regional nodes. Engagement rate at ${(stats.totalComments / Math.max(stats.totalPosts, 1)).toFixed(1)} comments per post. Content velocity: ${stats.postsThisWeek} posts this week.`,
-    `Cross-referencing metrics... Platform is processing ${stats.totalViews.toLocaleString()} total views with ${stats.totalUsers.toLocaleString()} registered users. Regional distribution shows ${Object.keys(stats.regionalBreakdown).length} active nodes. Pending moderation: ${stats.pendingModeration} items. All systems nominal.`,
-  ];
-  return responses[Math.floor(Math.random() * responses.length)];
-}
-
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
   if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
@@ -109,11 +61,7 @@ export default function AdminCommandCenter() {
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
-  const [input, setInput] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
   const [currentTime, setCurrentTime] = useState("");
-  const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const update = () => {
@@ -132,10 +80,6 @@ export default function AdminCommandCenter() {
   }, []);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  useEffect(() => {
     fetchStats();
   }, []);
 
@@ -146,7 +90,7 @@ export default function AdminCommandCenter() {
       const res = await fetch("/api/admin/stats", { credentials: "include" });
       if (!res.ok) throw new Error(`Failed to fetch stats (${res.status})`);
       const data = await res.json();
-      setStats(data);
+      setStats(data.stats);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load stats");
     } finally {
@@ -155,19 +99,8 @@ export default function AdminCommandCenter() {
   }
 
   const handleSend = () => {
-    if (!input.trim() || isTyping) return;
-    const userMsg: ChatMessage = { role: "user", content: input.trim() };
-    setMessages((prev) => [...prev, userMsg]);
-    setInput("");
-    setIsTyping(true);
-    setTimeout(() => {
-      const aiMsg: ChatMessage = {
-        role: "ai",
-        content: buildAiResponse(input.trim(), stats),
-      };
-      setMessages((prev) => [...prev, aiMsg]);
-      setIsTyping(false);
-    }, 1200);
+    // Redirect to Neural Mind
+    window.location.href = "/admin/neural";
   };
 
   const systemStats = stats
@@ -411,98 +344,29 @@ export default function AdminCommandCenter() {
               </div>
             </div>
 
-            {/* AI Chat Interface */}
-            <div className="rounded-xl bg-surface-900/50 border border-surface-800 overflow-hidden">
-              <div className="flex items-center justify-between border-b border-surface-800 px-6 py-4">
+            {/* Neural Mind Quick Access */}
+            <div className="rounded-xl bg-surface-900/50 border border-surface-800 p-6">
+              <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/10">
-                    <Sparkles className="h-5 w-5 text-brand-500" />
+                    <BrainCircuit className="h-5 w-5 text-brand-500" />
                   </div>
                   <div>
                     <h2 className="text-base font-semibold text-white">
-                      Hive Mind Neural Engine
+                      Neural Mind
                     </h2>
                     <p className="text-xs text-surface-500">
-                      AI-powered platform intelligence & diagnostics
+                      Full dual-intelligence system with streaming chat, external learning, and knowledge base
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-brand-500 animate-pulse" />
-                  <span className="text-xs text-surface-400">Online</span>
-                </div>
-              </div>
-
-              <div className="h-[320px] overflow-y-auto p-6 space-y-4">
-                {messages.map((msg, i) => (
-                  <div
-                    key={i}
-                    className={cn(
-                      "flex gap-3",
-                      msg.role === "user" ? "justify-end" : "justify-start"
-                    )}
-                  >
-                    {msg.role === "ai" && (
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-500/10">
-                        <BrainCircuit className="h-4 w-4 text-brand-500" />
-                      </div>
-                    )}
-                    <div
-                      className={cn(
-                        "max-w-[70%] rounded-xl px-4 py-3 text-sm leading-relaxed",
-                        msg.role === "user"
-                          ? "bg-brand-500/20 text-white border border-brand-500/30"
-                          : "bg-surface-800 text-surface-200 border border-surface-700"
-                      )}
-                    >
-                      {msg.content}
-                    </div>
-                    {msg.role === "user" && (
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-700">
-                        <MessageSquare className="h-4 w-4 text-surface-300" />
-                      </div>
-                    )}
-                  </div>
-                ))}
-                {isTyping && (
-                  <div className="flex gap-3">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-500/10">
-                      <BrainCircuit className="h-4 w-4 text-brand-500" />
-                    </div>
-                    <div className="rounded-xl bg-surface-800 border border-surface-700 px-4 py-3">
-                      <div className="flex gap-1">
-                        <span className="h-1.5 w-1.5 rounded-full bg-surface-400 animate-bounce [animation-delay:0ms]" />
-                        <span className="h-1.5 w-1.5 rounded-full bg-surface-400 animate-bounce [animation-delay:150ms]" />
-                        <span className="h-1.5 w-1.5 rounded-full bg-surface-400 animate-bounce [animation-delay:300ms]" />
-                      </div>
-                    </div>
-                  </div>
-                )}
-                <div ref={chatEndRef} />
-              </div>
-
-              <div className="border-t border-surface-800 p-4">
-                <div className="flex items-center gap-3">
-                  <input
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleSend()}
-                    placeholder="Query the neural engine..."
-                    className="flex-1 rounded-lg bg-surface-800 border border-surface-700 px-4 py-2.5 text-sm text-white placeholder-surface-500 outline-none transition-colors focus:border-brand-500/50 focus:ring-1 focus:ring-brand-500/20"
-                  />
-                  <button
-                    onClick={handleSend}
-                    disabled={!input.trim() || isTyping}
-                    className={cn(
-                      "flex h-10 w-10 items-center justify-center rounded-lg transition-all duration-200",
-                      input.trim() && !isTyping
-                        ? "bg-brand-500 text-white hover:bg-brand-600"
-                        : "bg-surface-800 text-surface-500 cursor-not-allowed"
-                    )}
-                  >
-                    <Send className="h-4 w-4" />
-                  </button>
-                </div>
+                <Link
+                  href="/admin/neural"
+                  className="flex items-center gap-2 rounded-lg bg-brand-500/10 border border-brand-500/20 px-4 py-2.5 text-sm font-medium text-brand-400 transition-all hover:bg-brand-500/20 hover:border-brand-500/30"
+                >
+                  Open Neural Mind
+                  <ExternalLink className="h-4 w-4" />
+                </Link>
               </div>
             </div>
           </>

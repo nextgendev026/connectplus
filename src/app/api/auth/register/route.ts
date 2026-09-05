@@ -22,7 +22,6 @@ const EAST_AFRICAN_CITIES = [
   "Blantyre",
   "Lusaka",
   "Harare",
-  "Kampala",
 ];
 
 export async function POST(request: NextRequest) {
@@ -39,7 +38,7 @@ export async function POST(request: NextRequest) {
 
     if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return NextResponse.json(
-        { error: "Invalid email format" },
+        { error: "Invalid input" },
         { status: 400 }
       );
     }
@@ -53,14 +52,14 @@ export async function POST(request: NextRequest) {
 
     if (typeof username !== "string" || !/^[a-zA-Z0-9_]+$/.test(username)) {
       return NextResponse.json(
-        { error: "Username must be alphanumeric (underscores allowed)" },
+        { error: "Invalid input" },
         { status: 400 }
       );
     }
 
     if (username.length < 3 || username.length > 30) {
       return NextResponse.json(
-        { error: "Username must be between 3 and 30 characters" },
+        { error: "Invalid input" },
         { status: 400 }
       );
     }
@@ -72,8 +71,8 @@ export async function POST(request: NextRequest) {
 
     const user = await prisma.user.create({
       data: {
-        name: name.trim(),
-        username: username.toLowerCase(),
+        name: name.trim().slice(0, 100),
+        username: username.toLowerCase().slice(0, 30),
         email: email.toLowerCase().trim(),
         password: hashedPassword,
         node: randomCity,
@@ -90,31 +89,13 @@ export async function POST(request: NextRequest) {
     });
 
     return NextResponse.json(
-      {
-        message: "User created successfully",
-        user,
-      },
+      { message: "Account created successfully", user },
       { status: 201 }
     );
-  } catch (error: any) {
-    if (error?.code === "P2002") {
-      const target = error?.meta?.target;
-      if (Array.isArray(target)) {
-        if (target.includes("email")) {
-          return NextResponse.json(
-            { error: "An account with this email already exists" },
-            { status: 409 }
-          );
-        }
-        if (target.includes("username")) {
-          return NextResponse.json(
-            { error: "This username is already taken" },
-            { status: 409 }
-          );
-        }
-      }
+  } catch (error: unknown) {
+    if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
       return NextResponse.json(
-        { error: "A user with these details already exists" },
+        { error: "An account with these details already exists" },
         { status: 409 }
       );
     }

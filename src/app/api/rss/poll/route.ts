@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 import Parser from "rss-parser";
 import { prisma } from "@/lib/prisma";
 
@@ -15,13 +16,21 @@ function stripHtml(html: string): string {
 
 export async function POST(request: NextRequest) {
   try {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    }
+    const role = (session.user as { role?: string }).role;
+    if (role !== "ADMIN" && role !== "SUPER_ADMIN") {
+      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+    }
+
     const body = await request.json().catch(() => ({}));
     const { feedId } = body as { feedId?: string };
 
-    const feedWhere: any = { isActive: true };
+    const feedWhere: { isActive: boolean; id?: string } = { isActive: true };
     if (feedId) {
       feedWhere.id = feedId;
-      feedWhere.isActive = true;
     }
 
     const feeds = await prisma.rssFeed.findMany({
@@ -84,8 +93,8 @@ export async function POST(request: NextRequest) {
               },
             });
             feedNewArticles++;
-          } catch (err: any) {
-            if (err?.code !== "P2002") {
+          } catch (err: unknown) {
+            if (err && typeof err === "object" && "code" in err && err.code !== "P2002") {
               console.error(`Error creating article for ${feed.name}:`, err);
             }
           }
@@ -98,15 +107,23 @@ export async function POST(request: NextRequest) {
 
         totalNewArticles += feedNewArticles;
         details.push({ feedName: feed.name, newArticles: feedNewArticles });
-      } catch (err: any) {
+      } catch (err: unknown) {
         totalErrors++;
         details.push({
           feedName: feed.name,
           newArticles: 0,
-          error: err?.message || "Unknown error",
+          error: err instanceof Error ? err.message : "Unknown error",
         });
         console.error(`Error polling feed ${feed.name}:`, err);
       }
+    }
+
+    if (totalNewArticles > 0) {
+      import("@/lib/neural-mind").then(({ neuralMind }) => {
+        neuralMind.learnFromRssArticles().catch((err: unknown) =>
+          console.error("Neural auto-learn failed:", err)
+        );
+      });
     }
 
     return NextResponse.json({
@@ -117,9 +134,6 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error("RSS poll error:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

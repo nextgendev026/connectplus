@@ -24,9 +24,10 @@ const errorMessages: Record<string, string> = {
   Default: "An unexpected error occurred. Please try again.",
 };
 
-export default function AuthErrorPage({ searchParams }: { searchParams: SearchParams }) {
-  const errorCode = searchParams?.error ?? "Default";
-  const message = errorMessages[errorCode] ?? errorMessages.Default;
+export default async function AuthErrorPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
+  const { error: errorCode } = await searchParams ?? {};
+  const code = errorCode ?? "Default";
+  const message = errorMessages[code] ?? errorMessages.Default;
 
   return (
     <div className="min-h-screen bg-surface-950 text-surface-50 flex items-center justify-center px-6 relative overflow-hidden">
@@ -58,9 +59,9 @@ export default function AuthErrorPage({ searchParams }: { searchParams: SearchPa
           <p className="text-sm text-surface-400 leading-relaxed mb-2">
             {message}
           </p>
-          {errorCode !== "Default" && (
+          {code !== "Default" && (
             <p className="text-[10px] text-surface-600 mb-6 font-mono">
-              Error code: {errorCode}
+              Error code: {code}
             </p>
           )}
 

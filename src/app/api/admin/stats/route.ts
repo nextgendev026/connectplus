@@ -1,25 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(_request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await auth();
 
     if (!session?.user) {
-      return NextResponse.json(
-        { error: "Authentication required" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
 
-    const userRole = (session.user as any).role;
+    const userRole = session.user.role;
     if (userRole !== "ADMIN" && userRole !== "SUPER_ADMIN") {
-      return NextResponse.json(
-        { error: "Admin access required" },
-        { status: 403 }
-      );
+      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
     }
 
     const oneWeekAgo = new Date();
@@ -51,7 +44,7 @@ export async function GET(_request: NextRequest) {
       take: 10,
     });
 
-    const regionalBreakdown = await Promise.all(
+    const regionalList = await Promise.all(
       regionalData
         .filter((r) => r.node !== null)
         .map(async (region) => {
@@ -62,13 +55,8 @@ export async function GET(_request: NextRequest) {
           const userIds = nodeUsers.map((u) => u.id);
 
           const [postCount, viewData] = await Promise.all([
-            prisma.post.count({
-              where: { authorId: { in: userIds } },
-            }),
-            prisma.post.aggregate({
-              where: { authorId: { in: userIds } },
-              _sum: { viewCount: true },
-            }),
+            prisma.post.count({ where: { authorId: { in: userIds } } }),
+            prisma.post.aggregate({ where: { authorId: { in: userIds } }, _sum: { viewCount: true } }),
           ]);
 
           return {
@@ -79,6 +67,11 @@ export async function GET(_request: NextRequest) {
           };
         })
     );
+
+    const regionalBreakdown: Record<string, { users: number; posts: number }> = {};
+    for (const region of regionalList) {
+      regionalBreakdown[region.city] = { users: region.users, posts: region.posts };
+    }
 
     const stats = {
       totalUsers,
@@ -95,9 +88,6 @@ export async function GET(_request: NextRequest) {
     return NextResponse.json({ stats });
   } catch (error) {
     console.error("Error fetching admin stats:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

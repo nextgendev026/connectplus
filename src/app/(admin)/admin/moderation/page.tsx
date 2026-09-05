@@ -293,7 +293,7 @@ export default function ModerationQueue() {
                 </div>
 
                 {filteredItems.map((item) => {
-                  const st = statusConfig[item.status] ?? statusConfig.pending;
+                  const st = statusConfig[item.status] ?? statusConfig.pending!;
                   return (
                     <div
                       key={item.id}
@@ -412,9 +412,9 @@ export default function ModerationQueue() {
                         <span
                           className={cn(
                             "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium border",
-                            (statusConfig[selectedDetail.status] ?? statusConfig.pending).bg,
-                            (statusConfig[selectedDetail.status] ?? statusConfig.pending).color,
-                            (statusConfig[selectedDetail.status] ?? statusConfig.pending).border
+                            (statusConfig[selectedDetail.status] ?? statusConfig.pending!).bg,
+                            (statusConfig[selectedDetail.status] ?? statusConfig.pending!).color,
+                            (statusConfig[selectedDetail.status] ?? statusConfig.pending!).border
                           )}
                         >
                           {selectedDetail.status}

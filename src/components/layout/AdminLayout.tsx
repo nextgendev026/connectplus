@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
+  BrainCircuit,
   ShieldCheck,
   BarChart3,
   Users,
@@ -13,9 +14,11 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Logo from "@/components/ui/Logo";
+import BrainChatWidget from "@/components/admin/BrainChatWidget";
 
 const ADMIN_LINKS = [
   { href: "/admin", label: "Command Center", icon: LayoutDashboard },
+  { href: "/admin/neural", label: "Neural Mind", icon: BrainCircuit },
   { href: "/admin/moderation", label: "Moderation", icon: ShieldCheck },
   { href: "/admin/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/admin/users", label: "Users & Nodes", icon: Users },
@@ -95,6 +98,7 @@ export default function AdminLayout({
           <main className="flex-1 overflow-y-auto p-6">{children}</main>
         </div>
       </div>
+      <BrainChatWidget />
     </SessionProvider>
   );
 }

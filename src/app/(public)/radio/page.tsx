@@ -666,14 +666,14 @@ export default function RadioPage() {
     if (!currentStationId) return;
     const idx = STATIONS.findIndex((s) => s.id === currentStationId);
     const next = STATIONS[(idx + 1) % STATIONS.length];
-    playStation(next.id);
+    if (next) playStation(next.id);
   }, [currentStationId, playStation]);
 
   const handlePrev = useCallback(() => {
     if (!currentStationId) return;
     const idx = STATIONS.findIndex((s) => s.id === currentStationId);
     const prev = STATIONS[(idx - 1 + STATIONS.length) % STATIONS.length];
-    playStation(prev.id);
+    if (prev) playStation(prev.id);
   }, [currentStationId, playStation]);
 
   const filteredStations = STATIONS.filter((station) => {

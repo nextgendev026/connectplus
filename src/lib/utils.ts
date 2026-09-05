@@ -49,6 +49,10 @@ export function generateExcerpt(content: string, maxLength = 160): string {
   return truncate(plain, maxLength);
 }
 
+export function stripHtml(html: string): string {
+  return html.replace(/<[^>]+>/g, "").trim();
+}
+
 const EAST_AFRICAN_CITIES = [
   "Nairobi",
   "Kampala",
@@ -63,7 +67,7 @@ const EAST_AFRICAN_CITIES = [
 ];
 
 export function getRandomNode(): string {
-  return EAST_AFRICAN_CITIES[Math.floor(Math.random() * EAST_AFRICAN_CITIES.length)];
+  return EAST_AFRICAN_CITIES[Math.floor(Math.random() * EAST_AFRICAN_CITIES.length)] ?? "Nairobi";
 }
 
 export const NODES = EAST_AFRICAN_CITIES;

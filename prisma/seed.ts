@@ -29,7 +29,7 @@ const USERS = [
   { name: "Brian Kiprop", username: "brian_k", email: "brian@connectplus.io", bio: "Sports journalist. Athletics, football, and everything in between.", role: "CREATOR", node: "Eldoret" },
   { name: "Zainab Mohamed", username: "zainab_m", email: "zainab@connectplus.io", bio: "Food blogger exploring the rich culinary traditions of the Swahili coast.", role: "CREATOR", node: "Mombasa" },
   { name: "Daniel Mugisha", username: "daniel_m", email: "daniel@connectplus.io", bio: "Music producer and writer. Documenting the bongo-flava and gengetone movements.", role: "CREATOR", node: "Kigali" },
-  { name: "Admin User", username: "admin", email: "admin@connectplus.io", bio: "Platform administrator.", role: "ADMIN", node: "Nairobi" },
+  { name: "Admin", username: "admin", email: "connect@plus.com", bio: "Platform administrator.", role: "ADMIN", node: "Nairobi" },
   { name: "Sarah Nyambura", username: "sarah_n", email: "sarah@connectplus.io", bio: "Travel enthusiast. Every hill and valley has a story to tell.", role: "USER", node: "Nakuru" },
   { name: "Ibrahim Osman", username: "ibrahim_o", email: "ibrahim@connectplus.io", bio: "Marine biologist turned writer. The Indian Ocean is my muse.", role: "CREATOR", node: "Mombasa" },
   { name: "Grace Akoth", username: "grace_a", email: "grace@connectplus.io", bio: "Lifestyle and wellness advocate. Yoga, nutrition, and mental health in East Africa.", role: "USER", node: "Kisumu" },
@@ -161,11 +161,12 @@ async function main() {
 
   // Create users
   console.log("👤 Creating users...");
-  const password = await hash("Password123!", 12);
+  const defaultPassword = await hash("Password123!", 12);
+  const adminPassword = await hash("Mtemi@254#", 12);
   const userIds: string[] = [];
   for (const user of USERS) {
     const created = await prisma.user.create({
-      data: { ...user, password },
+      data: { ...user, password: user.role === "ADMIN" ? adminPassword : defaultPassword },
     });
     userIds.push(created.id);
     console.log(`   ✓ ${user.name} (${user.username})`);
@@ -174,15 +175,15 @@ async function main() {
   // Create posts
   console.log("\n📝 Creating posts...");
   for (const post of POSTS) {
-    const tagConnections = post.tags.map((t) => ({ id: tagIds[t] }));
+    const tagConnections = post.tags.map((t) => ({ id: tagIds[t]! }));
     const created = await prisma.post.create({
       data: {
         title: post.title,
         slug: post.slug,
         content: post.content,
         excerpt: post.excerpt,
-        authorId: userIds[post.authorIndex],
-        categoryId: categories[post.categorySlug],
+        authorId: userIds[post.authorIndex]!,
+        categoryId: categories[post.categorySlug]!,
         tags: { connect: tagConnections },
         viewCount: post.viewCount,
         featured: post.featured,
@@ -212,9 +213,9 @@ async function main() {
   for (let i = 0; i < Math.min(posts.length, 5); i++) {
     const comment = await prisma.comment.create({
       data: {
-        content: commentTexts[i],
-        authorId: userIds[(i + 2) % userIds.length],
-        postId: posts[i].id,
+        content: commentTexts[i]!,
+        authorId: userIds[(i + 2) % userIds.length]!,
+        postId: posts[i]!.id,
       },
     });
 
@@ -222,9 +223,9 @@ async function main() {
     if (i < 3) {
       await prisma.comment.create({
         data: {
-          content: commentTexts[(i + 3) % commentTexts.length],
-          authorId: userIds[(i + 4) % userIds.length],
-          postId: posts[i].id,
+          content: commentTexts[(i + 3) % commentTexts.length]!,
+          authorId: userIds[(i + 4) % userIds.length]!,
+          postId: posts[i]!.id,
           parentId: comment.id,
         },
       });
@@ -241,7 +242,7 @@ async function main() {
     const viewsPerDay = Math.floor(Math.random() * 50) + 20;
     for (let v = 0; v < viewsPerDay; v++) {
       viewData.push({
-        postId: posts[Math.floor(Math.random() * posts.length)].id,
+        postId: posts[Math.floor(Math.random() * posts.length)]!.id,
         path: "/",
         city: cities[Math.floor(Math.random() * cities.length)],
         country: "Kenya",
@@ -259,7 +260,7 @@ async function main() {
       slug: "replace-matatus-opinion",
       content: "This is a controversial opinion piece that challenges the status quo...",
       excerpt: "A provocative take on Nairobi's transport future.",
-      authorId: userIds[7],
+      authorId: userIds[7]!,
       status: "DRAFT",
       moderationStatus: "PENDING",
     },
@@ -270,7 +271,7 @@ async function main() {
       slug: "crypto-east-africa",
       content: "The crypto conversation in East Africa is heating up, but are we ready?",
       excerpt: "Examining the cryptocurrency landscape in the region.",
-      authorId: userIds[8],
+      authorId: userIds[8]!,
       status: "PUBLISHED",
       moderationStatus: "FLAGGED",
     },
@@ -306,7 +307,7 @@ async function main() {
 
   console.log("\n✅ Seed completed successfully!");
   console.log(`   ${USERS.length} users, ${POSTS.length + 2} posts, ${CATEGORIES.length} categories, ${TAGS.length} tags, ${rssFeeds.length} RSS feeds`);
-  console.log("   Default password: Password123!");
+  console.log("   Default password set via seed (check .env or ask your admin)");
 }
 
 main()

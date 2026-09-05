@@ -27,16 +27,14 @@ export default function Navbar() {
   const [lang, setLang] = useState<"EN" | "SW">("EN");
   const { theme, toggleTheme } = useTheme();
 
-  const user = session?.user as any;
+  const user = session?.user;
 
   return (
     <nav className="sticky top-0 z-50 border-b border-surface-800/50 bg-surface-950/80 backdrop-blur-xl">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex h-16 items-center justify-between">
           <div className="flex items-center gap-8">
-            <Link href="/" className="flex items-center gap-2">
-              <Logo />
-            </Link>
+            <Logo />
 
             <div className="hidden md:flex items-center gap-1">
               {NAV_LINKS.map((link) => (

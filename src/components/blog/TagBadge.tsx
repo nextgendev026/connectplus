@@ -54,7 +54,7 @@ function getTagColor(slug: string): string {
   for (let i = 0; i < key.length; i++) {
     hash = key.charCodeAt(i) + ((hash << 5) - hash);
   }
-  return FALLBACK_COLORS[Math.abs(hash) % FALLBACK_COLORS.length];
+  return FALLBACK_COLORS[Math.abs(hash) % FALLBACK_COLORS.length] ?? "";
 }
 
 const SIZE_CLASSES = {

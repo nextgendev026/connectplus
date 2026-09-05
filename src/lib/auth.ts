@@ -1,11 +1,29 @@
-import { NextAuthOptions } from "next-auth";
-import CredentialsProvider from "next-auth/providers/credentials";
+import NextAuth from "next-auth";
+import type { DefaultSession } from "next-auth";
+import Credentials from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { prisma } from "./prisma";
 
-export const authOptions: NextAuthOptions = {
+declare module "next-auth" {
+  interface User {
+    role?: string;
+    username?: string;
+    avatar?: string | null;
+  }
+
+  interface Session {
+    user: {
+      id: string;
+      role: string;
+      username: string;
+      avatar: string | null;
+    } & DefaultSession["user"];
+  }
+}
+
+export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [
-    CredentialsProvider({
+    Credentials({
       name: "credentials",
       credentials: {
         email: { label: "Email", type: "email" },
@@ -13,24 +31,24 @@ export const authOptions: NextAuthOptions = {
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) {
-          throw new Error("Email and password required");
+          throw new Error("Invalid credentials");
         }
 
         const user = await prisma.user.findUnique({
-          where: { email: credentials.email.toLowerCase() },
+          where: { email: (credentials.email as string).toLowerCase() },
         });
 
         if (!user) {
-          throw new Error("No account found with this email");
+          throw new Error("Invalid credentials");
         }
 
         const isCorrectPassword = await compare(
-          credentials.password,
+          credentials.password as string,
           user.password
         );
 
         if (!isCorrectPassword) {
-          throw new Error("Incorrect password");
+          throw new Error("Invalid credentials");
         }
 
         return {
@@ -38,6 +56,9 @@ export const authOptions: NextAuthOptions = {
           email: user.email,
           name: user.name,
           image: user.avatar,
+          role: user.role,
+          username: user.username,
+          avatar: user.avatar,
         };
       },
     }),
@@ -49,21 +70,18 @@ export const authOptions: NextAuthOptions = {
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
+        token.role = user.role;
+        token.username = user.username;
+        token.avatar = user.avatar ?? null;
       }
       return token;
     },
     async session({ session, token }) {
       if (session.user) {
-        (session.user as any).id = token.id;
-        const dbUser = await prisma.user.findUnique({
-          where: { id: token.id as string },
-          select: { role: true, username: true, avatar: true },
-        });
-        if (dbUser) {
-          (session.user as any).role = dbUser.role;
-          (session.user as any).username = dbUser.username;
-          (session.user as any).avatar = dbUser.avatar;
-        }
+        session.user.id = (token.id as string) ?? token.sub ?? "";
+        session.user.role = (token.role as string) ?? "USER";
+        session.user.username = (token.username as string) ?? "";
+        session.user.avatar = (token.avatar as string | null) ?? null;
       }
       return session;
     },
@@ -72,5 +90,4 @@ export const authOptions: NextAuthOptions = {
     signIn: "/auth/signin",
     error: "/auth/error",
   },
-  secret: process.env.NEXTAUTH_SECRET,
-};
+});

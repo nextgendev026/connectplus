@@ -6,8 +6,8 @@ import {
   Heart,
   MessageCircle,
   Share2,
-  Twitter,
-  Facebook,
+  Send,
+  Link2,
   Copy,
   Bookmark,
   ChevronRight,
@@ -15,9 +15,10 @@ import {
 import { prisma } from "@/lib/prisma";
 import { timeAgo, formatDate, estimateReadTime } from "@/lib/utils";
 
-export default async function ArticlePage({ params }: { params: { slug: string } }) {
+export default async function ArticlePage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
   const post = await prisma.post.findUnique({
-    where: { slug: params.slug },
+    where: { slug },
     include: {
       author: {
         include: { _count: { select: { posts: true } } },
@@ -151,10 +152,10 @@ export default async function ArticlePage({ params }: { params: { slug: string }
               </div>
               <div className="flex items-center gap-2">
                 <button className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-800 text-surface-400 hover:bg-surface-700 hover:text-surface-50 transition-colors">
-                  <Twitter className="h-4 w-4" />
+                  <Send className="h-4 w-4" />
                 </button>
                 <button className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-800 text-surface-400 hover:bg-surface-700 hover:text-surface-50 transition-colors">
-                  <Facebook className="h-4 w-4" />
+                  <Link2 className="h-4 w-4" />
                 </button>
                 <button className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-800 text-surface-400 hover:bg-surface-700 hover:text-surface-50 transition-colors">
                   <Share2 className="h-4 w-4" />

@@ -1,29 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .trim();
-}
-
-function stripHtml(html: string): string {
-  return html.replace(/<[^>]+>/g, "").trim();
-}
+import { slugify, stripHtml } from "@/lib/utils";
+import { hiveBrain } from "@/lib/hive-brain";
 
 export async function POST(request: NextRequest) {
   try {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    }
+    const role = (session.user as { role?: string }).role;
+    if (role !== "ADMIN" && role !== "SUPER_ADMIN") {
+      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+    }
+
     const body = await request.json();
     const { articleId, categoryId } = body;
 
     if (!articleId || typeof articleId !== "string") {
-      return NextResponse.json(
-        { error: "articleId is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "articleId is required" }, { status: 400 });
     }
 
     const article = await prisma.rssArticle.findUnique({
@@ -32,45 +28,20 @@ export async function POST(request: NextRequest) {
     });
 
     if (!article) {
-      return NextResponse.json(
-        { error: "Article not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Article not found" }, { status: 404 });
     }
 
     if (article.postId) {
-      return NextResponse.json(
-        { error: "Article has already been imported" },
-        { status: 409 }
-      );
+      return NextResponse.json({ error: "Article has already been imported" }, { status: 409 });
     }
 
-    let adminUser = await prisma.user.findFirst({
-      where: { role: "ADMIN" },
+    const adminUser = await prisma.user.findFirst({
+      where: { role: { in: ["ADMIN", "SUPER_ADMIN"] } },
       select: { id: true },
     });
 
     if (!adminUser) {
-      adminUser = await prisma.user.findFirst({
-        where: { role: "SUPER_ADMIN" },
-        select: { id: true },
-      });
-    }
-
-    if (!adminUser) {
-      const bcrypt = await import("bcryptjs");
-      const hashedPassword = await bcrypt.hash("system-admin-" + Date.now(), 10);
-      adminUser = await prisma.user.create({
-        data: {
-          email: "system@connectplus.local",
-          username: "system",
-          name: "System",
-          password: hashedPassword,
-          role: "ADMIN",
-          isVerified: true,
-        },
-        select: { id: true },
-      });
+      return NextResponse.json({ error: "No admin user found to attribute imported posts" }, { status: 500 });
     }
 
     const postContent = article.content || article.summary || "";
@@ -106,12 +77,11 @@ export async function POST(request: NextRequest) {
       data: { postId: post.id },
     });
 
+    await hiveBrain.ingestPost(post).catch(() => {});
+
     return NextResponse.json({ post }, { status: 201 });
   } catch (error) {
     console.error("Error importing RSS article:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
