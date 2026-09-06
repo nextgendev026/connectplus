@@ -44,28 +44,30 @@
 }
 
 html:not(.dark) {
-  /* Light mode — FLIP the entire palette */
+  /* Light mode — FLIP the entire palette with carefully tuned contrast.
+     Muted/secondary text (surface-400/500) is darkened, borders (surface-700/800)
+     are deepened, and surfaces get a warm off-white so text pops against white. */
   --surface-50: 24 24 27;
   --surface-100: 39 39 42;
-  --surface-200: 63 63 70;
-  --surface-300: 82 82 91;
-  --surface-400: 113 113 122;
-  --surface-500: 161 161 170;
-  --surface-600: 203 203 213;
-  --surface-700: 228 228 231;
-  --surface-800: 240 240 245;
-  --surface-850: 244 244 245;
-  --surface-900: 250 250 252;
+  --surface-200: 58 58 66;
+  --surface-300: 75 75 85;
+  --surface-400: 96 96 108;
+  --surface-500: 122 122 134;
+  --surface-600: 168 168 178;
+  --surface-700: 214 214 220;
+  --surface-800: 230 230 236;
+  --surface-850: 238 238 243;
+  --surface-900: 248 248 251;
   --surface-950: 255 255 255;
   --foreground: 24 24 27;
-  --background: 255 255 255;
-  --scrollbar-thumb: 212 212 216;
+  --background: 250 250 252;
+  --scrollbar-thumb: 200 200 208;
   --scrollbar-hover: 161 161 170;
   --glass-bg: 255 255 255;
-  --glass-border: 228 228 231;
-  --card-bg: 250 250 252;
-  --card-border: 228 228 231;
-  --muted: 113 113 122;
+  --glass-border: 222 222 229;
+  --card-bg: 248 248 251;
+  --card-border: 224 224 231;
+  --muted: 112 112 122;
 }
 
 body {

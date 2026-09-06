@@ -64,26 +64,34 @@ function makeCanvas(size) {
   };
 }
 
-const CHARCOAL = [28, 25, 23];
-const SUN_TOP = [253, 230, 138];
-const GRAD_TOP = [251, 191, 36];
-const GRAD_BOT = [154, 52, 18];
+const CHARCOAL = [26, 23, 21];
+const SUN_TOP = [254, 231, 148];
+const SUN_CORE = [250, 204, 84];
+const GRAD_TOP = [251, 195, 48];
+const GRAD_BOT = [187, 64, 20];
 
 // Savanna sun + acacia silhouette, centered at (cx, cy) with scale radius R.
 function drawArt(g, cx, cy, R) {
-  g.circle(cx - R * 0.42, cy - R * 0.48, R * 0.44, SUN_TOP[0], SUN_TOP[1], SUN_TOP[2], 0.95);
-  const plusX = cx - R * 0.42 + R * 0.06, plusY = cy - R * 0.48 + R * 0.06;
-  const arm = R * 0.16, thick = Math.max(1, R * 0.07);
-  g.ellipse(plusX, plusY, arm, thick, 238, 201, 85, 0.9);
-  g.ellipse(plusX, plusY, thick, arm, 238, 201, 85, 0.9);
+  // Soft halo behind the sun for depth
+  g.circle(cx - R * 0.42, cy - R * 0.5, R * 0.52, SUN_TOP[0], SUN_TOP[1], SUN_TOP[2], 0.28);
+  // Main sun disc
+  g.circle(cx - R * 0.42, cy - R * 0.5, R * 0.42, SUN_TOP[0], SUN_TOP[1], SUN_TOP[2], 0.98);
+  // Sun core (slightly deeper gold at center)
+  g.circle(cx - R * 0.42, cy - R * 0.5, R * 0.26, SUN_CORE[0], SUN_CORE[1], SUN_CORE[2], 0.9);
+  // "+" cut on the sun (brand mark)
+  const plusX = cx - R * 0.42 + R * 0.08, plusY = cy - R * 0.5 + R * 0.08;
+  const arm = R * 0.18, thick = Math.max(1, R * 0.085);
+  g.ellipse(plusX, plusY, arm, thick, 244, 208, 96, 0.75);
+  g.ellipse(plusX, plusY, thick, arm, 244, 208, 96, 0.75);
 
-  const ccx = cx + R * 0.16, ccy = cy + R * 0.5;
-  const leafR = R * 0.30, leafRy = R * 0.14;
-  g.ellipse(ccx, ccy - R * 0.16, leafR, leafRy, CHARCOAL[0] * 0.92, CHARCOAL[1] * 0.92, CHARCOAL[2] * 0.92, 1);
-  g.ellipse(ccx - leafR * 0.58, ccy + R * 0.02, leafR * 0.82, leafRy * 0.92, CHARCOAL[0] * 0.96, CHARCOAL[1] * 0.96, CHARCOAL[2] * 0.96, 1);
-  g.ellipse(ccx + leafR * 0.58, ccy + R * 0.02, leafR * 0.82, leafRy * 0.92, CHARCOAL[0], CHARCOAL[1], CHARCOAL[2], 1);
-  g.ellipse(ccx, ccy + R * 0.18, leafR * 0.10, R * 0.30, CHARCOAL[0], CHARCOAL[1], CHARCOAL[2], 0.95);
-  g.ellipse(ccx, ccy + R * 0.52, leafR * 1.4, R * 0.05, 0, 0, 0, 0.28);
+  // Acacia canopy (softly rounded, charcoal-black)
+  const ccx = cx + R * 0.18, ccy = cy + R * 0.52;
+  const leafR = R * 0.30, leafRy = R * 0.15;
+  g.ellipse(ccx, ccy - R * 0.16, leafR, leafRy, CHARCOAL[0], CHARCOAL[1], CHARCOAL[2], 1);
+  g.ellipse(ccx - leafR * 0.62, ccy + R * 0.01, leafR * 0.82, leafRy * 0.95, CHARCOAL[0], CHARCOAL[1], CHARCOAL[2], 1);
+  g.ellipse(ccx + leafR * 0.62, ccy + R * 0.01, leafR * 0.82, leafRy * 0.95, CHARCOAL[0], CHARCOAL[1], CHARCOAL[2], 1);
+  g.ellipse(ccx, ccy + R * 0.18, leafR * 0.12, R * 0.32, CHARCOAL[0], CHARCOAL[1], CHARCOAL[2], 0.98);
+  g.ellipse(ccx, ccy + R * 0.52, leafR * 1.46, R * 0.055, 0, 0, 0, 0.3);
 }
 
 function drawRoundel(size, { maskable = false } = {}) {

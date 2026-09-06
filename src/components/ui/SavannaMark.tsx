@@ -17,26 +17,38 @@ export default function SavannaMark({ className }: { className?: string }) {
     >
       <defs>
         <linearGradient id={id} x1="0" y1="0" x2="100" y2="100">
-          <stop offset="0" stopColor="#fbbc24" />
-          <stop offset="100%" stopColor="#9a3412" />
+          <stop offset="0" stopColor="#fbc330" />
+          <stop offset="100%" stopColor="#bb4014" />
         </linearGradient>
+        <radialGradient id={`${id}-sun`} cx="30%" cy="25%" r="70%">
+          <stop offset="0%" stopColor="#fee78f" />
+          <stop offset="60%" stopColor="#f9cd54" />
+          <stop offset="100%" stopColor="#f4d060" />
+        </radialGradient>
       </defs>
-      <circle cx="50" cy="50" r="50" fill={`url(#${id})`} />
 
+      {/* Rounded-square plate for a modern app-icon feel */}
+      <rect x="1" y="1" width="98" height="98" rx="26" fill={`url(#${id})`} />
+      <rect x="1" y="1" width="98" height="98" rx="26" fill="none" stroke="#000000" strokeOpacity="0.12" strokeWidth="1" />
+
+      {/* Soft sun halo */}
+      <circle cx="30.7" cy="28" r="26" fill="#fee78f" opacity="0.25" />
       {/* Pale gold sunset sun (upper left) */}
-      <circle cx="30.7" cy="27.9" r="20.2" fill="#fde68a" opacity="0.95" />
+      <circle cx="30.7" cy="28" r="22" fill={`url(#${id}-sun)`} />
+      {/* Sun core deepens toward center */}
+      <circle cx="30.7" cy="28" r="13.5" fill="#f9cd54" opacity="0.65" />
       {/* "+" cut on the sun */}
-      <ellipse cx="33.5" cy="30.6" rx="7.4" ry="3.2" fill="#eec955" opacity="0.9" />
-      <ellipse cx="33.5" cy="30.6" rx="3.2" ry="7.4" fill="#eec955" opacity="0.9" />
+      <ellipse cx="34.6" cy="32.2" rx="9.4" ry="4.1" fill="#f0cf62" opacity="0.5" />
+      <ellipse cx="34.6" cy="32.2" rx="4.1" ry="9.4" fill="#f0cf62" opacity="0.5" />
 
       {/* Acacia canopy (charcoal, lower right) */}
-      <ellipse cx="57.4" cy="65.6" rx="13.8" ry="6.4" fill="#1a1716" opacity="0.92" />
-      <ellipse cx="49.4" cy="73.9" rx="11.3" ry="5.9" fill="#1b1818" opacity="0.96" />
-      <ellipse cx="65.4" cy="73.9" rx="11.3" ry="5.9" fill="#1c1917" />
+      <ellipse cx="57.4" cy="63.6" rx="15.2" ry="7.2" fill="#1a1715" opacity="0.98" />
+      <ellipse cx="48.2" cy="72.6" rx="12.4" ry="6.4" fill="#1a1715" />
+      <ellipse cx="66.2" cy="72.6" rx="12.4" ry="6.4" fill="#1a1715" />
       {/* Trunk */}
-      <ellipse cx="57.4" cy="81.3" rx="1.4" ry="13.8" fill="#1c1917" opacity="0.95" />
+      <ellipse cx="57.4" cy="80" rx="1.7" ry="14.5" fill="#1a1715" opacity="0.97" />
       {/* Ground shadow */}
-      <ellipse cx="57.4" cy="96.9" rx="19.3" ry="2.3" fill="#000000" opacity="0.28" />
+      <ellipse cx="57.4" cy="96" rx="21.5" ry="2.6" fill="#000000" opacity="0.3" />
     </svg>
   );
 }

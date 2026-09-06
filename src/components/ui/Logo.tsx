@@ -30,14 +30,14 @@ export default function Logo({
         <SavannaMark className="h-full w-full" />
       </div>
       <div className="flex items-baseline">
-        <span className={cn("font-bold text-surface-950 dark:text-white tracking-tight", s.text)}>
+        <span className={cn("font-extrabold text-surface-50 tracking-tight leading-none", s.text)}>
           connect
         </span>
-        <span className={cn("font-bold text-brand-500 tracking-tight", s.text)}>
+        <span className={cn("font-extrabold tracking-tight leading-none text-gradient-brand", s.text)}>
           Plus
         </span>
         {showBadge && (
-          <span className="ml-1.5 rounded-md bg-brand-500/10 px-1.5 py-0.5 text-[9px] font-bold text-brand-500 dark:text-brand-400 border border-brand-500/20">
+          <span className="ml-1.5 rounded-md bg-brand-500/10 px-1.5 py-0.5 text-[9px] font-bold text-brand-600 dark:text-brand-400 border border-brand-500/20">
             BETA
           </span>
         )}

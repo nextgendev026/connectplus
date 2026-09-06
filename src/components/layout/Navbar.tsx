@@ -56,27 +56,42 @@ export default function Navbar() {
 
           <div className="flex items-center gap-2">
             {searchOpen ? (
-              <div className="flex items-center gap-2 animate-scale-in">
+              <form
+                action="/search"
+                method="GET"
+                className="flex items-center gap-2 animate-scale-in"
+              >
                 <input
                   type="text"
+                  name="q"
                   placeholder="Search stories..."
                   className="w-48 rounded-lg border border-surface-700 bg-surface-800 px-3 py-1.5 text-sm text-surface-50 placeholder-surface-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                   autoFocus
                 />
                 <button
+                  type="submit"
+                  className="rounded-lg p-1.5 text-surface-400 hover:text-surface-50 hover:bg-surface-800"
+                  aria-label="Submit search"
+                >
+                  <Search className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
                   onClick={() => setSearchOpen(false)}
                   className="rounded-lg p-1.5 text-surface-400 hover:text-surface-50 hover:bg-surface-800"
+                  aria-label="Close search"
                 >
                   <X className="h-4 w-4" />
                 </button>
-              </div>
+              </form>
             ) : (
-              <button
-                onClick={() => setSearchOpen(true)}
+              <Link
+                href="/search"
                 className="rounded-lg p-2 text-surface-400 hover:text-surface-50 hover:bg-surface-800 transition-colors"
+                aria-label="Search"
               >
                 <Search className="h-4 w-4" />
-              </button>
+              </Link>
             )}
 
             <button
