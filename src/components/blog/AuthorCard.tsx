@@ -56,7 +56,7 @@ export function AuthorCard({
         <div className="-mt-12 flex items-end justify-between">
           <div className="relative h-24 w-24 overflow-hidden rounded-2xl border-4 border-surface-900 ring-2 ring-surface-700">
             <Image
-              src={author.avatar || "/avatars/default.png"}
+              src={author.avatar || "https://i.pravatar.cc/300?img=0"}
               alt={author.name || author.username}
               fill
               className="object-cover"

@@ -115,7 +115,7 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
             <div>
               <div className="mb-3 flex items-center gap-3">
                 <Image
-                  src={post.author.avatar || "/avatars/default.png"}
+                  src={post.author.avatar || "https://i.pravatar.cc/300?img=0"}
                   alt={post.author.name || post.author.username}
                   width={28}
                   height={28}
@@ -219,7 +219,7 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
               <div className="flex items-center gap-2.5">
                 <div className="relative h-10 w-10 overflow-hidden rounded-full ring-2 ring-brand-500/30">
                   <Image
-                    src={post.author.avatar || "/avatars/default.png"}
+                    src={post.author.avatar || "https://i.pravatar.cc/300?img=0"}
                     alt={post.author.name || post.author.username}
                     fill
                     className="object-cover"
@@ -319,7 +319,7 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
           <div className="mb-3 flex items-center gap-2.5">
             <div className="relative h-8 w-8 overflow-hidden rounded-full ring-1 ring-surface-700">
               <Image
-                src={post.author.avatar || "/avatars/default.png"}
+                src={post.author.avatar || "https://i.pravatar.cc/300?img=0"}
                 alt={post.author.name || post.author.username}
                 fill
                 className="object-cover"

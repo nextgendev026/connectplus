@@ -30,6 +30,8 @@ model User {
   followingLinks Follow[] @relation("FollowingLinks")
   moderationLogs ModerationLog[]
   conversations NeuralConversation[]
+  notifications Notification[] @relation("NotifRecipient")
+  sentNotifications Notification[] @relation("NotifActor")
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -62,6 +64,8 @@ model Post {
   moderatedAt  DateTime?
   moderatedBy  String?
   publishedAt  DateTime?
+  scheduledAt  DateTime?
+  notifications Notification[]
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -258,4 +262,22 @@ model NeuralMessage {
   createdAt      DateTime            @default(now())
 
   @@index([conversationId])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation("NotifRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  actorId   String?
+  actor     User?     @relation("NotifActor", fields: [actorId], references: [id], onDelete: SetNull)
+  type      String
+  title     String?
+  message   String?
+  postId    String?
+  post      Post?     @relation(fields: [postId], references: [id], onDelete: SetNull)
+  read      Boolean   @default(false)
+  createdAt DateTime  @default(now())
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
 }

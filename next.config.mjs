@@ -30,6 +30,8 @@ const nextConfig = {
       { protocol: "https", hostname: "**.supabase.co" },
       { protocol: "https", hostname: "images.unsplash.com" },
       { protocol: "https", hostname: "**.unsplash.com" },
+      { protocol: "https", hostname: "i.pravatar.cc" },
+      { protocol: "https", hostname: "picsum.photos" },
     ],
     unoptimized: true,
   },

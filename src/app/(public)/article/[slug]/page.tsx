@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 
 import {
   Clock,
@@ -115,8 +116,17 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
     <div className="min-h-screen bg-surface-950">
       {/* Hero */}
       <div className="relative h-[50vh] min-h-[400px] overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-brand-900/50 via-surface-950 to-surface-950" />
-        <div className="absolute inset-0 bg-mesh-gradient opacity-60" />
+        {post.coverImage ? (
+          <Image
+            src={post.coverImage}
+            alt={post.title}
+            fill
+            className="object-cover"
+            priority
+          />
+        ) : null}
+        <div className="absolute inset-0 bg-gradient-to-br from-brand-900/50 via-surface-950/80 to-surface-950" />
+        <div className="absolute inset-0 bg-mesh-gradient opacity-40" />
         <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-surface-950 to-transparent" />
         <div className="relative mx-auto flex h-full max-w-4xl flex-col justify-end px-4 pb-8 sm:px-6 lg:px-8">
           <div className="flex items-center gap-2 text-sm text-surface-400">
@@ -133,8 +143,12 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
           </h1>
           <div className="mt-4 flex items-center gap-4">
             <Link href={`/profile/${post.author.username}`} className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-full bg-surface-700 flex items-center justify-center text-sm font-bold text-surface-50">
-                {post.author.name?.charAt(0) ?? "?"}
+              <div className="h-10 w-10 rounded-full bg-surface-700 overflow-hidden flex items-center justify-center text-sm font-bold text-surface-50">
+                {post.author.avatar ? (
+                  <img src={post.author.avatar} alt={post.author.name ?? ""} className="w-full h-full object-cover" />
+                ) : (
+                  post.author.name?.charAt(0) ?? "?"
+                )}
               </div>
               <div>
                 <p className="text-sm font-medium text-surface-50">{post.author.name ?? "Anonymous"}</p>

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import Image from "next/image";
 import {
   TrendingUp,
   Eye,
@@ -110,6 +111,14 @@ export default async function TrendingPage() {
                     i === 0 && "md:col-span-3"
                   )}
                 >
+                  {post.coverImage ? (
+                    <Image
+                      src={post.coverImage}
+                      alt={post.title}
+                      fill
+                      className="object-cover opacity-30 transition-transform duration-700 group-hover:scale-105"
+                    />
+                  ) : null}
                   <div
                     className={cn(
                       "absolute inset-0 bg-gradient-to-br opacity-70",

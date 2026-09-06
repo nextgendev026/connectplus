@@ -158,7 +158,7 @@ function CommentItem({
       <div className="flex gap-3">
         <div className="relative h-9 w-9 flex-shrink-0 overflow-hidden rounded-full ring-1 ring-surface-700">
           <Image
-            src={comment.author.avatar || "/avatars/default.png"}
+            src={comment.author.avatar || "https://i.pravatar.cc/300?img=0"}
             alt={comment.author.name || comment.author.username}
             fill
             className="object-cover"
@@ -323,7 +323,7 @@ export function CommentSection({ postId: _postId, className }: CommentSectionPro
         <div className="flex gap-3">
           <div className="relative h-10 w-10 flex-shrink-0 overflow-hidden rounded-full ring-1 ring-surface-700">
             <Image
-              src="/avatars/default.png"
+              src="https://i.pravatar.cc/300?img=0"
               alt="Your avatar"
               fill
               className="object-cover"
