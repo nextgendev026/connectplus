@@ -27,6 +27,7 @@ function stripHtml(html: string): string {
 }
 
 export async function pollFeeds(feedId?: string): Promise<PollSummary> {
+  const defaultAuthor = await prisma.user.findFirst({ select: { id: true } });
   const feedWhere: { isActive: boolean; id?: string } = { isActive: true };
   if (feedId) {
     feedWhere.id = feedId;
@@ -85,7 +86,7 @@ export async function pollFeeds(feedId?: string): Promise<PollSummary> {
         }
 
         try {
-          await prisma.rssArticle.create({
+await prisma.rssArticle.create({
             data: {
               feedId: feed.id,
               title: item.title || "Untitled",
@@ -97,6 +98,21 @@ export async function pollFeeds(feedId?: string): Promise<PollSummary> {
               publishedAt: item.pubDate ? new Date(item.pubDate) : null,
             },
           });
+          if (defaultAuthor?.id) {
+            await prisma.post.create({
+              data: {
+                title: item.title || "Untitled",
+                slug: item.title ? item.title.toLowerCase().replace(/[^\w]+/g, "-") : "rss-article",
+                excerpt: summary ?? "",
+                content: typeof content === "string" ? content.slice(0, 3000) : "",
+                coverImage: imageUrl,
+                status: "PUBLISHED",
+                moderationStatus: "APPROVED",
+                authorId: defaultAuthor.id,
+                viewCount: 0,
+              },
+            });
+          }
           feedNewArticles++;
         } catch (err: unknown) {
           if (err && typeof err === "object" && "code" in err && err.code !== "P2002") {
