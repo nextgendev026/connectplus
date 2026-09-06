@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   CheckCircle2,
   AlertCircle,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -43,7 +44,7 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
 }
 
 export function SettingsForm({ user }: { user: SettingsUser }) {
-  const [tab, setTab] = useState<"profile" | "security">("profile");
+  const [tab, setTab] = useState<"profile" | "security" | "integrations">("profile");
   const [name, setName] = useState(user.name);
   const [username, setUsername] = useState(user.username);
   const [bio, setBio] = useState(user.bio);
@@ -201,6 +202,16 @@ export function SettingsForm({ user }: { user: SettingsUser }) {
         >
           <Lock className="h-4 w-4" />
           Security
+        </button>
+        <button
+          onClick={() => setTab("integrations")}
+          className={cn(
+            "flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
+            tab === "integrations" ? "bg-brand-500 text-white" : "text-surface-400 hover:text-surface-100"
+          )}
+        >
+          <Sparkles className="h-4 w-4" />
+          Integrations
         </button>
       </div>
 

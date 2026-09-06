@@ -1,32 +1,50 @@
 import { NextRequest, NextResponse } from "next/server";
-import { pollFeeds } from "@/lib/rss-poll";
+import { inngest } from "@/lib/inngest";
 
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
-}
+// This endpoint triggers Inngest functions instead of running directly
+// Vercel free tier limits: 1 cron minute, 10s function timeout
+// Inngest: Unlimited scheduling, no function timeout restrictions
 
 export async function GET(request: NextRequest) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) {
-    return NextResponse.json({ error: "Cron endpoint not configured" }, { status: 503 });
+  const { searchParams } = new URL(request.url);
+  const trigger = searchParams.get("trigger");
+
+  if (trigger === "rss-poll") {
+    // Trigger the Inngest RSS poll function
+    await inngest.send({
+      name: "rss-poll",
+    });
+
+    return NextResponse.json({ 
+      success: true, 
+      message: "RSS poll triggered via Inngest"
+    });
   }
 
-  const provided = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-  if (!provided || !timingSafeEqual(provided, secret)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  return NextResponse.json({ 
+    availableTriggers: ["rss-poll"],
+    message: "Use ?trigger=rss-poll to start RSS polling"
+  });
+}
+
+// POST: Manual trigger from admin panel or frontend
+export async function POST(request: NextRequest) {
+  const body = await request.json().catch(() => ({}));
+  const { trigger } = body;
+
+  if (trigger === "rss-poll") {
+    await inngest.send({
+      name: "rss-poll",
+    });
+
+    return NextResponse.json({ 
+      success: true, 
+      message: "RSS poll triggered via Inngest POST"
+    });
   }
 
-  try {
-    const feedId = request.nextUrl.searchParams.get("feedId") ?? undefined;
-    const summary = await pollFeeds(feedId);
-    return NextResponse.json(summary);
-  } catch (error) {
-    console.error("RSS cron poll error:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
-  }
+  return NextResponse.json(
+    { error: "Unknown trigger" },
+    { status: 400 }
+  );
 }

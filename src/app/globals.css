@@ -47,20 +47,19 @@ html:not(.dark) {
   /* Light mode — FLIP the entire palette with carefully tuned contrast.
      Muted/secondary text (surface-400/500) is darkened, borders (surface-700/800)
      are deepened, and surfaces get a warm off-white so text pops against white. */
-  --surface-50: 24 24 27;
-  --surface-100: 39 39 42;
-  --surface-200: 58 58 66;
-  --surface-300: 75 75 85;
-  --surface-400: 96 96 108;
-  --surface-500: 122 122 134;
-  --surface-600: 168 168 178;
-  --surface-700: 214 214 220;
-  --surface-800: 230 230 236;
-  --surface-850: 238 238 243;
-  --surface-900: 248 248 251;
-  --surface-950: 255 255 255;
-  --foreground: 24 24 27;
-  --background: 250 250 252;
+--surface-50: 245 245 240;
+  --surface-100: 240 240 235;
+  --surface-200: 230 230 225;
+  --surface-300: 220 220 215;
+  --surface-400: 210 210 205;
+  --surface-500: 180 180 175;
+  --surface-600: 150 150 145;
+  --surface-700: 120 120 115;
+  --surface-800: 100 100 95;
+  --surface-850: 80 80 75;
+  --surface-900: 50 50 45;
+  --surface-950: 30 30 25;
+  --background: 245 245 240;
   --scrollbar-thumb: 200 200 208;
   --scrollbar-hover: 161 161 170;
   --glass-bg: 255 255 255;

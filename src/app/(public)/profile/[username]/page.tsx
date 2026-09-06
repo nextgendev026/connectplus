@@ -132,11 +132,16 @@ export default async function ProfilePage({
             src={user.coverImage}
             alt=""
             className="h-full w-full object-cover"
+            style={{ transition: "opacity 0.3s ease" }}
           />
         ) : (
-          <div className="h-full w-full bg-gradient-to-r from-brand-900/40 via-surface-900 to-accent-violet/20" />
+          <div
+            className="h-full w-full bg-gradient-to-r from-brand-900/30 via-surface-800/50 to-surface-900/50"
+          />
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-surface-950 to-transparent" />
+        <div
+          className="absolute inset-0 bg-gradient-to-t from-surface-800/40 via-transparent to-transparent"
+        />
         <div className="relative mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-full items-end pb-4">
             <Link
@@ -151,18 +156,20 @@ export default async function ProfilePage({
 
       {/* Profile Header */}
       <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
-        <div className="-mt-16 flex flex-col sm:flex-row sm:items-end sm:gap-6">
-          {user.avatar ? (
-            <img
-              src={user.avatar}
-              alt={user.name ?? user.username}
-              className="h-32 w-32 rounded-2xl border-4 border-surface-950 object-cover shadow-xl"
-            />
-          ) : (
-            <div className="h-32 w-32 rounded-2xl bg-surface-800 border-4 border-surface-950 flex items-center justify-center text-4xl font-bold text-surface-50 shadow-xl">
-              {(user.name ?? user.username).charAt(0).toUpperCase()}
-            </div>
-          )}
+        <div className="mt-6 flex flex-col sm:flex-row sm:items-end sm:gap-6">
+{user.avatar ? (
+              <img
+                src={user.avatar}
+                alt={user.name ?? user.username}
+                className="h-32 w-32 rounded-2xl border-4 border-surface-800/60 object-cover shadow-sm"
+              />
+            ) : (
+              <div
+                className="h-32 w-32 rounded-2xl bg-surface-800/60 border-4 border-surface-700/50 flex items-center justify-center text-4xl font-bold text-surface-400 shadow-inner"
+              >
+                {(user.name ?? user.username).charAt(0).toUpperCase()}
+              </div>
+            )}
           <div className="mt-4 flex-1 sm:mt-0 sm:pb-2">
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-bold text-surface-50">
