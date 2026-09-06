@@ -11,6 +11,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/components/providers/ThemeContext";
 import Logo from "@/components/ui/Logo";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 
 const NAV_LINKS = [
   { href: "/", label: "Feed" },
@@ -116,6 +117,7 @@ export default function Navbar() {
 
             {session ? (
               <div className="hidden sm:flex items-center gap-2">
+                <NotificationBell />
                 {user?.role === "ADMIN" || user?.role === "SUPER_ADMIN" ? (
                   <Link
                     href="/admin"

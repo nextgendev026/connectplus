@@ -83,6 +83,35 @@ export async function POST(request: NextRequest) {
 
     await hiveBrain.ingestComment(comment).catch(() => {});
 
+    // Notify the post author (and comment parent on replies)
+    const postAuthor = await prisma.post.findUnique({
+      where: { id: postId },
+      select: { authorId: true },
+    });
+    if (parentId) {
+      const parent = await prisma.comment.findUnique({
+        where: { id: parentId },
+        select: { authorId: true },
+      });
+      if (parent && parent.authorId !== userId) {
+        await import("@/lib/notifications").then(({ createReplyNotification }) =>
+          createReplyNotification({
+            recipientId: parent.authorId,
+            actorId: userId,
+            postId,
+          })
+        );
+      }
+    } else if (postAuthor && postAuthor.authorId !== userId) {
+      await import("@/lib/notifications").then(({ createCommentNotification }) =>
+        createCommentNotification({
+          recipientId: postAuthor.authorId,
+          actorId: userId,
+          postId,
+        })
+      );
+    }
+
     return NextResponse.json({ comment }, { status: 201 });
   } catch (error) {
     console.error("Error creating comment:", error);

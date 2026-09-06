@@ -195,7 +195,11 @@ function PostCard({
   );
 }
 
-function HeroSection() {
+function HeroSection({
+  stats,
+}: {
+  stats: { writers: number; stories: number; cities: number };
+}) {
   const words = ["Stories", "that", "connect", "East", "Africa"];
   const subtitle =
     "Discover perspectives on technology, culture, business, and lifestyle from Nairobi to Kigali, Kampala to Dar es Salaam. Written by the people shaping the region.";
@@ -288,9 +292,9 @@ function HeroSection() {
           {/* Animated Stats */}
           <div className="grid grid-cols-3 gap-4 sm:gap-8 max-w-md animate-fade-in-up animation-delay-1200">
             {[
-              { value: "14,000+", label: "Writers", icon: Users },
-              { value: "50,000+", label: "Stories", icon: BookOpen },
-              { value: "8", label: "Cities Connected", icon: MapPin },
+              { value: `${stats.writers.toLocaleString()}+`, label: "Writers", icon: Users },
+              { value: `${stats.stories.toLocaleString()}+`, label: "Stories", icon: BookOpen },
+              { value: `${stats.cities}`, label: "Cities Connected", icon: MapPin },
             ].map((stat) => (
               <div key={stat.label} className="group">
                 <div className="flex items-center gap-1.5 mb-1">
@@ -725,7 +729,13 @@ export default async function HomeFeedPage({
 
   return (
     <div className="min-h-screen bg-surface-950">
-      <HeroSection />
+      <HeroSection
+        stats={{
+          writers: allCreators.length,
+          stories: posts.length,
+          cities: new Set(allCreators.map((c) => c.node).filter(Boolean)).size,
+        }}
+      />
 
       <CategoryCarousel
         categories={categories}

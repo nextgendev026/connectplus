@@ -99,6 +99,20 @@ export async function PUT(request: NextRequest) {
       }),
     ]);
 
+    if (normalizedAction === "APPROVE") {
+      await prisma.post.update({
+        where: { id: postId },
+        data: { status: "PUBLISHED", publishedAt: post.publishedAt ?? new Date() },
+      }).catch(() => {});
+      await import("@/lib/notifications").then(({ createApprovalNotification }) =>
+        createApprovalNotification({
+          recipientId: post.authorId,
+          actorId: userId,
+          postId,
+        })
+      );
+    }
+
     return NextResponse.json({ post: updatedPost });
   } catch (error) {
     console.error("Error updating moderation:", error);

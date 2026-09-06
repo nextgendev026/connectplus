@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import Image from "next/image";
+import { useSession } from "next-auth/react";
 import {
   Heart,
   Reply,
@@ -20,14 +21,13 @@ interface CommentAuthor {
   avatar: string | null;
 }
 
-interface Comment {
+interface ApiComment {
   id: string;
   content: string;
   createdAt: string;
   author: CommentAuthor;
-  likes: number;
-  likedByUser: boolean;
-  replies: Comment[];
+  _count: { likes: number };
+  replies: ApiComment[];
 }
 
 interface CommentSectionProps {
@@ -35,112 +35,17 @@ interface CommentSectionProps {
   className?: string;
 }
 
-const MOCK_COMMENTS: Comment[] = [
-  {
-    id: "c1",
-    content:
-      "This is an excellent deep dive into the architecture! The way you broke down the component hierarchy really helped me understand the trade-offs better.",
-    createdAt: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
-    author: {
-      id: "u1",
-      name: "Amara Osei",
-      username: "amara_codes",
-      avatar: null,
-    },
-    likes: 12,
-    likedByUser: false,
-    replies: [
-      {
-        id: "c1r1",
-        content:
-          "Agreed! The diagrams were particularly helpful. Would love to see a follow-up on the state management approach.",
-        createdAt: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-        author: {
-          id: "u2",
-          name: "Kwame Mensah",
-          username: "kwame_dev",
-          avatar: null,
-        },
-        likes: 5,
-        likedByUser: true,
-        replies: [],
-      },
-      {
-        id: "c1r2",
-        content:
-          "I've been working on something similar. The caching layer you described is exactly what I needed.",
-        createdAt: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
-        author: {
-          id: "u3",
-          name: "Fatima Hassan",
-          username: "fatima_builds",
-          avatar: null,
-        },
-        likes: 3,
-        likedByUser: false,
-        replies: [],
-      },
-    ],
-  },
-  {
-    id: "c2",
-    content:
-      "One question — how do you handle the edge case where the cache invalidation race condition occurs during concurrent writes? I ran into this in production last week.",
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
-    author: {
-      id: "u4",
-      name: "David Njoroge",
-      username: "davidn",
-      avatar: null,
-    },
-    likes: 8,
-    likedByUser: false,
-    replies: [],
-  },
-  {
-    id: "c3",
-    content:
-      "Bookmarked this for our team's next sprint planning. The performance benchmarks are really convincing.",
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString(),
-    author: {
-      id: "u5",
-      name: "Zuri Kimani",
-      username: "zuri_tech",
-      avatar: null,
-    },
-    likes: 4,
-    likedByUser: false,
-    replies: [
-      {
-        id: "c3r1",
-        content:
-          "Same here! Our lead shared this in the engineering channel. Great resource.",
-        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 4).toISOString(),
-        author: {
-          id: "u6",
-          name: "Aisha Patel",
-          username: "aisha_dev",
-          avatar: null,
-        },
-        likes: 2,
-        likedByUser: false,
-        replies: [],
-      },
-    ],
-  },
-];
-
 function CommentItem({
   comment,
   depth = 0,
   onReply,
 }: {
-  comment: Comment;
+  comment: ApiComment;
   depth?: number;
   onReply: (parentId: string) => void;
 }) {
-  const [liked, setLiked] = useState(comment.likedByUser);
-  const [likeCount, setLikeCount] = useState(comment.likes);
+  const [liked, setLiked] = useState(false);
+  const [likeCount, setLikeCount] = useState(comment._count?.likes ?? 0);
   const [showReplies, setShowReplies] = useState(depth === 0);
 
   const handleLike = useCallback(() => {
@@ -240,57 +145,100 @@ function CommentItem({
   );
 }
 
-export function CommentSection({ postId: _postId, className }: CommentSectionProps) {
-  const [comments, setComments] = useState<Comment[]>(MOCK_COMMENTS);
+export function CommentSection({ postId, className }: CommentSectionProps) {
+  const { data: session } = useSession();
+  const [comments, setComments] = useState<ApiComment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [newComment, setNewComment] = useState("");
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<"newest" | "popular">("newest");
 
+  const user = session?.user;
+  const userAvatar = user?.avatar ?? user?.image ?? null;
+
+  const loadComments = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await fetch(`/api/comments?postId=${encodeURIComponent(postId)}`);
+      if (!res.ok) throw new Error("Failed to load comments");
+      const data = await res.json();
+      setComments(data.comments ?? []);
+      setError(null);
+    } catch {
+      setError("Could not load comments. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }, [postId]);
+
+  useEffect(() => {
+    loadComments();
+  }, [loadComments]);
+
   const totalComments = comments.reduce(
-    (acc, c) => acc + 1 + c.replies.length,
+    (acc, c) => acc + 1 + (c.replies?.length ?? 0),
     0
   );
 
-  const handleSubmit = useCallback(() => {
-    if (!newComment.trim()) return;
+  const handleSubmit = useCallback(async () => {
+    const content = newComment.trim();
+    if (!content) return;
 
-    const comment: Comment = {
-      id: `c-${Date.now()}`,
-      content: newComment.trim(),
-      createdAt: new Date().toISOString(),
-      author: {
-        id: "current-user",
-        name: "You",
-        username: "current_user",
-        avatar: null,
-      },
-      likes: 0,
-      likedByUser: false,
-      replies: [],
-    };
-
-    if (replyingTo) {
-      setComments((prev) =>
-        prev.map((c) =>
-          c.id === replyingTo
-            ? { ...c, replies: [...c.replies, comment] }
-            : c
-        )
-      );
-    } else {
-      setComments((prev) => [comment, ...prev]);
+    if (!user?.id) {
+      setError("You must be signed in to comment.");
+      return;
     }
 
-    setNewComment("");
-    setReplyingTo(null);
-  }, [newComment, replyingTo]);
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/comments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          postId,
+          content,
+          parentId: replyingTo ?? null,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setError(data?.error ?? "Failed to post comment.");
+        return;
+      }
+      const data = await res.json();
+
+      if (replyingTo) {
+        setComments((prev) =>
+          prev.map((c) =>
+            c.id === replyingTo
+              ? { ...c, replies: [...(c.replies ?? []), data.comment] }
+              : c
+          )
+        );
+      } else {
+        setComments((prev) => [data.comment, ...prev]);
+      }
+
+      setNewComment("");
+      setReplyingTo(null);
+      setError(null);
+    } catch {
+      setError("Failed to post comment. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }, [newComment, replyingTo, postId, user?.id]);
 
   const handleReply = useCallback((parentId: string) => {
     setReplyingTo(parentId);
+    setError(null);
   }, []);
 
   const sortedComments = [...comments].sort((a, b) => {
-    if (sortBy === "popular") return b.likes - a.likes;
+    if (sortBy === "popular")
+      return (b._count?.likes ?? 0) - (a._count?.likes ?? 0);
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   });
 
@@ -321,13 +269,19 @@ export function CommentSection({ postId: _postId, className }: CommentSectionPro
 
       <div className="mt-6">
         <div className="flex gap-3">
-          <div className="relative h-10 w-10 flex-shrink-0 overflow-hidden rounded-full ring-1 ring-surface-700">
-            <Image
-              src="https://i.pravatar.cc/300?img=0"
-              alt="Your avatar"
-              fill
-              className="object-cover"
-            />
+          <div className="relative h-10 w-10 flex-shrink-0 overflow-hidden rounded-full ring-1 ring-surface-700 bg-surface-800">
+            {userAvatar ? (
+              <Image
+                src={userAvatar}
+                alt="Your avatar"
+                fill
+                className="object-cover"
+              />
+            ) : (
+              <span className="flex h-full w-full items-center justify-center text-sm font-bold text-surface-400">
+                {(user?.name ?? "G").charAt(0).toUpperCase()}
+              </span>
+            )}
           </div>
           <div className="flex-1">
             <div className="relative">
@@ -335,13 +289,18 @@ export function CommentSection({ postId: _postId, className }: CommentSectionPro
                 value={newComment}
                 onChange={(e) => setNewComment(e.target.value)}
                 placeholder={
-                  replyingTo ? "Write a reply..." : "Share your thoughts..."
+                  !user
+                    ? "Sign in to share your thoughts..."
+                    : replyingTo
+                    ? "Write a reply..."
+                    : "Share your thoughts..."
                 }
                 rows={3}
+                disabled={!user}
                 className={cn(
                   "w-full resize-none rounded-xl border border-surface-700/50 bg-surface-800/50 px-4 py-3 text-sm text-surface-50 placeholder-surface-500",
                   "transition-all focus:border-brand-500/50 focus:outline-none focus:ring-1 focus:ring-brand-500/30",
-                  "placeholder-surface-600"
+                  "disabled:cursor-not-allowed disabled:opacity-60"
                 )}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -364,21 +323,26 @@ export function CommentSection({ postId: _postId, className }: CommentSectionPro
                 </div>
               )}
             </div>
+            {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
             <div className="mt-2 flex items-center justify-between">
               <span className="text-xs text-surface-600">
                 Press Ctrl+Enter to submit
               </span>
               <button
                 onClick={handleSubmit}
-                disabled={!newComment.trim()}
+                disabled={!newComment.trim() || submitting || !user}
                 className={cn(
                   "flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all",
-                  newComment.trim()
+                  newComment.trim() && user
                     ? "bg-brand-600 text-white hover:bg-brand-500 shadow-glow"
                     : "bg-surface-800 text-surface-500 cursor-not-allowed"
                 )}
               >
-                <Send className="h-4 w-4" />
+                {submitting ? (
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
                 {replyingTo ? "Reply" : "Comment"}
               </button>
             </div>
@@ -387,14 +351,25 @@ export function CommentSection({ postId: _postId, className }: CommentSectionPro
       </div>
 
       <div className="mt-8 space-y-6 divide-y divide-surface-800/60">
-        {sortedComments.map((comment) => (
-          <div key={comment.id} className="pt-6 first:pt-0">
-            <CommentItem
-              comment={comment}
-              onReply={handleReply}
-            />
+        {loading ? (
+          <div className="flex items-center gap-3 py-8 text-sm text-surface-500">
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-brand-500/40 border-t-brand-500" />
+            Loading comments...
           </div>
-        ))}
+        ) : sortedComments.length > 0 ? (
+          sortedComments.map((comment) => (
+            <div key={comment.id} className="pt-6 first:pt-0">
+              <CommentItem
+                comment={comment}
+                onReply={handleReply}
+              />
+            </div>
+          ))
+        ) : (
+          <p className="py-8 text-center text-sm text-surface-500">
+            No comments yet. Be the first to share your thoughts!
+          </p>
+        )}
       </div>
     </section>
   );

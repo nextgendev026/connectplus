@@ -104,6 +104,15 @@ export async function POST(request: NextRequest) {
       where: { id: targetId },
       select: { followersCount: true },
     });
+
+    // Notify the followed user
+    await import("@/lib/notifications").then(({ createFollowNotification }) =>
+      createFollowNotification({
+        recipientId: targetId,
+        actorId: session.user.id,
+      })
+    );
+
     return NextResponse.json({
       following: true,
       followersCount: updatedTarget?.followersCount ?? 0,
