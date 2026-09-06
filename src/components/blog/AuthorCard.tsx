@@ -77,7 +77,7 @@ export function AuthorCard({
             href={`/profile/${author.username}`}
             className="group flex items-center gap-2"
           >
-            <h3 className="font-display text-xl font-bold text-white transition-colors group-hover:text-brand-400">
+            <h3 className="font-display text-xl font-bold text-surface-50 transition-colors group-hover:text-brand-400">
               {author.name || author.username}
             </h3>
             <ExternalLink className="h-4 w-4 text-surface-500 opacity-0 transition-opacity group-hover:opacity-100" />
@@ -124,7 +124,7 @@ export function AuthorCard({
             <div className="flex items-center gap-2">
               <FileText className="h-4 w-4 text-surface-500" />
               <div>
-                <span className="block text-sm font-bold text-white">
+                <span className="block text-sm font-bold text-surface-50">
                   {author.postsCount}
                 </span>
                 <span className="text-[11px] text-surface-500">Posts</span>
@@ -133,7 +133,7 @@ export function AuthorCard({
             <div className="flex items-center gap-2">
               <Users className="h-4 w-4 text-surface-500" />
               <div>
-                <span className="block text-sm font-bold text-white">
+                <span className="block text-sm font-bold text-surface-50">
                   {author.followersCount.toLocaleString()}
                 </span>
                 <span className="text-[11px] text-surface-500">Followers</span>

@@ -65,7 +65,7 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
             )}
           </div>
           <div className="flex flex-1 flex-col justify-center gap-1 min-w-0">
-            <h3 className="font-display text-sm font-semibold text-white leading-snug line-clamp-2 transition-colors group-hover:text-brand-400">
+            <h3 className="font-display text-sm font-semibold text-surface-50 leading-snug line-clamp-2 transition-colors group-hover:text-brand-400">
               {post.title}
             </h3>
             <div className="flex items-center gap-3 text-xs text-surface-400">
@@ -134,7 +134,7 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
                   </span>
                 )}
               </div>
-              <h2 className="font-display text-xl font-bold text-white leading-tight transition-colors group-hover:text-brand-400">
+              <h2 className="font-display text-xl font-bold text-surface-50 leading-tight transition-colors group-hover:text-brand-400">
                 {post.title}
               </h2>
               <p className="mt-2 text-sm leading-relaxed text-surface-400 line-clamp-2">
@@ -205,7 +205,7 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
               </span>
             )}
 
-            <h2 className="font-display text-3xl font-bold text-white leading-tight transition-colors group-hover:text-brand-300">
+            <h2 className="font-display text-3xl font-bold text-surface-50 leading-tight transition-colors group-hover:text-brand-300">
               {post.title}
             </h2>
 
@@ -226,7 +226,7 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
                   />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-white">
+                  <p className="text-sm font-medium text-surface-50">
                     {post.author.name || post.author.username}
                   </p>
                   <p className="text-xs text-surface-400">@{post.author.username}</p>
@@ -343,7 +343,7 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
             </div>
           </div>
 
-          <h3 className="font-display text-lg font-bold text-white leading-snug transition-colors group-hover:text-brand-400 line-clamp-2">
+          <h3 className="font-display text-lg font-bold text-surface-50 leading-snug transition-colors group-hover:text-brand-400 line-clamp-2">
             {post.title}
           </h3>
 

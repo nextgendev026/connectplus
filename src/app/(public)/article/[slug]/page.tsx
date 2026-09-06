@@ -24,17 +24,25 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
     where: { slug },
     include: {
       author: {
-        include: { _count: { select: { posts: true } } },
+        select: {
+          id: true,
+          name: true,
+          username: true,
+          avatar: true,
+          bio: true,
+          followersCount: true,
+          _count: { select: { posts: true } },
+        },
       },
-      category: true,
-      tags: true,
+      category: { select: { id: true, name: true, slug: true } },
+      tags: { select: { id: true, name: true, slug: true } },
       _count: { select: { comments: true, likes: true } },
       comments: {
         where: { parentId: null },
         include: {
-          author: true,
+          author: { select: { id: true, name: true, username: true } },
           replies: {
-            include: { author: true },
+            include: { author: { select: { id: true, name: true, username: true } } },
             orderBy: { createdAt: "asc" },
           },
         },
@@ -98,7 +106,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
       id: { not: post.id },
       status: "PUBLISHED",
     },
-    include: { author: true },
+    include: { author: { select: { name: true } } },
     take: 3,
     orderBy: { createdAt: "desc" },
   });

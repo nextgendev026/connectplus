@@ -100,6 +100,19 @@ export default function NeuralChat({ conversationId, onConversationCreated, init
               });
             } else if (event.type === "done") {
               setIsProcessing(false);
+            } else if (event.type === "error") {
+              setMessages(prev => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last) {
+                  updated[updated.length - 1] = {
+                    ...last,
+                    content: `Error: ${event.error ?? "Failed to get response from Neural Mind."}`,
+                  };
+                }
+                return updated;
+              });
+              setIsProcessing(false);
             }
           } catch {}
         }

@@ -177,6 +177,7 @@ model PageView {
 
   @@index([postId])
   @@index([country])
+  @@index([path, createdAt])
 }
 
 model RssFeed {
@@ -217,8 +218,8 @@ model NeuralMemory {
   id           String    @id @default(cuid())
   source       String
   category     String
-  content      String
-  tags         String
+  content      String    @db.Text
+  tags         String    @db.Text
   confidence   Float     @default(0.5)
   metadata     String?
   sourceUrl    String?

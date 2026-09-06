@@ -56,6 +56,13 @@ export default async function ProfilePage({
 
   const totalViews = viewsAgg._sum.viewCount ?? 0;
 
+  const likesAgg = await prisma.like.aggregate({
+    where: { post: { authorId: user.id, status: "PUBLISHED" } },
+    _count: true,
+  });
+
+  const totalLikes = likesAgg._count;
+
   const [posts, viewerFollow, bookmarkedPosts] = await Promise.all([
     prisma.post.findMany({
       where: { authorId: user.id, status: "PUBLISHED" },
@@ -237,7 +244,7 @@ export default async function ProfilePage({
           posts={serializePosts(posts)}
           savedPosts={savedPosts}
           ownProfile={session?.user?.id === user.id}
-          stats={{ totalViews, totalLikes: user._count.posts }}
+          stats={{ totalViews, totalLikes }}
           about={user.bio}
         />
       </div>

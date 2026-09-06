@@ -158,7 +158,7 @@ export default function AdminCommandCenter() {
               <Cpu className="h-6 w-6 text-brand-500" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-white">Command Center</h1>
+              <h1 className="text-2xl font-bold text-surface-50">Command Center</h1>
               <p className="text-sm text-surface-400">
                 Platform overview & neural diagnostics
               </p>
@@ -168,7 +168,7 @@ export default function AdminCommandCenter() {
             <button
               onClick={fetchStats}
               disabled={loading}
-              className="rounded-lg bg-surface-900 border border-surface-800 p-2 text-surface-400 transition-colors hover:text-white"
+              className="rounded-lg bg-surface-900 border border-surface-800 p-2 text-surface-400 transition-colors hover:text-surface-50"
             >
               <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
             </button>
@@ -198,7 +198,7 @@ export default function AdminCommandCenter() {
             <p className="text-sm text-red-400">{error}</p>
             <button
               onClick={fetchStats}
-              className="mt-4 rounded-lg bg-surface-800 border border-surface-700 px-4 py-2 text-xs text-surface-300 transition-colors hover:text-white"
+              className="mt-4 rounded-lg bg-surface-800 border border-surface-700 px-4 py-2 text-xs text-surface-300 transition-colors hover:text-surface-50"
             >
               Retry
             </button>
@@ -221,7 +221,7 @@ export default function AdminCommandCenter() {
                   <div className="flex items-start justify-between">
                     <div>
                       <p className="text-sm text-surface-400">{stat.label}</p>
-                      <p className="mt-1 text-3xl font-bold text-white">
+                      <p className="mt-1 text-3xl font-bold text-surface-50">
                         {stat.value}
                       </p>
                     </div>
@@ -254,7 +254,7 @@ export default function AdminCommandCenter() {
                 <div className="mb-5 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Radio className="h-5 w-5 text-brand-500" />
-                    <h2 className="text-lg font-semibold text-white">
+                    <h2 className="text-lg font-semibold text-surface-50">
                       Active Nodes
                     </h2>
                   </div>
@@ -282,7 +282,7 @@ export default function AdminCommandCenter() {
                           {node.city}
                         </span>
                       </div>
-                      <p className="mt-2 text-xl font-bold text-white">
+                      <p className="mt-2 text-xl font-bold text-surface-50">
                         {node.users.toLocaleString()}
                       </p>
                       <p className="text-[10px] text-surface-500">
@@ -312,7 +312,7 @@ export default function AdminCommandCenter() {
               <div className="rounded-xl bg-surface-900/50 border border-surface-800 p-6">
                 <div className="mb-5 flex items-center gap-2">
                   <TrendingUp className="h-5 w-5 text-cyan-400" />
-                  <h2 className="text-lg font-semibold text-white">
+                  <h2 className="text-lg font-semibold text-surface-50">
                     Regional Trends
                   </h2>
                 </div>
@@ -327,7 +327,7 @@ export default function AdminCommandCenter() {
                           {i + 1}
                         </span>
                         <div>
-                          <p className="text-sm font-medium text-white">
+                          <p className="text-sm font-medium text-surface-50">
                             {topic.topic}
                           </p>
                           <p className="text-xs text-surface-500">
@@ -352,7 +352,7 @@ export default function AdminCommandCenter() {
                     <BrainCircuit className="h-5 w-5 text-brand-500" />
                   </div>
                   <div>
-                    <h2 className="text-base font-semibold text-white">
+                    <h2 className="text-base font-semibold text-surface-50">
                       Neural Mind
                     </h2>
                     <p className="text-xs text-surface-500">

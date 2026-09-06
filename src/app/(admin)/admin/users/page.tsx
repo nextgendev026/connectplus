@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { cn, formatDate } from "@/lib/utils";
 
-type UserRole = "USER" | "CREATOR" | "ADMIN";
+type UserRole = "USER" | "CREATOR" | "ADMIN" | "SUPER_ADMIN";
 
 interface ApiUser {
   id: string;
@@ -54,6 +54,12 @@ const roleConfig: Record<
     color: "text-amber-400",
     bg: "bg-amber-400/10",
     border: "border-amber-400/20",
+    icon: Crown,
+  },
+  SUPER_ADMIN: {
+    color: "text-violet-400",
+    bg: "bg-violet-400/10",
+    border: "border-violet-400/20",
     icon: Crown,
   },
 };
@@ -520,7 +526,7 @@ export default function UsersManagement() {
                         </>
                       )}
                     </button>
-                    {selectedUser.role !== "ADMIN" && (
+                    {selectedUser.role !== "ADMIN" && selectedUser.role !== "SUPER_ADMIN" && (
                       <button
                         disabled={actionLoading}
                         onClick={() =>

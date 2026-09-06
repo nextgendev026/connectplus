@@ -36,12 +36,19 @@ export async function GET(
       return NextResponse.json({ error: "Post not found" }, { status: 404 });
     }
 
-    await prisma.post.update({
-      where: { id: post.id },
-      data: { viewCount: { increment: 1 } },
-    });
+    if (post.status === "PUBLISHED") {
+      await prisma.post.update({
+        where: { id: post.id },
+        data: { viewCount: { increment: 1 } },
+      });
+    }
 
-    return NextResponse.json({ post: { ...post, viewCount: post.viewCount + 1 } });
+    return NextResponse.json({
+      post: {
+        ...post,
+        viewCount: post.status === "PUBLISHED" ? post.viewCount + 1 : post.viewCount,
+      },
+    });
   } catch (error) {
     console.error("Error fetching post:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

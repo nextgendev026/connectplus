@@ -55,6 +55,30 @@ export async function POST(request: NextRequest) {
       slug = `${slug}-${Date.now()}`;
     }
 
+    let resolvedCategoryId: string | null = null;
+    if (categoryId && typeof categoryId === "string") {
+      const target = categoryId.trim();
+      const byId = await prisma.category.findUnique({ where: { id: target }, select: { id: true } });
+      if (byId) {
+        resolvedCategoryId = byId.id;
+      } else {
+        const bySlug = slugify(target);
+        const existing = await prisma.category.findFirst({
+          where: { OR: [{ slug: bySlug }, { name: { equals: target, mode: "insensitive" } }] },
+          select: { id: true },
+        });
+        if (existing) {
+          resolvedCategoryId = existing.id;
+        } else {
+          const created = await prisma.category.create({
+            data: { name: target.slice(0, 60), slug: bySlug },
+            select: { id: true },
+          });
+          resolvedCategoryId = created.id;
+        }
+      }
+    }
+
     const post = await prisma.post.create({
       data: {
         title: article.title,
@@ -63,7 +87,7 @@ export async function POST(request: NextRequest) {
         excerpt,
         coverImage: article.imageUrl || null,
         authorId: adminUser.id,
-        categoryId: categoryId || null,
+        categoryId: resolvedCategoryId,
         status: "PUBLISHED",
         moderationStatus: "APPROVED",
         source: article.feed.name,

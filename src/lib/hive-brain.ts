@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { extractKeywords, analyzeSentiment, extractEntities, summarizeText, stripHtml } from "@/lib/neural-text";
+import { createLogger } from "@/lib/logger";
 
 export interface HivePostInput {
   id: string;
@@ -73,6 +74,8 @@ export interface HiveSweepResult {
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 class HiveBrain {
+  private readonly log = createLogger("hive-brain");
+
   async ingestPost(post: HivePostInput): Promise<number> {
     const text = `${post.title} ${post.excerpt ?? ""} ${stripHtml(post.content).slice(0, 1800)}`;
     if (text.trim().length < 20) return 0;
@@ -146,6 +149,7 @@ class HiveBrain {
   }
 
   async sweepInternal(): Promise<HiveSweepResult> {
+    const startedAt = Date.now();
     const [posts, comments] = await Promise.all([
       prisma.post.findMany({
         where: { status: "PUBLISHED" },
@@ -180,13 +184,16 @@ class HiveBrain {
       }
     }
 
+    const totalMemories = await prisma.neuralMemory.count();
+    this.log.info("sweep complete", { posts: posts.length, comments: comments.length, postsLearned, commentsLearned, memoriesCreated, totalMemories, elapsedMs: Date.now() - startedAt });
+
     return {
       postsScanned: posts.length,
       commentsScanned: comments.length,
       postsLearned,
       commentsLearned,
       memoriesCreated,
-      totalMemories: await prisma.neuralMemory.count(),
+      totalMemories,
     };
   }
 

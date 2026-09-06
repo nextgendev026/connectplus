@@ -123,11 +123,15 @@ export default function BrainChatWidget() {
         const data = await res.json();
         const r = data.result ?? {};
         const verb = kind === "train" ? "Training" : kind === "sweep" ? "Sweep" : "Learning";
+        const summary =
+          kind === "sweep"
+            ? `${r.postsScanned ?? r.posts_read ?? 0} posts & ${r.commentsScanned ?? r.comments_read ?? 0} comments scanned, ${r.memoriesCreated ?? 0} memories created (${r.totalMemories ?? 0} total)`
+            : `${r.signalsCreated ?? 0} new signals, ${r.signalsUpdated ?? 0} updated, top lesson: ${r.lessons?.[0] ?? "—"}`;
         setMessages(prev => [
           ...prev,
           {
             role: "assistant",
-            content: `✅ ${verb} complete — ${r.signalsCreated ?? 0} new signals, ${r.signalsUpdated ?? 0} updated, top lesson: ${r.lessons?.[0] ?? "—"}`,
+            content: `✅ ${verb} complete — ${summary}`,
             intent: "hive_report",
             enginesUsed: ["hive"],
           },

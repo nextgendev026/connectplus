@@ -31,8 +31,8 @@ npm install
 
 # Set up environment
 cp .env.example .env
-# Fill in the keys below, then apply the schema
-npm run db:push
+# Fill in the keys below, then apply the schema (creates versioned migrations)
+npm run db:migrate
 npm run db:generate
 
 # Seed the database (optional but recommended)
@@ -43,6 +43,8 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
+
+> **Migrations:** always change the schema via `npm run db:migrate` (Prisma `migrate dev`), which generates a timestamped migration file and applies it. Avoid `db:push` for shared/production schemas — it syncs the schema but creates no migration history, causing drift on other environments and CI. The `migrate deploy` step in CI applies committed migrations to production automatically.
 
 > Tip: `next dev` is run with `--webpack` in this environment; the plain `npm run dev` uses the default bundler. Use `next watch --webpack` / `next build --webpack` if you need to force webpack.
 
@@ -57,8 +59,14 @@ Open [http://localhost:3000](http://localhost:3000).
 | `SUPABASE_URL` | Supabase project URL (uploads + storage) |
 | `SUPABASE_SERVICE_KEY` | Service key for Storage uploads (server-only) |
 | `SUPABASE_ANON_KEY` | Public anon key |
-| `MAX_FILE_SIZE` | Upload limit in bytes (default 5MB) |
+| `SUPABASE_STORAGE_BUCKET` | Storage bucket name (default `uploads`) |
+| `MAX_FILE_SIZE` | Overall upload cap in bytes (default 5MB) |
+| `MAX_<TYPE>_SIZE` | Per-type upload caps, e.g. `MAX_GIF_SIZE` (GIF default 8MB) |
 | `UPLOAD_DIR` | Local fallback upload directory |
+| `RSS_POLL_INTERVAL_SECONDS` | Default per-feed RSS poll interval (default 3600) |
+| `CRON_SECRET` | Bearer secret for the `/api/rss/cron` Vercel Cron trigger |
+| `RATE_LIMIT_<KEY>` / `RATE_LIMIT_DEFAULT` | Optional rate-limit overrides (`limit:windowMs`) |
+| `LOG_LEVEL` | `debug` / `info` / `warn` / `error` for server logging |
 
 ## Scripts
 
@@ -66,8 +74,10 @@ Open [http://localhost:3000](http://localhost:3000).
 - `npm run build` — production build (`next build`; add `--webpack` for webpack)
 - `npm run typecheck` — `tsc --noEmit`
 - `npm run lint` — ESLint
+- `npm test` / `npm run test:watch` — unit tests (Vitest)
+- `npm run test:e2e` — E2E smoke tests (Playwright; run `npx playwright install chromium` once)
 - `npm run db:migrate` / `db:migrate:prod` — dev / deploy migrations
-- `npm run db:push` — push schema without migrations
+- `npm run db:push` — push schema without migrations (dev-only; prefer `db:migrate`)
 - `npm run db:seed` — seed 10 creators + content
 - `npm run db:studio` — Prisma Studio
 
@@ -80,7 +90,23 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Deploying
 
-- **Vercel** — connect the repo; the `next.config.mjs` CSP and runtime config are build-ready. Set all env vars above in the project settings.
-- **GitHub Actions** — `.github/workflows/webpack.yml` runs typecheck, lint, and `next build --webpack` on push.
+- **Vercel** — connect the repo; the `next.config.mjs` CSP, `vercel.json` cron, and runtime config are build-ready. Set all env vars above in the project settings (including `CRON_SECRET` for the hourly RSS job).
+- **GitHub Actions** — `.github/workflows/webpack.yml` runs typecheck, lint, unit tests, and `next build --webpack` on every push/PR; a Playwright E2E job runs against Chromium; and a `migrate` job applies `prisma migrate deploy` to production on `main`.
 
-Migrations must be applied before the first deploy using `npm run db:migrate:prod` (or `prisma migrate dev` locally) against your production `DATABASE_URL`.
+## Testing
+
+- **Unit (Vitest)** — `npm test` covers the pure logic: `slugify`/excerpt utilities and the Neural Mind's intent classifier, keyword extraction, and sentiment analysis (`tests/unit/*`).
+- **E2E (Playwright)** — `npm run test:e2e` boots the dev server and smoke-checks public pages and the sign-in form (`tests/e2e/smoke.spec.ts`).
+
+## Production Hardening Roadmap
+
+Items below need external infrastructure or are deliberately scoped out for now:
+
+- **Redis caching & BullMQ** — cache hot feeds/sessions and run scheduled RSS/vector jobs off a queue instead of `vercel.json` cron. Add `REDIS_URL`, use `ioredis` + `bullmq`.
+- **Sentry** — `@sentry/nextjs` for error tracking; Vercel Analytics for RUM/performance.
+- **Chunked/large uploads** — the upload route supports per-type caps today; switch to Tus for video (>10MB).
+- **Rate limiting to Upstash** — the in-memory limiter in `src/proxy.ts` is per-instance; Upstash Ratelimit (`@upstash/ratelimit`) makes it shared across serverless instances when you scale horizontally.
+- **i18n** — `next-intl` when expanding beyond the East African market.
+- **Rehype sanitisation** — no markdown→HTML renderer exists today (article bodies are rendered as escaped text), so XSS risk is low; adopt `rehype-sanitize` the day a rich renderer is added.
+
+Migrations must be applied before the first deploy using `prisma migrate deploy` (the CI `migrate` job does this automatically against `DATABASE_URL`).

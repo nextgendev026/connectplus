@@ -10,8 +10,31 @@ const ALLOWED_TYPES: Record<string, string> = {
   "image/webp": "webp",
   "image/gif": "gif",
 };
-const MAX_SIZE = 5 * 1024 * 1024;
 const KINDS = new Set(["avatar", "cover", "post"]);
+
+// Per-type size caps (bytes). Overall default is 5MB; GIFs get a larger cap by
+// default so longer animations upload cleanly. Any cap can be overridden via
+// `MAX_FILE_SIZE` (overall) and `MAX_<TYPE>_SIZE` (per type, e.g. MAX_GIF_SIZE).
+const MAX_SIZE = 5 * 1024 * 1024;
+const PER_TYPE_LIMITS: Record<string, number> = {
+  "image/jpeg": 5 * 1024 * 1024,
+  "image/png": 5 * 1024 * 1024,
+  "image/webp": 5 * 1024 * 1024,
+  "image/gif": 8 * 1024 * 1024,
+};
+
+function envBytes(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function maxSizeFor(mimeType: string): number {
+  const inferred = PER_TYPE_LIMITS[mimeType] ?? MAX_SIZE;
+  const perType = envBytes(`MAX_${mimeType.split("/")[1]?.toUpperCase()}_SIZE`, inferred);
+  return Math.min(envBytes("MAX_FILE_SIZE", MAX_SIZE), perType);
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -41,10 +64,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const sizeLimit = parseInt(process.env.MAX_FILE_SIZE ?? String(MAX_SIZE), 10) || MAX_SIZE;
+    const sizeLimit = maxSizeFor(file.type);
     if (file.size > sizeLimit) {
       return NextResponse.json(
-        { error: `File size exceeds ${Math.round(sizeLimit / 1024 / 1024)}MB limit` },
+        { error: `File size exceeds ${Math.round(sizeLimit / 1024 / 1024)}MB limit for ${file.type.replace("image/", "")} files` },
         { status: 400 }
       );
     }
@@ -55,11 +78,13 @@ export async function POST(request: NextRequest) {
 
     const supabaseUrl = process.env.SUPABASE_URL;
     const serviceKey = process.env.SUPABASE_SERVICE_KEY;
+    const bucket =
+      process.env.SUPABASE_STORAGE_BUCKET?.trim() || "uploads";
 
     if (supabaseUrl && serviceKey) {
       // Supabase Storage (persists across deploys, CDN-servable public bucket).
       const objectKey = `${kindParam}/${session.user.id}/${filename}`;
-      const uploadUrl = `${supabaseUrl}/storage/v1/object/${objectKey}`;
+      const uploadUrl = `${supabaseUrl}/storage/v1/object/${bucket}/${objectKey}`;
 
       const res = await fetch(uploadUrl, {
         method: "POST",
@@ -77,7 +102,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "Upload storage failed" }, { status: 502 });
       }
 
-      const url = `${supabaseUrl}/storage/v1/object/public/${objectKey}`;
+      const url = `${supabaseUrl}/storage/v1/object/public/${bucket}/${objectKey}`;
       return NextResponse.json({ url, filename }, { status: 201 });
     }
 

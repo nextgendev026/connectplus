@@ -156,7 +156,7 @@ export function SearchBar({
             if (e.key === "Enter") handleSearch(query);
           }}
           placeholder={placeholder}
-          className="flex-1 bg-transparent px-3 py-3.5 text-sm text-white placeholder-surface-500 outline-none"
+          className="flex-1 bg-transparent px-3 py-3.5 text-sm text-surface-50 placeholder-surface-500 outline-none"
         />
         {query && (
           <button
@@ -164,7 +164,7 @@ export function SearchBar({
               setQuery("");
               inputRef.current?.focus();
             }}
-            className="mr-1 rounded-lg p-1.5 text-surface-400 transition-colors hover:bg-surface-700 hover:text-white"
+            className="mr-1 rounded-lg p-1.5 text-surface-400 transition-colors hover:bg-surface-700 hover:text-surface-50"
           >
             <X className="h-4 w-4" />
           </button>
@@ -188,7 +188,7 @@ export function SearchBar({
                     setQuery(suggestion);
                     handleSearch(suggestion);
                   }}
-                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-surface-300 transition-colors hover:bg-surface-800 hover:text-white"
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-surface-300 transition-colors hover:bg-surface-800 hover:text-surface-50"
                 >
                   <Search className="h-4 w-4 flex-shrink-0 text-surface-500" />
                   <span className="flex-1 truncate">{suggestion}</span>
@@ -210,7 +210,7 @@ export function SearchBar({
                         setQuery(item);
                         handleSearch(item);
                       }}
-                      className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-surface-300 transition-colors hover:bg-surface-800 hover:text-white"
+                      className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-surface-300 transition-colors hover:bg-surface-800 hover:text-surface-50"
                     >
                       <Clock className="h-4 w-4 flex-shrink-0 text-surface-500" />
                       <span className="flex-1 truncate">{item}</span>
@@ -236,7 +236,7 @@ export function SearchBar({
                       setQuery(item.tag);
                       handleSearch(item.tag);
                     }}
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-surface-300 transition-colors hover:bg-surface-800 hover:text-white"
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-surface-300 transition-colors hover:bg-surface-800 hover:text-surface-50"
                   >
                     <Hash className="h-4 w-4 flex-shrink-0 text-brand-400" />
                     <span className="flex-1">{item.tag}</span>

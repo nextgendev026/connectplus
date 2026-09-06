@@ -52,10 +52,34 @@ export default function ModerationQueue() {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch("/api/admin/moderation", { credentials: "include" });
+      const res = await fetch("/api/admin/moderation?status=all", { credentials: "include" });
       if (!res.ok) throw new Error(`Failed to fetch moderation queue (${res.status})`);
       const data = await res.json();
-      setItems(Array.isArray(data) ? data : data.posts ?? []);
+      const posts = Array.isArray(data) ? data : data.posts ?? [];
+      setItems(
+        posts.map((p: {
+          id: string;
+          title: string;
+          content: string;
+          moderationStatus?: string;
+          createdAt: string;
+          updatedAt: string;
+          author?: { id: string; name: string; username: string; avatar?: string | null };
+        }): ModerationItem => ({
+          id: p.id,
+          title: p.title,
+          content: p.content,
+          status: (p.moderationStatus ?? "PENDING").toLowerCase() as ModerationItem["status"],
+          createdAt: p.createdAt,
+          updatedAt: p.updatedAt,
+          author: {
+            id: p.author?.id ?? "",
+            name: p.author?.name ?? "Unknown",
+            username: p.author?.username ?? "unknown",
+            image: p.author?.avatar ?? null,
+          },
+        }))
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load moderation queue");
     } finally {

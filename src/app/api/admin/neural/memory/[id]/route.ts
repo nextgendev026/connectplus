@@ -8,7 +8,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     if (!session?.user) {
       return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
-    const userRole = (session.user as any).role;
+    const userRole = (session.user as { role?: string }).role;
     if (userRole !== "ADMIN" && userRole !== "SUPER_ADMIN") {
       return NextResponse.json({ error: "Admin access required" }, { status: 403 });
     }

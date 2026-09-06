@@ -1,9 +1,6 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import {
-  UserRound,
-  Lock,
-  ShieldCheck,
-  ImageIcon,
   ChevronRight,
 } from "lucide-react";
 import { auth } from "@/lib/auth";
@@ -42,9 +39,9 @@ export default async function SettingsPage() {
     <div className="min-h-screen bg-surface-950">
       <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6">
         <nav className="flex items-center gap-1.5 text-xs text-surface-400 mb-8">
-          <a href="/" className="hover:text-surface-200 transition-colors">
+          <Link href="/" className="hover:text-surface-200 transition-colors">
             Home
-          </a>
+          </Link>
           <ChevronRight className="h-3 w-3" />
           <span className="text-surface-200">Settings</span>
         </nav>

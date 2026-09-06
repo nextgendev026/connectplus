@@ -297,7 +297,7 @@ export function CommentSection({ postId: _postId, className }: CommentSectionPro
   return (
     <section className={cn("w-full", className)}>
       <div className="flex items-center justify-between">
-        <h3 className="font-display text-xl font-bold text-white">
+        <h3 className="font-display text-xl font-bold text-surface-50">
           Comments{" "}
           <span className="text-surface-500">({totalComments})</span>
         </h3>
@@ -309,7 +309,7 @@ export function CommentSection({ postId: _postId, className }: CommentSectionPro
               className={cn(
                 "rounded-md px-3 py-1.5 text-xs font-medium capitalize transition-all",
                 sortBy === option
-                  ? "bg-surface-700 text-white shadow-sm"
+                  ? "bg-surface-700 text-surface-50 shadow-sm"
                   : "text-surface-400 hover:text-surface-200"
               )}
             >
@@ -339,7 +339,7 @@ export function CommentSection({ postId: _postId, className }: CommentSectionPro
                 }
                 rows={3}
                 className={cn(
-                  "w-full resize-none rounded-xl border border-surface-700/50 bg-surface-800/50 px-4 py-3 text-sm text-white placeholder-surface-500",
+                  "w-full resize-none rounded-xl border border-surface-700/50 bg-surface-800/50 px-4 py-3 text-sm text-surface-50 placeholder-surface-500",
                   "transition-all focus:border-brand-500/50 focus:outline-none focus:ring-1 focus:ring-brand-500/30",
                   "placeholder-surface-600"
                 )}

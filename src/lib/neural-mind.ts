@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { classifyIntent, applyLearnedAliases, extractUrls, isUrl, type Intent } from "@/lib/neural-intent";
 import { extractKeywords, analyzeSentiment, extractEntities, summarizeText, stripHtml } from "@/lib/neural-text";
 import { hiveBrain } from "@/lib/hive-brain";
+import { createLogger } from "@/lib/logger";
 
 export interface NeuralResponse {
   text: string;
@@ -42,6 +43,8 @@ export interface UserAnalysis {
 }
 
 class NeuralMindEngine {
+  private readonly log = createLogger("neural-mind");
+
   async getPlatformStats(): Promise<PlatformStats> {
     const now = new Date();
     const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -344,6 +347,7 @@ class NeuralMindEngine {
   // ── External Intelligence Engine ──
 
   async learnFromRssArticles() {
+    const startedAt = Date.now();
     const existingUrls = new Set(
       (await prisma.neuralMemory.findMany({ where: { source: "external" }, select: { sourceUrl: true } }))
         .map(m => m.sourceUrl).filter(Boolean) as string[]
@@ -356,6 +360,7 @@ class NeuralMindEngine {
     });
 
     let memoriesCreated = 0;
+    this.log.info("rss learn started", { articlesCandidates: articles.length });
 
     for (const article of articles) {
       const text = `${article.title} ${article.summary || ""} ${article.content || ""}`.trim();
@@ -394,11 +399,13 @@ class NeuralMindEngine {
             },
           });
         }
-      } catch {
+      } catch (err) {
+        this.log.warn("rss learn skipped article", { url: article.url, error: err instanceof Error ? err.message : String(err) });
         // skip duplicates
       }
     }
 
+    this.log.info("rss learn complete", { memoriesCreated, elapsedMs: Date.now() - startedAt });
     return { articlesAnalyzed: articles.length, memoriesCreated };
   }
 
@@ -414,6 +421,7 @@ class NeuralMindEngine {
       const html = await res.text();
       const text = stripHtml(html).slice(0, 15000);
       if (text.length < 50) return { success: false, error: "Content too short" };
+      this.log.info("learned from url", { url: url.slice(0, 100), chars: text.length });
 
       const keywords = extractKeywords(text, 15);
       const entities = extractEntities(text);
@@ -483,6 +491,7 @@ class NeuralMindEngine {
     const learned = await this.getLearnedIntentMaps();
     const learnedIntent = applyLearnedAliases(input, learned);
     const classified = classifyIntent(input);
+    this.log.debug("intent classified", { input: input.slice(0, 60), intent: classified.intent, confidence: classified.confidence, learnedIntent });
 
     if (learnedIntent && (classified.intent === "unknown" || classified.confidence < 0.5)) {
       return {
@@ -517,7 +526,9 @@ class NeuralMindEngine {
   }
 
   async processQuery(input: string, history?: { role: string; content: string }[]): Promise<NeuralResponse> {
+    const startedAt = Date.now();
     const { intent, confidence } = await this.classifyIntentWithMemory(input);
+    this.log.info("processing query", { intent, confidence });
     const urls = extractUrls(input);
     const enginesUsed: ("internal" | "external" | "hive")[] = [];
     const sources: string[] = [];
@@ -625,6 +636,7 @@ class NeuralMindEngine {
     }
 
     const text = await this.synthesizeResponse(intent, data, input);
+    this.log.info("query resolved", { intent, enginesUsed, elapsedMs: Date.now() - startedAt });
     return { text, intent, enginesUsed, confidence, sources };
   }
 

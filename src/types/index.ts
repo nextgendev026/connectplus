@@ -54,12 +54,7 @@ export interface AdminStats {
   usersThisWeek: number;
   postsThisWeek: number;
   activeNodes: number;
-  regionalBreakdown: {
-    city: string;
-    users: number;
-    posts: number;
-    views: number;
-  }[];
+  regionalBreakdown: Record<string, { users: number; posts: number }>;
 }
 
 export interface TrendData {

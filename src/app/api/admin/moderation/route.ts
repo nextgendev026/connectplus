@@ -16,15 +16,15 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url);
-    const status = searchParams.get("status") || "PENDING";
+    const status = searchParams.get("status") || "all";
 
     const validStatuses = ["PENDING", "APPROVED", "FLAGGED", "REJECTED"];
-    if (!validStatuses.includes(status)) {
+    if (status !== "all" && !validStatuses.includes(status)) {
       return NextResponse.json({ error: "Invalid status" }, { status: 400 });
     }
 
     const posts = await prisma.post.findMany({
-      where: { moderationStatus: status },
+      where: status === "all" ? {} : { moderationStatus: status },
       include: {
         author: { select: { id: true, name: true, username: true, avatar: true } },
         moderationLogs: { orderBy: { createdAt: "desc" }, take: 1 },
@@ -60,9 +60,10 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "postId and action are required" }, { status: 400 });
     }
 
+    const normalizedAction = String(action).toUpperCase();
     const validActions = ["APPROVE", "FLAG", "REJECT"];
-    if (!validActions.includes(action)) {
-      return NextResponse.json({ error: "Invalid action. Must be: APPROVE, FLAG, or REJECT" }, { status: 400 });
+    if (!validActions.includes(normalizedAction)) {
+      return NextResponse.json({ error: "Invalid action. Must be: approve, flag, or reject" }, { status: 400 });
     }
 
     const post = await prisma.post.findUnique({ where: { id: postId } });
@@ -80,7 +81,7 @@ export async function PUT(request: NextRequest) {
       prisma.post.update({
         where: { id: postId },
         data: {
-          moderationStatus: moderationStatusMap[action],
+          moderationStatus: moderationStatusMap[normalizedAction],
           moderatedAt: new Date(),
           moderatedBy: userId,
         },
@@ -90,7 +91,7 @@ export async function PUT(request: NextRequest) {
         data: {
           postId,
           moderatorId: userId,
-          action,
+          action: normalizedAction,
           reason: reason?.slice(0, 500) || null,
           aiScore: typeof aiScore === "number" ? aiScore : null,
           aiFlags: aiFlags?.slice(0, 500) || null,
