@@ -4,6 +4,7 @@ import { Inngest } from "inngest";
 export const inngest = new Inngest({
   id: "connectplus",
   name: "ConnectPlus",
+  signingKey: process.env.INNGEST_SIGN_KEY,
 });
 
 export type { Inngest } from "inngest";
