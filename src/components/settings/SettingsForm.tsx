@@ -63,6 +63,18 @@ export function SettingsForm({ user }: { user: SettingsUser }) {
   const [uploading, setUploading] = useState<"avatar" | "cover" | null>(null);
   const [message, setMessage] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
+  // Integrations state
+  const [pollInterval, setPollInterval] = useState("30");
+  const [activeFeeds, setActiveFeeds] = useState("10");
+  const [isPolling, setIsPolling] = useState(false);
+  const [rssError, setRssError] = useState<string | null>(null);
+  const [analyticsKey, setAnalyticsKey] = useState("");
+  const [savingAnalytics, setSavingAnalytics] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [savingWebhook, setSavingWebhook] = useState(false);
+  const [webhookError, setWebhookError] = useState<string | null>(null);
+
   const avatarInput = useRef<HTMLInputElement>(null);
   const coverInput = useRef<HTMLInputElement>(null);
 
@@ -175,6 +187,62 @@ export function SettingsForm({ user }: { user: SettingsUser }) {
       setSavingPassword(false);
     }
   }
+
+  const startRssPoll = async () => {
+    setMessage(null);
+    setIsPolling(true);
+    try {
+      const res = await fetch("/api/rss/poll?interval=" + pollInterval, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "RSS poll failed");
+      setMessage({ kind: "ok", text: "RSS poll started with " + pollInterval + "min interval" });
+    } catch (err) {
+      setRssError(err instanceof Error ? err.message : "RSS poll failed");
+      setMessage({ kind: "err", text: "Failed to start RSS poll" });
+    } finally {
+      setIsPolling(false);
+    }
+  };
+
+  const testAnalytics = async () => {
+    setMessage(null);
+    setSavingAnalytics(true);
+    try {
+      const res = await fetch("/api/user/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ analyticsKey }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Analytics test failed");
+      setMessage({ kind: "ok", text: "Analytics connection tested" });
+    } catch (err) {
+      setAnalyticsError(err instanceof Error ? err.message : "Analytics test failed");
+      setMessage({ kind: "err", text: "Failed to test analytics" });
+    } finally {
+      setSavingAnalytics(false);
+    }
+  };
+
+  const testWebhook = async () => {
+    setMessage(null);
+    setSavingWebhook(true);
+    try {
+      const res = await fetch("/api/user/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ webhookUrl }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Webhook test failed");
+      setMessage({ kind: "ok", text: "Webhook connection tested" });
+    } catch (err) {
+      setWebhookError(err instanceof Error ? err.message : "Webhook test failed");
+      setMessage({ kind: "err", text: "Failed to test webhook" });
+    } finally {
+      setSavingWebhook(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -370,7 +438,7 @@ export function SettingsForm({ user }: { user: SettingsUser }) {
             </div>
           </div>
         </div>
-      ) : (
+      ) : tab === "security" ? (
         <div className="space-y-6">
           <div className="rounded-2xl border border-surface-800 bg-surface-900/40 p-6">
             <h2 className="mb-1 font-display text-lg font-bold text-surface-50">Email address</h2>
@@ -456,6 +524,130 @@ export function SettingsForm({ user }: { user: SettingsUser }) {
               Your account is secured with encrypted credentials. Note: display changes may not
               reflect in the navbar until your next sign-in.
             </p>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          <div className="rounded-2xl border border-surface-800 bg-surface-900/40 p-6">
+            <h2 className="mb-1 font-display text-lg font-bold text-surface-50">Integrations</h2>
+            <p className="text-sm text-surface-500 mb-6">
+              Connect third-party services to extend ConnectPlus functionality.
+            </p>
+
+            {/* RSS Feed Pulser */}
+            <div className="rounded-2xl border border-surface-800/50 bg-surface-900/60 p-5 mb-6">
+              <h3 className="mb-4 font-display text-sm font-bold text-surface-50">RSS Feed Pulser</h3>
+              <p className="text-xs text-surface-400 mb-3">Automatically poll RSS feeds and import articles</p>
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="block text-xs text-surface-400 mb-1">Poll Interval (minutes)</label>
+                  <input
+                    type="number"
+                    value={pollInterval}
+                    onChange={(e) => setPollInterval(e.target.value)}
+                    className={inputCls}
+                    min="1"
+                    max="1440"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-surface-400 mb-1">Active Feeds</label>
+                  <input
+                    type="number"
+                    value={activeFeeds}
+                    onChange={(e) => setActiveFeeds(e.target.value)}
+                    className={inputCls}
+                    min="0"
+                    max="50"
+                  />
+                </div>
+              </div>
+              <button
+                onClick={startRssPoll}
+                disabled={isPolling}
+                className="w-full rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition-all"
+              >
+                {isPolling ? (
+                  <span className="flex items-center gap-1">
+                    <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Polling
+                  </span>
+                ) : (
+                  "Start RSS Pulser"
+                )}
+              </button>
+              {rssError && (
+                <p className="mt-2 text-sm text-red-400">{rssError}</p>
+              )}
+            </div>
+
+            {/* Analytics Service */}
+            <div className="rounded-2xl border border-surface-800/50 bg-surface-900/60 p-5 mb-6">
+              <h3 className="mb-4 font-display text-sm font-bold text-surface-50">Analytics Service</h3>
+              <p className="text-xs text-surface-400 mb-3">Track post views and engagement metrics</p>
+              <div className="mb-4">
+                <label className="block text-xs text-surface-400 mb-1">API Key</label>
+                <input
+                  type="text"
+                  value={analyticsKey}
+                  onChange={(e) => setAnalyticsKey(e.target.value)}
+                  className={inputCls}
+                  placeholder="Enter your analytics API key"
+                  maxLength={100}
+                />
+              </div>
+              <button
+                onClick={testAnalytics}
+                disabled={savingAnalytics}
+                className="w-full rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition-all"
+              >
+                {savingAnalytics ? (
+                  <span className="flex items-center gap-1">
+                    <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Saving
+                  </span>
+                ) : (
+                  "Test Connection"
+                )}
+              </button>
+              {analyticsError && (
+                <p className="mt-2 text-sm text-red-400">{analyticsError}</p>
+              )}
+            </div>
+
+            {/* Custom Webhook */}
+            <div className="rounded-2xl border border-surface-800/50 bg-surface-900/60 p-5">
+              <h3 className="mb-4 font-display text-sm font-bold text-surface-50">Custom Webhook</h3>
+              <p className="text-xs text-surface-400 mb-3">Receive real-time notifications for events</p>
+              <div className="mb-4">
+                <label className="block text-xs text-surface-400 mb-1">Webhook URL</label>
+                <input
+                  type="text"
+                  value={webhookUrl}
+                  onChange={(e) => setWebhookUrl(e.target.value)}
+                  className={inputCls}
+                  placeholder="https://example.com/webhook"
+                  maxLength={200}
+                />
+              </div>
+              <button
+                onClick={testWebhook}
+                disabled={savingWebhook}
+                className="w-full rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition-all"
+              >
+                {savingWebhook ? (
+                  <span className="flex items-center gap-1">
+                    <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Saving
+                  </span>
+                ) : (
+                  "Test Webhook"
+                )}
+              </button>
+              {webhookError && (
+                <p className="mt-2 text-sm text-red-400">{webhookError}</p>
+              )}
+            </div>
           </div>
         </div>
       )}

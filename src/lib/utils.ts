@@ -71,3 +71,46 @@ export function getRandomNode(): string {
 }
 
 export const NODES = EAST_AFRICAN_CITIES;
+
+export function getCacheKey(prefix: string, id: string): string {
+  return `connectplus_${prefix}_${id}`;
+}
+
+export function getFromCache<T>(key: string): T | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const data = localStorage.getItem(key);
+    return data ? JSON.parse(data) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setCache<T>(key: string, value: T, ttlMinutes = 60): void {
+  if (typeof window === "undefined") return;
+  try {
+    const item = {
+      value,
+      expiry: Date.now() + ttlMinutes * 60 * 1000,
+    };
+    localStorage.setItem(key, JSON.stringify(item));
+  } catch {
+    // Ignore localStorage errors
+  }
+}
+
+export function getExpiredCache<T>(key: string): T | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const data = localStorage.getItem(key);
+    if (!data) return null;
+    const item = JSON.parse(data);
+    if (item.expiry < Date.now()) {
+      localStorage.removeItem(key);
+      return null;
+    }
+    return item.value as T;
+  } catch {
+    return null;
+  }
+}
