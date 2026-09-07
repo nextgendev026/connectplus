@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { slugify, stripHtml } from "@/lib/utils";
 import { hiveBrain } from "@/lib/hive-brain";
+import { autoTagPost } from "@/lib/auto-tag";
 
 export async function POST(request: NextRequest) {
   try {
@@ -102,6 +103,7 @@ export async function POST(request: NextRequest) {
     });
 
     await hiveBrain.ingestPost(post).catch(() => {});
+    void autoTagPost(post.id, `${post.title} ${post.excerpt ?? ""}`);
 
     return NextResponse.json({ post }, { status: 201 });
   } catch (error) {

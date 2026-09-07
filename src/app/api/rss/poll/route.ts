@@ -22,11 +22,10 @@ export async function POST(request: NextRequest) {
     }
 
     if (trigger === "rss-poll-feed" && feedId) {
-      // Trigger specific feed poll with property
+      // Trigger specific feed poll, passing the feedId in the event payload
       await inngest.send({
         name: "rss-poll-feed",
-        // Properties are passed but Inngest may not use them for simple triggers
-        // We'll just trigger the function
+        data: { feedId },
       });
 
       return NextResponse.json({ 

@@ -70,6 +70,7 @@ interface MyPost {
   status: string;
   slug: string;
   updatedAt: string;
+  scheduledAt?: string | null;
 }
 
 const inputCls =
@@ -84,6 +85,14 @@ function timeAgo(iso: string): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+function dateToLocalInput(value: string | null | undefined): string {
+  if (!value) return "";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 export default function StudioPage() {
@@ -108,6 +117,7 @@ export default function StudioPage() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editStatus, setEditStatus] = useState<string | null>(null);
+  const [scheduledFor, setScheduledFor] = useState<string>("");
   const [myStories, setMyStories] = useState<MyPost[]>([]);
   const [storiesLoading, setStoriesLoading] = useState(true);
   const [storiesUnauth, setStoriesUnauth] = useState(false);
@@ -156,12 +166,13 @@ export default function StudioPage() {
       const data = await res.json();
       if (!data?.posts) return;
       setMyStories(
-        data.posts.map((p: { id: string; title: string; status: string; slug: string; updatedAt: string }) => ({
+        data.posts.map((p: { id: string; title: string; status: string; slug: string; updatedAt: string; scheduledAt?: string | null }) => ({
           id: p.id,
           title: p.title,
           status: p.status,
           slug: p.slug,
           updatedAt: p.updatedAt,
+          scheduledAt: p.scheduledAt ?? null,
         }))
       );
       setStoriesUnauth(false);
@@ -195,6 +206,7 @@ export default function StudioPage() {
             setCategoryName(data.post.category.name);
           }
           setEditStatus(data.post.status ?? null);
+          setScheduledFor(dateToLocalInput(data.post.scheduledAt));
         })
         .catch(() => {});
     } else {
@@ -243,6 +255,7 @@ export default function StudioPage() {
           categoryId: matchedCategory?.id ?? null,
           tags,
           status,
+          scheduledAt: status === "DRAFT" && scheduledFor ? new Date(scheduledFor).toISOString() : null,
         };
 
         let postId = editingId;
@@ -284,7 +297,7 @@ export default function StudioPage() {
         if (mountedRef.current) setSaving(false);
       }
     },
-    [title, content, excerpt, coverImage, categoryId, categoryName, categoriesList, tags, editingId, router]
+    [title, content, excerpt, coverImage, categoryId, categoryName, categoriesList, tags, editingId, router, scheduledFor]
   );
 
   const canAutoSave = (title.trim().length > 0 || content.trim().length > 0) && !showPreview;
@@ -474,6 +487,13 @@ export default function StudioPage() {
     if (postStatus === "published") setIsPublishing(true);
 
     try {
+      const scheduleDate = scheduledFor ? new Date(scheduledFor) : null;
+      const isScheduled =
+        postStatus === "published" &&
+        scheduleDate &&
+        !isNaN(scheduleDate.getTime()) &&
+        scheduleDate.getTime() > Date.now() + 60_000;
+
       let uploadedCoverUrl: string | null = null;
       if (coverFile) {
         uploadedCoverUrl = await uploadCoverImage();
@@ -482,6 +502,7 @@ export default function StudioPage() {
       }
 
       const matchedCategory = categoriesList.find((c) => c.id === categoryId || c.name === categoryName);
+      const finalStatus = isScheduled ? "DRAFT" : postStatus === "published" ? "PUBLISHED" : "DRAFT";
       const payload = {
         title: title.trim(),
         content: content.trim(),
@@ -489,10 +510,10 @@ export default function StudioPage() {
         coverImage: uploadedCoverUrl,
         categoryId: matchedCategory?.id ?? null,
         tags,
-        status: postStatus === "published" ? "PUBLISHED" : "DRAFT",
+        status: finalStatus,
+        scheduledAt: isScheduled ? scheduleDate.toISOString() : null,
       };
 
-      const finalStatus = postStatus === "published" ? "PUBLISHED" : "DRAFT";
       const res = editingId
         ? await fetch(`/api/posts/${editingId}`, {
             method: "PUT",
@@ -520,6 +541,12 @@ export default function StudioPage() {
       try {
         localStorage.removeItem(BACKUP_KEY);
       } catch {}
+
+      if (isScheduled) {
+        setError("Story scheduled — it will be published at the chosen time.");
+        loadMyStories();
+        return;
+      }
 
       if (finalStatus === "PUBLISHED") {
         const slug = data?.post?.slug;
@@ -552,6 +579,7 @@ export default function StudioPage() {
       if (editingId === id) {
         setEditingId(null);
         setEditStatus(null);
+        setScheduledFor("");
         setTitle("");
         setContent("");
         setExcerpt("");
@@ -583,6 +611,7 @@ export default function StudioPage() {
           setCategoryName(data.post.category.name);
         }
         setEditStatus(data.post.status ?? null);
+        setScheduledFor(dateToLocalInput(data.post.scheduledAt));
         setLastSaved(null);
       })
       .catch(() => {});
@@ -591,6 +620,7 @@ export default function StudioPage() {
   function newStory() {
     setEditingId(null);
     setEditStatus(null);
+    setScheduledFor("");
     setTitle("");
     setContent("");
     setExcerpt("");
@@ -616,6 +646,8 @@ export default function StudioPage() {
     { icon: Link2, label: "Link", action: () => insertMarkdown("[", "](https://)", "link text") },
     { icon: ImageIcon, label: "Image", action: () => insertMarkdown("![", "](https://)", "alt text") },
   ];
+
+  const scheduledValid = !!scheduledFor && new Date(scheduledFor).getTime() > Date.now() + 60_000;
 
   return (
     <div className="min-h-screen bg-surface-950">
@@ -695,6 +727,8 @@ export default function StudioPage() {
                   <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                   Publishing...
                 </span>
+              ) : scheduledValid ? (
+                "Schedule"
               ) : editingId && editStatus === "PUBLISHED" ? (
                 "Update"
               ) : (
@@ -904,7 +938,15 @@ export default function StudioPage() {
                             {post.title}
                           </p>
                           <p className="text-[10px] text-surface-500 mt-0.5">
-                            {post.status === "PUBLISHED" ? "Published" : "Draft"} · {timeAgo(post.updatedAt)}
+                            {post.status === "PUBLISHED"
+                              ? "Published"
+                              : post.scheduledAt
+                                ? "Scheduled"
+                                : "Draft"}{" "}
+                            ·{" "}
+                            {post.scheduledAt
+                              ? new Date(post.scheduledAt).toLocaleDateString()
+                              : timeAgo(post.updatedAt)}
                           </p>
                         </button>
                         <button
@@ -987,6 +1029,29 @@ export default function StudioPage() {
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-surface-400">Words</span>
                   <span className="text-xs font-medium text-surface-300">{wordCount}</span>
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs text-surface-400">Schedule publish</span>
+                    {scheduledFor && (
+                      <button
+                        onClick={() => setScheduledFor("")}
+                        className="text-[10px] text-surface-500 hover:text-red-400 transition-colors"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="datetime-local"
+                    value={scheduledFor}
+                    min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)}
+                    onChange={(e) => setScheduledFor(e.target.value)}
+                    className="w-full bg-surface-800/60 border border-surface-700/50 rounded-lg px-3 py-1.5 text-xs text-surface-300 [color-scheme:dark] focus:outline-none focus:border-brand-500/40 transition-colors"
+                  />
+                  {scheduledFor && new Date(scheduledFor).getTime() <= Date.now() && (
+                    <p className="text-[10px] text-red-400 mt-1">Choose a future date to schedule.</p>
+                  )}
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-surface-400">Read time</span>

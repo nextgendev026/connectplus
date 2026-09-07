@@ -84,7 +84,7 @@ export async function PUT(
     }
 
     const body = await request.json();
-    const { title, content, excerpt, coverImage, categoryId, tags, status, featured } = body;
+    const { title, content, excerpt, coverImage, categoryId, tags, status, featured, scheduledAt } = body;
 
     const updateData: {
       title?: string;
@@ -95,7 +95,8 @@ export async function PUT(
       featured?: boolean;
       status?: string;
       moderationStatus?: string;
-      publishedAt?: Date;
+      publishedAt?: Date | null;
+      scheduledAt?: Date | null;
     } = {};
 
     if (title !== undefined) updateData.title = String(title).trim().slice(0, 300);
@@ -105,7 +106,23 @@ export async function PUT(
     if (categoryId !== undefined) updateData.categoryId = categoryId || null;
     if (featured !== undefined) updateData.featured = Boolean(featured);
 
-    if (status !== undefined) {
+    let parsedScheduledAt: Date | null = null;
+    if (scheduledAt) {
+      const parsed = new Date(scheduledAt);
+      if (!isNaN(parsed.getTime())) {
+        parsedScheduledAt =
+          parsed.getTime() > Date.now() - 24 * 60 * 60 * 1000 ? parsed : null;
+      }
+    } else if (scheduledAt === null || scheduledAt === "") {
+      updateData.scheduledAt = null;
+    }
+
+    if (parsedScheduledAt) {
+      updateData.status = "DRAFT";
+      updateData.publishedAt = null;
+      updateData.moderationStatus = "PENDING";
+      updateData.scheduledAt = parsedScheduledAt;
+    } else if (status !== undefined) {
       updateData.status = String(status);
       if (status === "PUBLISHED") {
         updateData.publishedAt = new Date();
@@ -132,8 +149,8 @@ export async function PUT(
       });
     }
 
-    const { title: _t, content: _c, excerpt: _e, coverImage: _ci, categoryId: _cat, featured: _f, status: _s, publishedAt: _pa } = updateData;
-    const dataWithoutTags = { title: _t, content: _c, excerpt: _e, coverImage: _ci, categoryId: _cat, featured: _f, status: _s, publishedAt: _pa };
+    const { title: _t, content: _c, excerpt: _e, coverImage: _ci, categoryId: _cat, featured: _f, status: _s, publishedAt: _pa, scheduledAt: _sa } = updateData;
+    const dataWithoutTags = { title: _t, content: _c, excerpt: _e, coverImage: _ci, categoryId: _cat, featured: _f, status: _s, publishedAt: _pa, scheduledAt: _sa };
 
     const post = await prisma.post.update({
       where: { id },

@@ -4,6 +4,7 @@ import Script from "next/script";
 import { prisma } from "@/lib/prisma";
 import { cn, estimateReadTime, timeAgo } from "@/lib/utils";
 import { FeedLiveRefresh } from "@/components/feed/FeedLiveRefresh";
+import { HeroSlideshow } from "@/components/feed/HeroSlideshow";
 import {
   TrendingUp,
   Eye,
@@ -12,18 +13,14 @@ import {
   ArrowRight,
   Bookmark,
   Flame,
-  Zap,
   Globe,
   Users,
   ChevronRight,
   SearchX,
   Pen,
   Sparkles,
-  MapPin,
   Clock,
-  BookOpen,
   PenLine,
-  ChevronDown,
 } from "lucide-react";
 
 function formatViews(count: number): string {
@@ -193,133 +190,6 @@ function PostCard({
         </div>
       </Link>
     </AnimatedCard>
-  );
-}
-
-function HeroSection({
-  stats,
-}: {
-  stats: { writers: number; stories: number; cities: number };
-}) {
-  const words = ["Stories", "that", "connect", "East", "Africa"];
-  const subtitle =
-    "Discover perspectives on technology, culture, business, and lifestyle from Nairobi to Kigali, Kampala to Dar es Salaam. Written by the people shaping the region.";
-
-  return (
-    <section className="relative min-h-screen flex items-center overflow-hidden">
-      {/* Animated mesh gradient background */}
-      <div className="absolute inset-0">
-        <div className="absolute inset-0 bg-mesh-gradient" />
-        <div className="absolute inset-0 bg-hero-gradient opacity-60" />
-        <div
-          className="absolute inset-0 opacity-30"
-          style={{
-            background:
-              "radial-gradient(ellipse 80% 50% at 50% -20%, rgba(34,197,94,0.15), transparent), radial-gradient(ellipse 60% 40% at 80% 50%, rgba(6,182,212,0.1), transparent)",
-          }}
-        />
-      </div>
-
-      {/* Floating animated shapes */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-[15%] right-[10%] w-72 h-72 bg-brand-500/8 rounded-full blur-3xl animate-float" />
-        <div className="absolute bottom-[20%] right-[25%] w-48 h-48 bg-accent-cyan/8 rounded-full blur-3xl animate-float-delayed" />
-        <div className="absolute top-[40%] left-[5%] w-64 h-64 bg-brand-400/5 rounded-full blur-3xl animate-float-slow" />
-        <div className="absolute top-[10%] left-[60%] w-32 h-32 border border-brand-500/10 rounded-full animate-spin-slow" />
-        <div className="absolute bottom-[30%] left-[30%] w-20 h-20 border border-accent-cyan/10 rounded-xl rotate-45 animate-spin-slow-reverse" />
-        <div className="absolute top-[60%] right-[5%] w-16 h-16 border border-brand-500/10 rounded-lg animate-float" />
-        {/* Grid dots */}
-        <div
-          className="absolute inset-0 opacity-[0.03]"
-          style={{
-            backgroundImage:
-              "radial-gradient(circle, rgba(255,255,255,0.8) 1px, transparent 1px)",
-            backgroundSize: "40px 40px",
-          }}
-        />
-      </div>
-
-      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 w-full pt-32 md:pt-24 pb-20">
-        <div className="max-w-3xl">
-          {/* Badge */}
-          <div className="inline-flex items-center gap-2 rounded-full bg-brand-500/10 border border-brand-500/20 px-4 py-1.5 mb-8 animate-fade-in-up">
-            <Zap className="w-3.5 h-3.5 text-brand-400" />
-            <span className="text-xs font-medium text-brand-400">
-              The Home of East African Stories
-            </span>
-          </div>
-
-          {/* Animated headline */}
-          <h1 className="text-4xl sm:text-5xl md:text-7xl font-display font-bold tracking-tight leading-[1.05] mb-6">
-            {words.map((word, i) => (
-              <span
-                key={i}
-                className={cn(
-                  "inline-block mr-[0.3em] animate-word-in",
-                  word === "connect"
-                    ? "text-transparent bg-clip-text bg-gradient-to-r from-brand-400 via-brand-500 to-accent-cyan"
-                    : "text-surface-50"
-                )}
-                style={{ animationDelay: `${0.1 + i * 0.12}s` }}
-              >
-                {word}
-              </span>
-            ))}
-          </h1>
-
-          {/* Subtitle */}
-          <p className="text-base sm:text-lg md:text-xl text-surface-400 leading-relaxed max-w-xl mb-8 animate-fade-in-up animation-delay-800">
-            {subtitle}
-          </p>
-
-          {/* CTA Buttons */}
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 mb-16 animate-fade-in-up animation-delay-1000">
-            <Link
-              href="/studio"
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-500 px-6 py-3.5 text-sm font-semibold text-white hover:bg-brand-600 transition-all shadow-glow hover:shadow-glow-lg hover:scale-[1.02] active:scale-[0.98]"
-            >
-              <PenLine className="w-4 h-4" />
-              Start Writing
-            </Link>
-            <a
-              href="#feed"
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-surface-700 px-6 py-3.5 text-sm font-medium text-surface-300 hover:bg-surface-800/50 hover:border-surface-600 hover:text-surface-50 transition-all"
-            >
-              Explore Stories
-              <ChevronDown className="w-4 h-4" />
-            </a>
-          </div>
-
-          {/* Animated Stats */}
-          <div className="grid grid-cols-3 gap-4 sm:gap-8 max-w-md animate-fade-in-up animation-delay-1200">
-            {[
-              { value: `${stats.writers.toLocaleString()}+`, label: "Writers", icon: Users },
-              { value: `${stats.stories.toLocaleString()}+`, label: "Stories", icon: BookOpen },
-              { value: `${stats.cities}`, label: "Cities Connected", icon: MapPin },
-            ].map((stat) => (
-              <div key={stat.label} className="group">
-                <div className="flex items-center gap-1.5 mb-1">
-                  <stat.icon className="w-3.5 h-3.5 text-brand-400" />
-                  <span className="text-xl sm:text-2xl md:text-3xl font-bold text-surface-50 font-display">
-                    {stat.value}
-                  </span>
-                </div>
-                <p className="text-xs sm:text-sm text-surface-500">
-                  {stat.label}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Scroll indicator */}
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 animate-fade-in animation-delay-[2000ms]">
-          <div className="w-5 h-8 rounded-full border-2 border-surface-600 flex items-start justify-center p-1">
-            <div className="w-1 h-2 rounded-full bg-brand-400 animate-scroll-dot" />
-          </div>
-        </div>
-      </div>
-    </section>
   );
 }
 
@@ -670,7 +540,7 @@ export default async function HomeFeedPage({
     where.category = { slug: categoryFilter };
   }
 
-  const [posts, allCategories, allTags, allCreators] = await Promise.all([
+  const [posts, heroPostRows, allCategories, allTags, allCreators] = await Promise.all([
     prisma.post.findMany({
       where,
       include: {
@@ -681,6 +551,26 @@ export default async function HomeFeedPage({
       },
       orderBy: { createdAt: "desc" },
       take: 20,
+    }),
+    prisma.post.findMany({
+      where: {
+        status: "PUBLISHED",
+        moderationStatus: "APPROVED",
+        coverImage: { not: null },
+      },
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        excerpt: true,
+        coverImage: true,
+        viewCount: true,
+        createdAt: true,
+        category: { select: { name: true, slug: true } },
+        author: { select: { name: true, username: true } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 6,
     }),
     prisma.category.findMany({
       select: {
@@ -730,7 +620,8 @@ export default async function HomeFeedPage({
 
   return (
     <div className="min-h-screen bg-surface-950">
-      <HeroSection
+      <HeroSlideshow
+        slides={heroPostRows}
         stats={{
           writers: allCreators.length,
           stories: posts.length,

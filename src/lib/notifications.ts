@@ -80,3 +80,35 @@ export async function createApprovalNotification(params: {
     postId: params.postId,
   });
 }
+
+/**
+ * Notify all followers of the author that a new story has been published.
+ * Batched best-effort; safe to run in background jobs.
+ */
+export async function createPublishNotifications(params: {
+  authorId: string;
+  authorName: string;
+  postId: string;
+  postTitle: string;
+}) {
+  try {
+    const followers = await prisma.user.findMany({
+      where: { followingLinks: { some: { followingId: params.authorId } } },
+      select: { id: true },
+    });
+    await prisma.notification.createMany({
+      data: followers.map((f) => ({
+        userId: f.id,
+        actorId: params.authorId,
+        type: "POST_PUBLISHED",
+        title: "New story",
+        message: `${params.authorName} published a new story: ${params.postTitle}`,
+        postId: params.postId,
+      })),
+    });
+    return followers.length;
+  } catch (error) {
+    console.error("Failed to create publish notifications:", error);
+    return 0;
+  }
+}

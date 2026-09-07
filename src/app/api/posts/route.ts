@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
 
     const userId = session.user.id;
     const body = await request.json();
-    const { title, content, excerpt, coverImage, categoryId, tags, status } = body;
+    const { title, content, excerpt, coverImage, categoryId, tags, status, scheduledAt } = body;
 
     if (!title || typeof title !== "string" || title.trim().length === 0) {
       return NextResponse.json({ error: "Title is required" }, { status: 400 });
@@ -114,7 +114,16 @@ export async function POST(request: NextRequest) {
       slug = `${slug}-${Date.now()}`;
     }
 
-    const postStatus = status === "PUBLISHED" ? "PUBLISHED" : "DRAFT";
+    let scheduleDate: Date | null = null;
+    if (scheduledAt) {
+      const parsed = new Date(scheduledAt);
+      if (!isNaN(parsed.getTime()) && parsed.getTime() > Date.now() + 60_000) {
+        scheduleDate = parsed;
+      }
+    }
+
+    const wantsPublish = status === "PUBLISHED" && !scheduleDate;
+    const postStatus = wantsPublish ? "PUBLISHED" : "DRAFT";
 
     const tagConnections = tags && Array.isArray(tags)
       ? await Promise.all(
@@ -142,6 +151,7 @@ export async function POST(request: NextRequest) {
         status: postStatus,
         moderationStatus: postStatus === "PUBLISHED" ? "APPROVED" : "PENDING",
         publishedAt: postStatus === "PUBLISHED" ? new Date() : null,
+        scheduledAt: scheduleDate,
         tags: { connect: tagConnections },
       },
       include: {

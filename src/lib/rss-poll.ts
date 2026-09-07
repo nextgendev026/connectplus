@@ -1,5 +1,6 @@
 import Parser from "rss-parser";
 import { prisma } from "@/lib/prisma";
+import { autoTagPost } from "@/lib/auto-tag";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("rss-poll");
@@ -24,6 +25,77 @@ export interface PollSummary {
 
 function stripHtml(html: string): string {
   return html.replace(/<[^>]+>/g, "").trim();
+}
+
+function absolutize(url: string, base: string | undefined): string | null {
+  const trimmed = url.trim();
+  if (!trimmed || trimmed.startsWith("data:")) return null;
+  try {
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    if (/%[0-9a-f]{2}/i.test(trimmed)) return null;
+    if (trimmed.startsWith("//")) return `https:${trimmed}`;
+    if (base) return new URL(trimmed, base).toString();
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function extractFirstImage(content: string): string | null {
+  if (!content) return null;
+  const imgTag = content.match(/<img[^>]+src=["']([^"']+)["']/i);
+  if (imgTag?.[1]) return imgTag[1];
+  const anySrc = content.match(/src=["']([^"']+\.(?:jpe?g|png|gif|webp|avif))["']/i);
+  return anySrc?.[1] ?? null;
+}
+
+async function fetchOgImage(articleUrl: string): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch(articleUrl, {
+      signal: controller.signal,
+      redirect: "follow",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; ConnectPlus RSS Reader/1.0)",
+        Accept: "text/html",
+      },
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const html = await res.text();
+    const og = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
+    if (og?.[1]) return og[1];
+    const image = html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i);
+    if (image?.[1]) return image[1];
+    const firstImg = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+    return firstImg?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveImage(item: {
+  enclosure?: { url?: string } | null;
+  "media:thumbnail"?: { $?: { url?: string } } | null;
+  "media:content"?: { $?: { url?: string } } | null;
+  content?: string;
+  "content:encoded"?: string;
+  contentSnippet?: string;
+  link?: string;
+}): Promise<string | null> {
+  const base = item.link || undefined;
+  const candidates = [
+    item.enclosure?.url,
+    item["media:thumbnail"]?.$?.url,
+    item["media:content"]?.$?.url,
+    extractFirstImage(item["content:encoded"] || item.content || ""),
+  ];
+  for (const c of candidates) {
+    const abs = absolutize(c ?? "", base);
+    if (abs) return abs;
+  }
+  return fetchOgImage(base ?? "");
 }
 
 export async function pollFeeds(feedId?: string): Promise<PollSummary> {
@@ -76,14 +148,7 @@ export async function pollFeeds(feedId?: string): Promise<PollSummary> {
         const content = item["content:encoded"] || item.content || item.contentSnippet || "";
         const summary = item.contentSnippet || item.summary || stripHtml(content).slice(0, 500);
 
-        let imageUrl: string | null = null;
-        if (item.enclosure?.url) {
-          imageUrl = item.enclosure.url;
-        } else if (item["media:thumbnail"]?.$?.url) {
-          imageUrl = item["media:thumbnail"].$.url;
-        } else if (item["media:content"]?.$?.url) {
-          imageUrl = item["media:content"].$.url;
-        }
+        const imageUrl = await resolveImage(item);
 
         try {
 await prisma.rssArticle.create({
@@ -99,19 +164,27 @@ await prisma.rssArticle.create({
             },
           });
           if (defaultAuthor?.id) {
-            await prisma.post.create({
+            const publishedAt = item.pubDate ? new Date(item.pubDate) : new Date();
+            const titleText = item.title || "Untitled";
+            const slugBase = titleText.toLowerCase().replace(/[^\w]+/g, "-").replace(/^-+|-+$/g, "");
+            const slug = `${slugBase}-${Math.random().toString(36).slice(2, 7)}`;
+            const post = await prisma.post.create({
               data: {
-                title: item.title || "Untitled",
-                slug: item.title ? item.title.toLowerCase().replace(/[^\w]+/g, "-") : "rss-article",
+                title: titleText,
+                slug,
                 excerpt: summary ?? "",
                 content: typeof content === "string" ? content.slice(0, 3000) : "",
                 coverImage: imageUrl,
                 status: "PUBLISHED",
                 moderationStatus: "APPROVED",
                 authorId: defaultAuthor.id,
+                source: feed.name,
+                sourceUrl: articleUrl,
+                publishedAt,
                 viewCount: 0,
               },
             });
+            void autoTagPost(post.id, `${titleText} ${summary ?? ""}`);
           }
           feedNewArticles++;
         } catch (err: unknown) {
