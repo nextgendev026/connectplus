@@ -1,0 +1,299 @@
+"use client";
+
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { STATIONS, getStationById } from "@/lib/radio-stations";
+import type { RadioStation } from "@/lib/radio-stations";
+
+export type StreamState = "idle" | "connecting" | "playing" | "error";
+
+export interface NowPlaying {
+  song: string | null;
+  listeners: number | null;
+  meta: boolean;
+}
+
+interface RadioPlayerContextValue {
+  station: RadioStation | null;
+  isPlaying: boolean;
+  streamState: StreamState;
+  volume: number;
+  favorites: string[];
+  recentlyPlayed: string[];
+  nowPlaying: NowPlaying;
+  playStation: (stationId: string) => void;
+  togglePlay: () => void;
+  stop: () => void;
+  setVolume: (v: number) => void;
+  toggleFavorite: (stationId: string) => void;
+  skip: (dir: 1 | -1) => void;
+}
+
+const RadioPlayerContext = createContext<RadioPlayerContextValue | null>(null);
+
+function safeGetStorage(key: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeSetStorage(key: string, value: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // ignore quota/private-mode errors
+  }
+}
+
+export function RadioPlayerProvider({ children }: { children: ReactNode }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [station, setStation] = useState<RadioStation | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [streamState, setStreamState] = useState<StreamState>("idle");
+  const [volume, setVolumeState] = useState(75);
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [recentlyPlayed, setRecentlyPlayed] = useState<string[]>([]);
+  const [nowPlaying, setNowPlaying] = useState<NowPlaying>({ song: null, listeners: null, meta: false });
+
+  const volumeRef = useRef(volume);
+  volumeRef.current = volume;
+  const stationRef = useRef(station);
+  stationRef.current = station;
+  const pausedByUser = useRef(false);
+
+  // Restore persisted prefs + last station (stay paused until user plays).
+  useEffect(() => {
+    const vol = safeGetStorage("radio-volume");
+    if (vol) {
+      const n = Number(vol);
+      if (!Number.isNaN(n)) setVolumeState(n);
+    }
+    const favs = safeGetStorage("radio-favorites");
+    if (favs) {
+      try {
+        setFavorites(JSON.parse(favs));
+      } catch {
+        // ignore
+      }
+    }
+    const recent = safeGetStorage("radio-recently");
+    if (recent) {
+      try {
+        setRecentlyPlayed(JSON.parse(recent));
+      } catch {
+        // ignore
+      }
+    }
+    const last = safeGetStorage("radio-station");
+    if (last) {
+      const st = getStationById(last);
+      if (st) setStation(st);
+    }
+  }, []);
+
+  const updateNowPlaying = useCallback(
+    async (stationId: string, force = false) => {
+      try {
+        const res = await fetch(`/api/radio/status?stationId=${encodeURIComponent(stationId)}${force ? "&force=1" : ""}`, {
+          signal: AbortSignal.timeout(12000),
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as NowPlaying & { song: string | null; listeners: number | null; meta: boolean };
+        setNowPlaying({ song: data.song ?? null, listeners: data.listeners ?? null, meta: Boolean(data.meta) });
+      } catch {
+        // transient fetch failure - keep previous value
+      }
+    },
+    []
+  );
+
+  const stop = useCallback(() => {
+    setNowPlaying({ song: null, listeners: null, meta: false });
+    setStation(null);
+    setIsPlaying(false);
+    setStreamState("idle");
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.removeAttribute("src");
+      audioRef.current.load();
+    }
+    if (typeof window !== "undefined") window.localStorage.removeItem("radio-station");
+  }, []);
+
+  const playStation = useCallback(
+    (stationId: string) => {
+      const next = getStationById(stationId);
+      if (!next) return;
+      const audio = audioRef.current;
+      if (!audio) return;
+
+      pausedByUser.current = false;
+
+      if (stationRef.current?.id === stationId && isPlaying) {
+        audio.pause();
+        setIsPlaying(false);
+        setStreamState("idle");
+        pausedByUser.current = true;
+        return;
+      }
+
+      setStation(next);
+      setStreamState("connecting");
+      setNowPlaying({ song: null, listeners: null, meta: false });
+      if (typeof window !== "undefined") window.localStorage.setItem("radio-station", next.id);
+
+      const recent = [next.id, ...recentlyPlayed.filter((id) => id !== next.id)].slice(0, 5);
+      setRecentlyPlayed(recent);
+      safeSetStorage("radio-recently", JSON.stringify(recent));
+
+      audio.src = next.streamUrl;
+      setStreamState("connecting");
+      audio.play().catch(() => {
+        setStreamState("error");
+        setIsPlaying(false);
+      });
+    },
+    [isPlaying, recentlyPlayed]
+  );
+
+  const togglePlay = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio || !stationRef.current) return;
+    if (audio.paused) {
+      pausedByUser.current = false;
+      setStreamState("connecting");
+      audio.play().catch(() => {
+        setStreamState("error");
+        setIsPlaying(false);
+      });
+    } else {
+      pausedByUser.current = true;
+      audio.pause();
+      setStreamState("idle");
+    }
+  }, []);
+
+  const setVolume = useCallback((v: number) => {
+    setVolumeState(v);
+    safeSetStorage("radio-volume", String(v));
+    if (audioRef.current) audioRef.current.volume = v / 100;
+  }, []);
+
+  const toggleFavorite = useCallback(
+    (stationId: string) => {
+      setFavorites((prev) => {
+        const next = prev.includes(stationId) ? prev.filter((id) => id !== stationId) : [...prev, stationId];
+        safeSetStorage("radio-favorites", JSON.stringify(next));
+        return next;
+      });
+    },
+    []
+  );
+
+  const skip = useCallback(
+    (dir: 1 | -1) => {
+      if (!stationRef.current) return;
+      const idx = STATIONS.findIndex((s) => s.id === stationRef.current!.id);
+      if (idx === -1) return;
+      const next = STATIONS[(idx + dir + STATIONS.length) % STATIONS.length];
+      if (next) playStation(next.id);
+    },
+    [playStation]
+  );
+
+  // Realtime metadata polling while a station is active and the tab is visible.
+  useEffect(() => {
+    if (!station) return;
+    let cancelled = false;
+
+    const tick = async (force = false) => {
+      if (document.visibilityState === "visible" && !cancelled) {
+        await updateNowPlaying(station.id, force);
+      }
+    };
+
+    tick(true);
+    const interval = setInterval(() => tick(false), 12_000);
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        tick(false);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [station, updateNowPlaying]);
+
+  // Apply volume to the element anytime it changes.
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = volume / 100;
+  }, [volume]);
+
+  const value = useMemo(
+    () => ({
+      station,
+      isPlaying,
+      streamState,
+      volume,
+      favorites,
+      recentlyPlayed,
+      nowPlaying,
+      playStation,
+      togglePlay,
+      stop,
+      setVolume,
+      toggleFavorite,
+      skip,
+    }),
+    [station, isPlaying, streamState, volume, favorites, recentlyPlayed, nowPlaying, playStation, togglePlay, stop, setVolume, toggleFavorite, skip]
+  );
+
+  return (
+    <RadioPlayerContext.Provider value={value}>
+      {children}
+      {/* The audio element lives here, above the page tree, so playback survives route
+          changes. Hidden via fixed positioning to avoid layout/display quirks. */}
+      <audio
+        ref={audioRef}
+        className="fixed top-0 left-0 w-0 h-0 opacity-0 pointer-events-none"
+        onPlaying={() => {
+          setStreamState("playing");
+          setIsPlaying(true);
+          pausedByUser.current = false;
+        }}
+        onWaiting={() => {
+          if (!pausedByUser.current) setStreamState("connecting");
+        }}
+        onError={() => {
+          setStreamState("error");
+          setIsPlaying(false);
+        }}
+      />
+    </RadioPlayerContext.Provider>
+  );
+}
+
+export function useRadioPlayer(): RadioPlayerContextValue {
+  const ctx = useContext(RadioPlayerContext);
+  if (!ctx) {
+    throw new Error("useRadioPlayer must be used within RadioPlayerProvider");
+  }
+  return ctx;
+}

@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import ThemeProvider from "@/components/providers/ThemeProvider";
+import { RadioPlayerProvider } from "@/components/radio/RadioPlayerContext";
+import { MiniRadioPlayer } from "@/components/radio/MiniRadioPlayer";
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.AUTH_URL ?? "https://connectplusapp.vercel.app"),
@@ -57,7 +59,12 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
       <body className="min-h-screen antialiased">
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <RadioPlayerProvider>
+            {children}
+            <MiniRadioPlayer />
+          </RadioPlayerProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
