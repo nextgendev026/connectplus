@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { slugify } from "@/lib/utils";
+import { moderateContent } from "@/lib/moderation";
+import { embedPost, findDuplicate } from "@/lib/neural-vector";
+import { autoTagPost } from "@/lib/auto-tag";
 
 export async function GET(
   request: NextRequest,
@@ -72,8 +75,9 @@ export async function PUT(
 
     const existingPost = await prisma.post.findUnique({
       where: { id },
-      select: { authorId: true },
+      select: { authorId: true, content: true },
     });
+    const existingPostContent = existingPost?.content ?? "";
 
     if (!existingPost) {
       return NextResponse.json({ error: "Post not found" }, { status: 404 });
@@ -97,6 +101,8 @@ export async function PUT(
       moderationStatus?: string;
       publishedAt?: Date | null;
       scheduledAt?: Date | null;
+      aiScore?: number | null;
+      aiFlags?: string | null;
     } = {};
 
     if (title !== undefined) updateData.title = String(title).trim().slice(0, 300);
@@ -117,6 +123,10 @@ export async function PUT(
       updateData.scheduledAt = null;
     }
 
+    // Phase 2: re-scan through moderation whenever content changes and the
+    // author is (re)publishing. Keeps the AI gate consistent with POST /api/posts.
+    let finalModerationStatus: string | null = null;
+    let aiFlags: string[] = [];
     if (parsedScheduledAt) {
       updateData.status = "DRAFT";
       updateData.publishedAt = null;
@@ -126,7 +136,30 @@ export async function PUT(
       updateData.status = String(status);
       if (status === "PUBLISHED") {
         updateData.publishedAt = new Date();
-        updateData.moderationStatus = "APPROVED";
+        const bodyText = String(content ?? existingPostContent ?? "");
+        const risk = moderateContent(String(title ?? ""), bodyText);
+        aiFlags = [...risk.flags];
+        let moderationStatus =
+          risk.suggested === "REJECTED"
+            ? "REJECTED"
+            : risk.suggested === "FLAGGED"
+              ? "FLAGGED"
+              : "APPROVED";
+        if (moderationStatus === "APPROVED") {
+          const dup = await findDuplicate({
+            id,
+            title: String(title ?? ""),
+            content: bodyText,
+          }).catch(() => null);
+          if (dup) {
+            moderationStatus = "FLAGGED";
+            aiFlags.push(`duplicate:${dup.score.toFixed(2)}`);
+          }
+        }
+        updateData.moderationStatus = moderationStatus;
+        updateData.aiScore = risk.score;
+        updateData.aiFlags = aiFlags.join(",") || null;
+        finalModerationStatus = moderationStatus;
       }
     }
 
@@ -163,7 +196,17 @@ export async function PUT(
       },
     });
 
-    return NextResponse.json({ post });
+    // Re-index embeddings + auto-tags after content changes (fire-and-forget).
+    if (post.status === "PUBLISHED" && post.moderationStatus === "APPROVED") {
+      embedPost(post).catch(() => {});
+      autoTagPost(post.id, `${post.title} ${post.excerpt ?? ""}`).catch(() => {});
+    }
+
+    return NextResponse.json({
+      post,
+      moderationStatus: finalModerationStatus ?? post.moderationStatus,
+      aiFlags: finalModerationStatus ? aiFlags : undefined,
+    });
   } catch (error) {
     console.error("Error updating post:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

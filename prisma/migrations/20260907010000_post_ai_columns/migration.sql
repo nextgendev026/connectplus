@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Post" ADD COLUMN "aiScore" DOUBLE PRECISION;
+ALTER TABLE "Post" ADD COLUMN "aiFlags" TEXT;

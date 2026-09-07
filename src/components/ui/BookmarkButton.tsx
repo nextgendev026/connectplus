@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { Bookmark, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { sendFeedback } from "@/lib/feedback";
 
 interface BookmarkButtonProps {
   postId: string;
@@ -63,6 +64,7 @@ export function BookmarkButton({
         method: prev ? "DELETE" : "POST",
       });
       if (!res.ok) throw new Error(await res.text());
+      sendFeedback("bookmark", { postId });
     } catch {
       if (mountedRef.current) setSaved(prev);
     } finally {

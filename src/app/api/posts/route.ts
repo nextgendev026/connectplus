@@ -3,6 +3,19 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { slugify } from "@/lib/utils";
 import { hiveBrain } from "@/lib/hive-brain";
+import { moderateContent } from "@/lib/moderation";
+import { embedPost } from "@/lib/neural-vector";
+import { rankFeed } from "@/lib/feed-ranker";
+import type { FeedRankVariant } from "@/lib/experiments";
+import { autoTagPost } from "@/lib/auto-tag";
+import { findDuplicate } from "@/lib/neural-vector";
+
+const POST_SELECT = {
+  author: { select: { id: true, name: true, username: true, avatar: true } },
+  category: { select: { id: true, name: true, slug: true } },
+  tags: { select: { id: true, name: true, slug: true } },
+  _count: { select: { comments: true, likes: true } },
+} as const;
 
 export async function GET(request: NextRequest) {
   try {
@@ -14,6 +27,7 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get("search");
     const featured = searchParams.get("featured");
     const mine = searchParams.get("mine") === "true";
+    const personalized = searchParams.get("personalized") === "true";
 
     const skip = (page - 1) * limit;
 
@@ -30,12 +44,15 @@ export async function GET(request: NextRequest) {
     };
 
     let authorId: string | null = null;
-    if (mine) {
+    if (mine || personalized) {
       const session = await auth();
       if (!session?.user) {
-        return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+        if (mine) {
+          return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+        }
+      } else {
+        authorId = session.user.id;
       }
-      authorId = session.user.id;
     }
 
     const where = authorId
@@ -62,25 +79,53 @@ export async function GET(request: NextRequest) {
       where.featured = true;
     }
 
+    const noFilters = !category && !tag && !search && !featured && !mine;
+    const canPersonalize = personalized && noFilters;
+
+    // Phase 1: adaptive ranked feed — same deterministic pool per user so
+    // "load more" pagination slices stay consistent.
+    if (canPersonalize) {
+      const pool = await prisma.post.findMany({
+        where: baseWhere,
+        orderBy: { createdAt: "desc" },
+        take: 200,
+        include: POST_SELECT,
+      });
+      const { posts: ranked, variant } = await rankFeed(pool, authorId);
+      const total = ranked.length;
+      const pagePosts = ranked.slice(skip, skip + limit);
+      return NextResponse.json({
+        posts: pagePosts,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+          variant,
+        },
+      });
+    }
+
     const [posts, total] = await Promise.all([
       prisma.post.findMany({
         where,
         skip,
         take: limit,
         orderBy: { createdAt: "desc" },
-        include: {
-          author: { select: { id: true, name: true, username: true, avatar: true } },
-          category: { select: { id: true, name: true, slug: true } },
-          tags: { select: { id: true, name: true, slug: true } },
-          _count: { select: { comments: true, likes: true } },
-        },
+        include: POST_SELECT,
       }),
       prisma.post.count({ where }),
     ]);
 
     return NextResponse.json({
       posts,
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        variant: "control" as FeedRankVariant,
+      },
     });
   } catch (error) {
     console.error("Error fetching posts:", error);
@@ -125,6 +170,27 @@ export async function POST(request: NextRequest) {
     const wantsPublish = status === "PUBLISHED" && !scheduleDate;
     const postStatus = wantsPublish ? "PUBLISHED" : "DRAFT";
 
+    // Phase 2: run the self-contained moderation scanner.
+    const risk = moderateContent(title.trim(), content);
+    let moderationStatus =
+      postStatus === "DRAFT"
+        ? (risk.suggested === "REJECTED" ? "REJECTED" : risk.suggested === "FLAGGED" ? "FLAGGED" : "PENDING")
+        : risk.suggested === "REJECTED"
+          ? "REJECTED"
+          : risk.suggested === "FLAGGED"
+            ? "FLAGGED"
+            : "APPROVED";
+
+    // Phase 2: near-duplicate detection against existing published content.
+    let duplicate: { postId: string; score: number } | null = null;
+    if (wantsPublish && moderationStatus === "APPROVED") {
+      duplicate = await findDuplicate({ title: title.trim(), content: content.trim() }).catch(() => null);
+      if (duplicate) {
+        moderationStatus = "FLAGGED";
+        risk.flags.push(`duplicate:${duplicate.score.toFixed(2)}`);
+      }
+    }
+
     const tagConnections = tags && Array.isArray(tags)
       ? await Promise.all(
           tags.map(async (tagName: string) => {
@@ -149,7 +215,9 @@ export async function POST(request: NextRequest) {
         authorId: userId,
         categoryId: categoryId || null,
         status: postStatus,
-        moderationStatus: postStatus === "PUBLISHED" ? "APPROVED" : "PENDING",
+        moderationStatus,
+        aiScore: risk.score,
+        aiFlags: risk.flags.join(",") || null,
         publishedAt: postStatus === "PUBLISHED" ? new Date() : null,
         scheduledAt: scheduleDate,
         tags: { connect: tagConnections },
@@ -162,9 +230,17 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    // Index the semantic embedding + hive engagement (fire-and-forget).
+    if (postStatus === "PUBLISHED" && moderationStatus === "APPROVED") {
+      embedPost(post).catch(() => {});
+      autoTagPost(post.id, `${post.title} ${post.excerpt ?? ""}`).catch(() => {});
+    }
     await hiveBrain.ingestPost(post).catch(() => {});
 
-    return NextResponse.json({ post }, { status: 201 });
+    return NextResponse.json(
+      { post, moderationStatus, aiFlags: risk.flags, duplicate },
+      { status: 201 }
+    );
   } catch (error) {
     console.error("Error creating post:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

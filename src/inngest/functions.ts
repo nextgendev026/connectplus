@@ -73,6 +73,11 @@ export const publishScheduled = inngest.createFunction(
         log.info("ingested published post", { postId: live.id, memories: hive, tags: tags.length });
       });
 
+      await step.run(`embed-${post.id}`, async () => {
+        const { embedPost } = await import("@/lib/neural-vector");
+        await embedPost({ id: post.id, title: post.title, excerpt: post.excerpt, content: post.content });
+      });
+
       publishedCount++;
     }
 
@@ -145,6 +150,25 @@ export const hiveSweep = inngest.createFunction(
 );
 
 /**
+ * Semantic index maintenance: embeds any published post that is missing or
+ * stale. Runs nightly, plus on demand via the "embed-posts" event.
+ */
+export const embedPosts = inngest.createFunction(
+  {
+    id: "embed-posts",
+    name: "Index semantic embeddings",
+    triggers: [{ cron: "0 3 * * *" }, { event: "embed-posts" }],
+  },
+  async ({ step }) => {
+    const embedded = await step.run("index-published", async () => {
+      const { indexPublishedPosts } = await import("@/lib/neural-vector");
+      return indexPublishedPosts(400);
+    });
+    return { embedded };
+  }
+);
+
+/**
  * Manual deep-learning trigger exposed to admins.
  */
 export const neuralLearn = inngest.createFunction(
@@ -169,5 +193,6 @@ export const functions = [
   rssPoll,
   rssPollFeed,
   hiveSweep,
+  embedPosts,
   neuralLearn,
 ];

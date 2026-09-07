@@ -24,3 +24,6 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# Freebuff local tooling workspace
+.freebuff/

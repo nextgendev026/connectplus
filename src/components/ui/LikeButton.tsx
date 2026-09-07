@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { Heart, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { sendFeedback } from "@/lib/feedback";
 
 interface LikeButtonProps {
   postId: string;
@@ -62,6 +63,7 @@ export function LikeButton({ postId, initialCount }: LikeButtonProps) {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "Failed");
       if (mountedRef.current && typeof data.likeCount === "number") setCount(data.likeCount);
+      sendFeedback("like", { postId });
     } catch {
       if (mountedRef.current) {
         setLiked(prevLiked);

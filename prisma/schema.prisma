@@ -32,6 +32,8 @@ model User {
   conversations NeuralConversation[]
   notifications Notification[] @relation("NotifRecipient")
   sentNotifications Notification[] @relation("NotifActor")
+  preference  UserPreference?
+  feedback    ModelFeedback[]
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -63,9 +65,13 @@ model Post {
   sourceUrl     String?
   moderatedAt  DateTime?
   moderatedBy  String?
+  aiScore      Float?
+  aiFlags      String?
   publishedAt  DateTime?
   scheduledAt  DateTime?
   notifications Notification[]
+  postEmbedding PostEmbedding?
+  feedback    ModelFeedback[]
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -280,4 +286,56 @@ model Notification {
 
   @@index([userId, read])
   @@index([userId, createdAt])
+}
+
+/// Semantic embedding of a post's content. `vector`/`titleVec` are JSON arrays
+/// (portable, used as source of truth); `pgVec` mirrors `vector` as a real
+/// pgvector column for indexed cosine search on hosts with the extension.
+model PostEmbedding {
+  id       String   @id @default(cuid())
+  postId   String   @unique
+  post     Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  vector   String   @db.Text // JSON array of floats, EMBEDDING_DIM length
+  dim      Int      @default(384)
+  model    String   @default("hash-minilm")
+  titleVec String?  @db.Text // JSON embedding of title only (for title matching)
+  pgVec    Unsupported("vector(384)")? // pgvector mirror of vector (Phase 0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([postId])
+}
+
+/// Aggregated per-user preferences learned from interaction feedback.
+model UserPreference {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vector       String   @db.Text // averaged embedding of liked/saved posts
+  tagVector    String   @db.Text // JSON map tag -> affinity weight
+  categoryCount String  @db.Text // JSON map categoryId -> weight
+  lastUpdated  DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+}
+
+/// Raw interaction feedback used by the learning loop (Phase 3).
+model ModelFeedback {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  postId    String?
+  post      Post?    @relation(fields: [postId], references: [id], onDelete: SetNull)
+  type      String   // impression | click | like | bookmark | share | time_spent | comment
+  value     Float?   // e.g. seconds for time_spent, 1 for like
+  variant   String?  // A/B experiment variant active when the event was logged
+  sessionId String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([postId])
+  @@index([type])
+  @@index([createdAt])
+  @@index([variant])
 }
