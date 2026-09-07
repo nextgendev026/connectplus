@@ -1,10 +1,12 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
 
-import { Clock, Eye, MessageCircle, ChevronRight } from "lucide-react";
+import { Clock, Eye, MessageCircle, ChevronRight, ExternalLink, Newspaper } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { timeAgo, formatDate, estimateReadTime } from "@/lib/utils";
+import { formatDate, estimateReadTime } from "@/lib/utils";
+import { getSiteConfig } from "@/lib/settings";
 import { BookmarkButton } from "@/components/ui/BookmarkButton";
 import { FollowButton } from "@/components/ui/FollowButton";
 import { LikeButton } from "@/components/ui/LikeButton";
@@ -12,39 +14,117 @@ import { ArticleActions } from "@/components/ui/ArticleActions";
 import { CommentsSection } from "@/components/ui/CommentsSection";
 import { StyledContent } from "@/components/ui/StyledContent";
 
-export default async function ArticlePage({ params }: { params: Promise<{ slug: string }> }) {
+interface ArticleParams {
+  params: Promise<{ slug: string }>;
+}
+
+function stripText(content: string): string {
+  return content
+    .replace(/<[^>]+>/g, " ")
+    .replace(/[#*_~`>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export async function generateMetadata({ params }: ArticleParams): Promise<Metadata> {
   const { slug } = await params;
-  const session = await auth();
   const post = await prisma.post.findUnique({
     where: { slug },
-    include: {
-      author: {
-        select: {
-          id: true,
-          name: true,
-          username: true,
-          avatar: true,
-          bio: true,
-          followersCount: true,
-          _count: { select: { posts: true } },
-        },
-      },
-      category: { select: { id: true, name: true, slug: true } },
-      tags: { select: { id: true, name: true, slug: true } },
-      _count: { select: { comments: true, likes: true } },
-      comments: {
-        where: { parentId: null },
-        include: {
-          author: { select: { id: true, name: true, username: true } },
-          replies: {
-            include: { author: { select: { id: true, name: true, username: true } } },
-            orderBy: { createdAt: "asc" },
-          },
-        },
-        orderBy: { createdAt: "desc" },
-      },
+    select: {
+      title: true,
+      excerpt: true,
+      coverImage: true,
+      slug: true,
+      publishedAt: true,
+      source: true,
+      sourceUrl: true,
+      author: { select: { name: true, username: true } },
+      category: { select: { name: true } },
+      tags: { select: { name: true } },
     },
   });
+
+  if (!post) {
+    return { title: "Post not found" };
+  }
+
+  let cfg;
+  try {
+    cfg = await getSiteConfig();
+  } catch {
+    cfg = null;
+  }
+  const baseUrl = cfg?.siteUrl ?? process.env.AUTH_URL ?? "https://connectplusapp.vercel.app";
+  const canonical = `${baseUrl.replace(/\/$/, "")}/article/${post.slug}`;
+
+  const description =
+    (post.excerpt ?? "").trim() || stripText(post.title) || "Read this story on connectPlus.";
+  const imageUrl = post.coverImage
+    ? post.coverImage.startsWith("http")
+      ? post.coverImage
+      : `${baseUrl.replace(/\/$/, "")}${post.coverImage}`
+    : `${baseUrl.replace(/\/$/, "")}${cfg?.ogImage ?? "/pwa-512.png"}`;
+
+  return {
+    title: post.title,
+    description,
+    alternates: { canonical },
+    openGraph: {
+      title: post.title,
+      description,
+      type: "article",
+      url: canonical,
+      siteName: cfg?.siteName ?? "connectPlus",
+      publishedTime: post.publishedAt?.toISOString(),
+      authors: [post.author.name ?? `@${post.author.username}`],
+      tags: post.tags.map((t) => t.name),
+      images: [{ url: imageUrl, width: 1200, height: 630, alt: post.title }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: post.title,
+      description,
+      images: [imageUrl],
+    },
+  };
+}
+
+export default async function ArticlePage({ params }: ArticleParams) {
+  const { slug } = await params;
+  const session = await auth();
+  const [siteConfig, post] = await Promise.all([
+    getSiteConfig().catch(() => null),
+    prisma.post.findUnique({
+      where: { slug },
+      include: {
+        author: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+            avatar: true,
+            bio: true,
+            followersCount: true,
+            _count: { select: { posts: true } },
+          },
+        },
+        category: { select: { id: true, name: true, slug: true } },
+        tags: { select: { id: true, name: true, slug: true } },
+        _count: { select: { comments: true, likes: true } },
+        comments: {
+          where: { parentId: null },
+          include: {
+            author: { select: { id: true, name: true, username: true } },
+            replies: {
+              include: { author: { select: { id: true, name: true, username: true } } },
+              orderBy: { createdAt: "asc" },
+            },
+          },
+          orderBy: { createdAt: "desc" },
+        },
+      },
+    }),
+  ]);
 
   if (!post) {
     return (
@@ -58,7 +138,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
     );
   }
 
-  const [viewerIsFollowing, viewerSaved] = await Promise.all([
+  const [viewerIsFollowing] = await Promise.all([
     session?.user?.id
       ? prisma.follow
           .findUnique({
@@ -68,14 +148,6 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
                 followingId: post.authorId,
               },
             },
-            select: { id: true },
-          })
-          .then(Boolean)
-      : Promise.resolve(false),
-    session?.user?.id
-      ? prisma.bookmark
-          .findUnique({
-            where: { userId_postId: { userId: session.user.id, postId: post.id } },
             select: { id: true },
           })
           .then(Boolean)
@@ -94,6 +166,8 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
     ? formatDate(post.publishedAt)
     : formatDate(post.createdAt);
 
+  const isSyndicated = Boolean(post.sourceUrl || post.source);
+
   // related posts
   const relatedPosts = await prisma.post.findMany({
     where: {
@@ -106,8 +180,40 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
     orderBy: { createdAt: "desc" },
   });
 
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "Article",
+    headline: post.title,
+    description: post.excerpt ?? undefined,
+    image: post.coverImage ?? undefined,
+    datePublished: post.publishedAt?.toISOString() ?? post.createdAt.toISOString(),
+    dateModified: post.updatedAt.toISOString(),
+    author: {
+      "@type": "Person",
+      name: post.author.name ?? `@${post.author.username}`,
+      url: `${siteConfig?.siteUrl ?? "https://connectplusapp.vercel.app"}/profile/${post.author.username}`,
+    },
+    publisher: {
+      "@type": "Organization",
+      name: siteConfig?.siteName ?? "connectPlus",
+    },
+    mainEntityOfPage: {
+      "@type": "WebPage",
+      "@id": `${siteConfig?.siteUrl ?? "https://connectplusapp.vercel.app"}/article/${post.slug}`,
+    },
+    ...(post.category ? { articleSection: post.category.name } : {}),
+    keywords: post.tags.map((t) => t.name).join(", "),
+    ...(post.sourceUrl ? { isBasedOn: post.sourceUrl } : {}),
+  };
+
   return (
     <div className="min-h-screen bg-surface-950">
+      {/* JSON-LD structured data for search engines */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
+
       {/* Hero */}
       <div className="relative h-[46vh] min-h-[360px] overflow-hidden">
         {post.coverImage ? (
@@ -118,7 +224,9 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
             className="object-cover"
             priority
           />
-        ) : null}
+        ) : (
+          <div className="absolute inset-0 bg-mesh-gradient" />
+        )}
         <div className="absolute inset-0 bg-gradient-to-br from-brand-900/50 via-black/80 to-black" />
         <div className="absolute inset-0 bg-mesh-gradient opacity-40" />
         <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-black to-transparent" />
@@ -139,7 +247,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
             <Link href={`/profile/${post.author.username}`} className="flex items-center gap-3">
               <div className="h-10 w-10 rounded-full bg-white/20 backdrop-blur-sm border border-white/20 overflow-hidden flex items-center justify-center text-sm font-bold text-white">
                 {post.author.avatar ? (
-                  <img src={post.author.avatar} alt={post.author.name ?? ""} className="w-full h-full object-cover" />
+                  <Image src={post.author.avatar} alt={post.author.name ?? ""} width={40} height={40} className="w-full h-full object-cover" />
                 ) : (
                   post.author.name?.charAt(0) ?? "?"
                 )}
@@ -170,6 +278,34 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
               ))}
             </div>
 
+            {/* Original source — syndicated RSS articles always credit their origin */}
+            {isSyndicated && (
+              <div className="mb-8 flex items-start gap-3 rounded-xl border border-brand-500/20 bg-gradient-to-r from-brand-500/10 to-accent-amber/5 px-4 py-3">
+                <Newspaper className="mt-0.5 h-4 w-4 shrink-0 text-brand-400" />
+                <p className="text-xs leading-relaxed text-surface-300">
+                  {post.source ? (
+                    <>
+                      This story was originally published by{" "}
+                      <strong className="text-surface-50">{post.source}</strong>.
+                    </>
+                  ) : (
+                    <>This story was originally published on an external site.</>
+                  )}{" "}
+                  {post.sourceUrl && (
+                    <a
+                      href={post.sourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 font-medium text-brand-400 underline underline-offset-2 hover:text-brand-300 transition-colors"
+                    >
+                      Read the original
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
+                </p>
+              </div>
+            )}
+
             <StyledContent content={post.content} />
 
             {/* Actions — wraps into two rows on phones instead of overflowing */}
@@ -187,7 +323,12 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
                   <BookmarkButton postId={post.id} fetchState variant="pill" />
                 </div>
                 <div className="flex items-center gap-2">
-                  <ArticleActions url={`/article/${post.slug}`} title={post.title} />
+                  <ArticleActions
+                    url={`/article/${post.slug}`}
+                    title={post.title}
+                    description={post.excerpt ?? undefined}
+                    image={post.coverImage}
+                  />
                 </div>
               </div>
             </div>
@@ -219,9 +360,11 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
             )}
 
             {/* Comments */}
-            <div id="comments">
-              <CommentsSection postId={post.id} initialComments={post.comments} />
-            </div>
+            {siteConfig?.features.comments !== false && (
+              <div id="comments">
+                <CommentsSection postId={post.id} initialComments={post.comments} />
+              </div>
+            )}
           </article>
 
           {/* Sidebar */}
@@ -279,4 +422,4 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
       </div>
     </div>
   );
-}
+}

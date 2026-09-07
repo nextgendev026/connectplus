@@ -3,6 +3,8 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { neuralMind } from "@/lib/neural-mind";
 import { hiveBrain } from "@/lib/hive-brain";
+import { classifyIntent } from "@/lib/neural-intent";
+import { tryLlmForChat } from "@/lib/ai-provider";
 
 export async function POST(request: NextRequest) {
   try {
@@ -51,7 +53,23 @@ export async function POST(request: NextRequest) {
 
     const history = (conversation.messages ?? []).map((m) => ({ role: m.role, content: m.content }));
 
-    const response = await neuralMind.processQuery(message.trim(), history);
+    // When an LLM provider is configured (admin Settings → API keys) and the
+    // query is conversational/content-creation, let the real model answer;
+    // otherwise the deterministic brains handle it (they query the live DB for
+    // platform data intents). Graceful fallback keeps the chat fully functional
+    // with zero configuration.
+    const classified = classifyIntent(message.trim());
+    const llmText = await tryLlmForChat(message.trim(), history, classified.intent);
+
+    const response = llmText
+      ? {
+          text: llmText,
+          intent: classified.intent,
+          enginesUsed: ["internal", "hive", "llm"] as const,
+          confidence: Math.max(classified.confidence, 0.7),
+          sources: [] as string[],
+        }
+      : await neuralMind.processQuery(message.trim(), history);
 
     void neuralMind.learnFromInteraction(message.trim(), response.intent, response.text).catch(() => {});
 

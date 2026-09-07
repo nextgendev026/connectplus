@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { notFound } from "next/navigation";
 import {
   MapPin,
@@ -128,9 +129,10 @@ export default async function ProfilePage({
       {/* Cover */}
       <div className="relative h-48 overflow-hidden sm:h-64">
         {user.coverImage ? (
-          <img
+          <Image
             src={user.coverImage}
             alt=""
+            fill
             className="h-full w-full object-cover"
             style={{ transition: "opacity 0.3s ease" }}
           />
@@ -158,9 +160,11 @@ export default async function ProfilePage({
       <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
         <div className="mt-6 flex flex-col sm:flex-row sm:items-end sm:gap-6">
 {user.avatar ? (
-              <img
+              <Image
                 src={user.avatar}
                 alt={user.name ?? user.username}
+                width={128}
+                height={128}
                 className="h-32 w-32 rounded-2xl border-4 border-surface-800/60 object-cover shadow-sm"
               />
             ) : (

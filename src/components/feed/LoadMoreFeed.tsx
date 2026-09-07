@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronRight, Loader2 } from "lucide-react";
+import { ChevronRight, Loader2, Newspaper, Infinity as InfinityIcon } from "lucide-react";
 import { cn, estimateReadTime } from "@/lib/utils";
 
 interface LoadedPost {
@@ -13,6 +13,8 @@ interface LoadedPost {
   coverImage: string | null;
   viewCount: number;
   createdAt: string;
+  source?: string | null;
+  sourceUrl?: string | null;
   author: { name: string | null; username: string; avatar: string | null };
   category: { name: string; slug: string } | null;
   _count: { comments: number; likes: number };
@@ -41,6 +43,7 @@ export function LoadMoreFeed({
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const seenRef = useRef(new Set(initialIds));
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   const loadMore = useCallback(async () => {
     if (loading) return;
@@ -65,13 +68,28 @@ export function LoadMoreFeed({
     }
   }, [page, loading]);
 
+  // Infinite scroll: auto-load the next page when the sentinel scrolls into
+  // view, with a short cool-down so rapid scrolling doesn't stack requests.
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || !hasMore) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) loadMore();
+      },
+      { rootMargin: "600px 0px" }
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [hasMore, page, loadMore]);
+
   if (posts.length === 0 && !hasMore) return null;
 
   return (
     <>
       {posts.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-5">
-          {posts.map((post, i) => (
+          {posts.map((post) => (
             <Link
               key={post.id}
               href={`/article/${post.slug}`}
@@ -124,6 +142,19 @@ export function LoadMoreFeed({
                       {estimateReadTime(post.title + " " + (post.excerpt ?? ""))} min
                     </span>
                   </div>
+                  {post.sourceUrl && (
+                    <a
+                      href={post.sourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      title={`Read the original${post.source ? ` on ${post.source}` : ""}`}
+                      className="inline-flex items-center gap-1 rounded-full bg-surface-800/90 px-2 py-0.5 text-[10px] font-medium text-surface-400 ring-1 ring-surface-700/60 transition-colors hover:text-brand-400 hover:ring-brand-500/30"
+                    >
+                      <Newspaper className="h-2.5 w-2.5" />
+                      {post.source ? `via ${post.source}` : "via source"}
+                    </a>
+                  )}
                 </div>
               </div>
             </Link>
@@ -132,7 +163,7 @@ export function LoadMoreFeed({
       )}
 
       {hasMore && (
-        <div className="flex justify-center mt-8">
+        <div ref={sentinelRef} className="flex justify-center mt-8 scroll-mt-24">
           <button
             onClick={loadMore}
             disabled={loading}
@@ -143,14 +174,19 @@ export function LoadMoreFeed({
             )}
           >
             {loading ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Auto-loading more stories…
+              </>
             ) : (
               <>
+                <InfinityIcon className="w-4 h-4 text-accent-strong" />
                 {showLabel ? "Load More Stories" : "Load More"}
                 <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
               </>
             )}
           </button>
+          <span className="sr-only">More stories load automatically as you scroll.</span>
         </div>
       )}
     </>

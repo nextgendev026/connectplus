@@ -131,9 +131,7 @@ export function summarizeText(text: string, maxSentences: number = 3): string {
     for (const w of words) {
       if (POSITIVE_WORDS.has(w) || NEGATIVE_WORDS.has(w)) score += 1;
     }
-    for (const ent of extractEntities(s)) {
-      score += 1;
-    }
+    score += extractEntities(s).length;
     return { sentence: s.trim(), score, index: i };
   });
 

@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
 }
 
 // GET: Health check
-export async function GET(request: NextRequest) {
+export async function GET() {
   return NextResponse.json({
     status: "ok",
     message: "RSS poll endpoint active",

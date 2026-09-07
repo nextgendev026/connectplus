@@ -148,9 +148,11 @@ export default async function TrendingPage() {
                     <div className="flex items-center gap-3 mb-4">
                       <div className="w-10 h-10 rounded-full bg-gradient-to-br from-brand-500 to-accent-cyan flex items-center justify-center text-sm font-bold text-white overflow-hidden shrink-0">
                         {post.author.avatar ? (
-                          <img
+                          <Image
                             src={post.author.avatar}
                             alt={post.author.name ?? post.author.username}
+                            width={40}
+                            height={40}
                             className="w-full h-full object-cover"
                           />
                         ) : (

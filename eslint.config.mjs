@@ -16,6 +16,9 @@ export default defineConfig([
       // The Neural Mind synthesizer intentionally routes heterogeneous payloads
       // through `data: any`. Prefer explicit types in new code.
       "@typescript-eslint/no-explicit-any": "warn",
+      // Underscore-prefixed parameters (e.g. `_request` in route handlers) are
+      // intentionally unused per TS convention.
+      "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
     },
   },
   globalIgnores([

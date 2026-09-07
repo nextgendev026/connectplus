@@ -45,7 +45,7 @@ const roleConfig: Record<
     icon: Shield,
   },
   CREATOR: {
-    color: "text-brand-500",
+    color: "text-accent-strong",
     bg: "bg-brand-500/10",
     border: "border-brand-500/20",
     icon: ShieldCheck,
@@ -65,7 +65,7 @@ const roleConfig: Record<
 };
 
 const avatarColors = [
-  "bg-brand-500/20 text-brand-500",
+  "bg-brand-500/20 text-accent-strong",
   "bg-cyan-400/20 text-cyan-400",
   "bg-purple-400/20 text-purple-400",
   "bg-amber-400/20 text-amber-400",
@@ -151,7 +151,7 @@ export default function UsersManagement() {
   const maxNodeCount = nodeEntries[0]?.[1] ?? 1;
 
   return (
-    <div className="min-h-screen bg-surface-950 p-6 lg:p-8">
+    <div className="min-h-screen">
       <div className="mx-auto max-w-[1600px] space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
@@ -160,10 +160,10 @@ export default function UsersManagement() {
               <Users className="h-6 w-6 text-purple-400" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-surface-50">
+              <h1 className="type-display text-surface-50">
                 User &amp; Node Management
               </h1>
-              <p className="text-sm text-surface-400">
+              <p className="text-sm font-medium text-surface-300">
                 Directory, roles, verification &amp; management
               </p>
             </div>
@@ -180,8 +180,8 @@ export default function UsersManagement() {
         {/* Loading */}
         {loading && (
           <div className="flex items-center justify-center py-20">
-            <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-            <span className="ml-3 text-sm text-surface-400">Loading user directory...</span>
+            <Loader2 className="h-8 w-8 animate-spin text-accent-strong" />
+            <span className="ml-3 text-sm font-medium text-surface-300">Loading user directory...</span>
           </div>
         )}
 
@@ -215,7 +215,7 @@ export default function UsersManagement() {
               <select
                 value={roleFilter}
                 onChange={(e) => setRoleFilter(e.target.value as UserRole | "all")}
-                className="h-10 rounded-lg bg-surface-900 border border-surface-800 px-3 text-sm text-surface-300 outline-none transition-colors focus:border-brand-500/50"
+                className="h-10 rounded-lg bg-surface-900 border border-surface-800 px-3 text-sm font-medium text-surface-100 outline-none transition-colors focus:border-brand-500/50"
               >
                 <option value="all">All Roles</option>
                 {allRoles.map((role) => (
@@ -233,22 +233,22 @@ export default function UsersManagement() {
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-surface-800">
-                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-500">
+                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-400">
                           User
                         </th>
-                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-500">
+                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-400">
                           Role
                         </th>
-                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-500">
+                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-400">
                           Verified
                         </th>
-                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-500">
+                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-400">
                           Joined
                         </th>
-                        <th className="px-5 py-3 text-right text-xs font-medium text-surface-500">
+                        <th className="px-5 py-3 text-right text-xs font-medium text-surface-400">
                           Posts
                         </th>
-                        <th className="px-5 py-3 text-right text-xs font-medium text-surface-500">
+                        <th className="px-5 py-3 text-right text-xs font-medium text-surface-400">
                           Actions
                         </th>
                       </tr>
@@ -285,7 +285,7 @@ export default function UsersManagement() {
                             <td className="px-5 py-3.5">
                               <span
                                 className={cn(
-                                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium border",
+                                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 type-caption border",
                                   rc.bg,
                                   rc.color,
                                   rc.border
@@ -298,13 +298,13 @@ export default function UsersManagement() {
                             <td className="px-5 py-3.5">
                               <div className="flex justify-start">
                                 {user.isVerified ? (
-                                  <CheckCircle className="h-4 w-4 text-brand-500" />
+                                  <CheckCircle className="h-4 w-4 text-accent-strong" />
                                 ) : (
                                   <div className="h-4 w-4 rounded-full border-2 border-surface-600" />
                                 )}
                               </div>
                             </td>
-                            <td className="px-5 py-3.5 text-xs text-surface-400">
+                            <td className="px-5 py-3.5 text-xs font-medium text-surface-300">
                               {formatDate(user.createdAt)}
                             </td>
                             <td className="px-5 py-3.5 text-right text-sm font-medium text-surface-50 tabular-nums">
@@ -330,7 +330,7 @@ export default function UsersManagement() {
                 {filteredUsers.length === 0 && (
                   <div className="flex flex-col items-center justify-center py-16">
                     <Users className="mb-3 h-8 w-8 text-surface-600" />
-                    <p className="text-sm text-surface-400">
+                    <p className="text-sm font-medium text-surface-300">
                       No users match your filters
                     </p>
                   </div>
@@ -342,7 +342,7 @@ export default function UsersManagement() {
                 {nodeEntries.length > 0 && (
                   <div className="rounded-xl bg-surface-900/50 border border-surface-800 p-5">
                     <div className="flex items-center gap-2 mb-4">
-                      <Globe className="h-4 w-4 text-brand-500" />
+                      <Globe className="h-4 w-4 text-accent-strong" />
                       <h3 className="text-sm font-semibold text-surface-50">
                         Node Distribution
                       </h3>
@@ -351,7 +351,7 @@ export default function UsersManagement() {
                       {nodeEntries.map(([city, count]) => (
                         <div key={city}>
                           <div className="flex items-center justify-between mb-1">
-                            <span className="text-xs text-surface-300">{city}</span>
+                            <span className="text-xs font-medium text-surface-200">{city}</span>
                             <span className="text-xs font-bold text-surface-50 tabular-nums">
                               {count}
                             </span>
@@ -385,7 +385,7 @@ export default function UsersManagement() {
                       return (
                         <div key={role} className="flex items-center justify-between rounded-lg border border-surface-800 bg-surface-800/30 p-2.5">
                           <div className="flex items-center gap-2">
-                            <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium border", rc.bg, rc.color, rc.border)}>
+                            <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 type-caption border", rc.bg, rc.color, rc.border)}>
                               <rc.icon className="h-2.5 w-2.5" />
                               {role}
                             </span>
@@ -406,7 +406,7 @@ export default function UsersManagement() {
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
                 <div className="w-full max-w-lg rounded-2xl bg-surface-900 border border-surface-800 shadow-2xl">
                   <div className="flex items-center justify-between border-b border-surface-800 px-6 py-4">
-                    <h2 className="text-base font-semibold text-surface-50">User Profile</h2>
+                    <h2 className="type-h2 text-surface-50">User Profile</h2>
                     <button
                       onClick={() => setSelectedUser(null)}
                       className="rounded-lg p-1.5 text-surface-400 transition-colors hover:bg-surface-800 hover:text-surface-50"
@@ -430,13 +430,13 @@ export default function UsersManagement() {
                         <p className="text-lg font-bold text-surface-50">
                           {selectedUser.name}
                         </p>
-                        <p className="text-sm text-surface-400">
+                        <p className="text-sm font-medium text-surface-400">
                           @{selectedUser.username}
                         </p>
                         <div className="mt-1.5 flex items-center gap-2">
                           <span
                             className={cn(
-                              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium border",
+                              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 type-caption border",
                               roleConfig[selectedUser.role].bg,
                               roleConfig[selectedUser.role].color,
                               roleConfig[selectedUser.role].border
@@ -456,7 +456,7 @@ export default function UsersManagement() {
                       <div className="rounded-lg bg-surface-800/50 border border-surface-800 p-3">
                         <div className="flex items-center gap-1.5 mb-1">
                           <Globe className="h-3 w-3 text-surface-500" />
-                          <span className="text-[10px] text-surface-500">Email</span>
+                          <span className="type-caption text-surface-500">Email</span>
                         </div>
                         <p className="text-sm font-medium text-surface-50 truncate">
                           {selectedUser.email}
@@ -465,7 +465,7 @@ export default function UsersManagement() {
                       <div className="rounded-lg bg-surface-800/50 border border-surface-800 p-3">
                         <div className="flex items-center gap-1.5 mb-1">
                           <Calendar className="h-3 w-3 text-surface-500" />
-                          <span className="text-[10px] text-surface-500">Joined</span>
+                          <span className="type-caption text-surface-500">Joined</span>
                         </div>
                         <p className="text-sm font-medium text-surface-50">
                           {formatDate(selectedUser.createdAt)}
@@ -474,7 +474,7 @@ export default function UsersManagement() {
                       <div className="rounded-lg bg-surface-800/50 border border-surface-800 p-3">
                         <div className="flex items-center gap-1.5 mb-1">
                           <FileText className="h-3 w-3 text-surface-500" />
-                          <span className="text-[10px] text-surface-500">Posts</span>
+                          <span className="type-caption text-surface-500">Posts</span>
                         </div>
                         <p className="text-sm font-medium text-surface-50">
                           {selectedUser._count?.posts ?? 0}
@@ -483,11 +483,11 @@ export default function UsersManagement() {
                       <div className="rounded-lg bg-surface-800/50 border border-surface-800 p-3">
                         <div className="flex items-center gap-1.5 mb-1">
                           {selectedUser.isVerified ? (
-                            <ShieldCheck className="h-3 w-3 text-brand-500" />
+                            <ShieldCheck className="h-3 w-3 text-accent-strong" />
                           ) : (
                             <Shield className="h-3 w-3 text-surface-500" />
                           )}
-                          <span className="text-[10px] text-surface-500">
+                          <span className="type-caption text-surface-500">
                             Verified
                           </span>
                         </div>
@@ -512,7 +512,7 @@ export default function UsersManagement() {
                           isVerified: !selectedUser.isVerified,
                         })
                       }
-                      className="flex items-center gap-2 rounded-lg bg-brand-500/10 border border-brand-500/20 px-4 py-2 text-xs font-medium text-brand-500 transition-colors hover:bg-brand-500/20 disabled:opacity-50"
+                      className="flex items-center gap-2 rounded-lg bg-brand-500/10 border border-brand-500/20 px-4 py-2 text-xs font-medium text-accent-strong transition-colors hover:bg-brand-500/20 disabled:opacity-50"
                     >
                       {selectedUser.isVerified ? (
                         <>

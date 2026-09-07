@@ -68,12 +68,50 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
   const [nowPlaying, setNowPlaying] = useState<NowPlaying>({ song: null, listeners: null, meta: false });
 
   const volumeRef = useRef(volume);
-  volumeRef.current = volume;
   const stationRef = useRef(station);
-  stationRef.current = station;
   const pausedByUser = useRef(false);
+  const retryCount = useRef(0);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const streamFailed = useRef(false);
+
+  useEffect(() => {
+    volumeRef.current = volume;
+    stationRef.current = station;
+  });
+
+  // Indirection so the reconnect callback can reschedule itself without a
+  // self-reference (which React Compiler rejects as a forward access).
+  const scheduleReconnectRef = useRef<() => void>(() => {});
+
+  // Auto-reconnect with exponential backoff when a live stream drops.
+  const scheduleReconnect = useCallback(() => {
+    const base = 3000;
+    const delay = Math.min(base * 2 ** retryCount.current, 30_000);
+    retryCount.current += 1;
+    if (retryTimer.current) clearTimeout(retryTimer.current);
+    retryTimer.current = setTimeout(() => {
+      const audio = audioRef.current;
+      const current = stationRef.current;
+      if (!audio || !current || pausedByUser.current) return;
+      setStreamState("connecting");
+      streamFailed.current = false;
+      audio.play().catch(() => scheduleReconnectRef.current());
+    }, delay);
+  }, []);
+
+  useEffect(() => {
+    scheduleReconnectRef.current = scheduleReconnect;
+  }, [scheduleReconnect]);
+
+  // Drop pending reconnect work on unmount / manual stop.
+  useEffect(() => {
+    return () => {
+      if (retryTimer.current) clearTimeout(retryTimer.current);
+    };
+  }, []);
 
   // Restore persisted prefs + last station (stay paused until user plays).
+  /* eslint-disable react-hooks/set-state-in-effect -- one-time hydration from localStorage; runs once on mount, no cascading renders */
   useEffect(() => {
     const vol = safeGetStorage("radio-volume");
     if (vol) {
@@ -102,6 +140,7 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
       if (st) setStation(st);
     }
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const updateNowPlaying = useCallback(
     async (stationId: string, force = false) => {
@@ -124,6 +163,9 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
     setStation(null);
     setIsPlaying(false);
     setStreamState("idle");
+    if (retryTimer.current) clearTimeout(retryTimer.current);
+    retryCount.current = 0;
+    streamFailed.current = false;
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.removeAttribute("src");
@@ -158,14 +200,19 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
       setRecentlyPlayed(recent);
       safeSetStorage("radio-recently", JSON.stringify(recent));
 
+      retryCount.current = 0;
+      streamFailed.current = false;
+      if (retryTimer.current) clearTimeout(retryTimer.current);
       audio.src = `/api/radio/stream?stationId=${encodeURIComponent(next.id)}`;
       setStreamState("connecting");
       audio.play().catch(() => {
         setStreamState("error");
         setIsPlaying(false);
+        streamFailed.current = true;
+        scheduleReconnect();
       });
     },
-    [isPlaying, recentlyPlayed]
+    [isPlaying, recentlyPlayed, scheduleReconnect]
   );
 
   const togglePlay = useCallback(() => {
@@ -173,17 +220,22 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
     if (!audio || !stationRef.current) return;
     if (audio.paused) {
       pausedByUser.current = false;
+      retryCount.current = 0;
+      streamFailed.current = false;
       setStreamState("connecting");
       audio.play().catch(() => {
         setStreamState("error");
         setIsPlaying(false);
+        streamFailed.current = true;
+        scheduleReconnect();
       });
     } else {
       pausedByUser.current = true;
+      if (retryTimer.current) clearTimeout(retryTimer.current);
       audio.pause();
       setStreamState("idle");
     }
-  }, []);
+  }, [scheduleReconnect]);
 
   const setVolume = useCallback((v: number) => {
     setVolumeState(v);
@@ -277,13 +329,20 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
           setStreamState("playing");
           setIsPlaying(true);
           pausedByUser.current = false;
+          streamFailed.current = false;
+          retryCount.current = 0;
         }}
         onWaiting={() => {
-          if (!pausedByUser.current) setStreamState("connecting");
+          if (!pausedByUser.current && !streamFailed.current) setStreamState("connecting");
+        }}
+        onStalled={() => {
+          if (!pausedByUser.current && !streamFailed.current) setStreamState("connecting");
         }}
         onError={() => {
           setStreamState("error");
           setIsPlaying(false);
+          streamFailed.current = true;
+          scheduleReconnect();
         }}
       />
     </RadioPlayerContext.Provider>

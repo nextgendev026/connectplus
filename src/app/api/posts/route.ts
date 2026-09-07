@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { slugify } from "@/lib/utils";
+import { cacheGet, cacheSet, redisIncr } from "@/lib/redis";
 import { hiveBrain } from "@/lib/hive-brain";
 import { moderateContent } from "@/lib/moderation";
 import { embedPost } from "@/lib/neural-vector";
@@ -17,6 +18,27 @@ const POST_SELECT = {
   _count: { select: { comments: true, likes: true } },
 } as const;
 
+/**
+ * Enrich a post page with the original-source attribution (scalars can't ride
+ * in an `include`, so fetch them in one batched query and merge).
+ */
+async function withSources<T extends { id: string }>(posts: T[]) {
+  if (posts.length === 0) return posts;
+  const rows = await prisma.post.findMany({
+    where: { id: { in: posts.map((p) => p.id) } },
+    select: { id: true, source: true, sourceUrl: true },
+  });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return posts.map((p) => {
+    const src = byId.get(p.id);
+    return {
+      ...p,
+      source: src?.source ?? null,
+      sourceUrl: src?.sourceUrl ?? null,
+    };
+  });
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -28,6 +50,24 @@ export async function GET(request: NextRequest) {
     const featured = searchParams.get("featured");
     const mine = searchParams.get("mine") === "true";
     const personalized = searchParams.get("personalized") === "true";
+
+    // Hot anonymous feed reads are cached in Redis for a short window so
+    // bursts of traffic share one database hit instead of N (free-tier
+    // friendly). Personalized and auth-scoped reads bypass the cache. A
+    // version counter invalidates the namespace on publish with one INCR.
+    const cacheable = !mine && !personalized && !search && page <= 3;
+    const feedVersion = cacheable
+      ? ((await cacheGet<number>("feed:version").catch(() => null)) ?? 0)
+      : 0;
+    const cacheKey = `feed:v${feedVersion}${request.nextUrl.search}`;
+    if (cacheable) {
+      const cached = await cacheGet<string>(cacheKey).catch(() => null);
+      if (cached) {
+        return new NextResponse(cached, {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    }
 
     const skip = (page - 1) * limit;
 
@@ -93,7 +133,7 @@ export async function GET(request: NextRequest) {
       });
       const { posts: ranked, variant } = await rankFeed(pool, authorId);
       const total = ranked.length;
-      const pagePosts = ranked.slice(skip, skip + limit);
+      const pagePosts = await withSources(ranked.slice(skip, skip + limit));
       return NextResponse.json({
         posts: pagePosts,
         pagination: {
@@ -116,9 +156,10 @@ export async function GET(request: NextRequest) {
       }),
       prisma.post.count({ where }),
     ]);
+    const enriched = await withSources(posts);
 
-    return NextResponse.json({
-      posts,
+    const body = JSON.stringify({
+      posts: enriched,
       pagination: {
         page,
         limit,
@@ -126,6 +167,13 @@ export async function GET(request: NextRequest) {
         totalPages: Math.ceil(total / limit),
         variant: "control" as FeedRankVariant,
       },
+    });
+
+    if (cacheable) {
+      await cacheSet(cacheKey, body, 45).catch(() => {});
+    }
+    return new NextResponse(body, {
+      headers: { "Content-Type": "application/json" },
     });
   } catch (error) {
     console.error("Error fetching posts:", error);
@@ -229,6 +277,9 @@ export async function POST(request: NextRequest) {
         _count: { select: { comments: true, likes: true } },
       },
     });
+
+    // Bump the feed-cache version so published posts appear immediately.
+    redisIncr("feed:version").catch(() => {});
 
     // Index the semantic embedding + hive engagement (fire-and-forget).
     if (postStatus === "PUBLISHED" && moderationStatus === "APPROVED") {

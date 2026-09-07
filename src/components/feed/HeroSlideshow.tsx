@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { cn, timeAgo } from "@/lib/utils";
 import {
   ChevronLeft,
@@ -125,9 +126,11 @@ export function HeroSlideshow({ slides, stats }: HeroSlideshowProps) {
             i === active ? "opacity-100" : "opacity-0"
           )}
         >
-          <img
+          <Image
             src={s.coverImage ?? ""}
             alt=""
+            fill
+            sizes="100vw"
             className="w-full h-full object-cover"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black via-black/75 to-black/40" />

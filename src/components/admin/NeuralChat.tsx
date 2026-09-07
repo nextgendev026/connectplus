@@ -1,8 +1,30 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, BrainCircuit, Loader2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Send, BrainCircuit, Loader2, FilePlus2, PenLine, Clipboard } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+const CONTENT_INTENTS = new Set([
+  "write_content",
+  "rewrite_content",
+  "summarize_content",
+  "headline_suggest",
+  "tag_suggest",
+  "outline_suggest",
+  "expand_content",
+  "curate_content",
+  "general_chat",
+  "unknown",
+]);
+
+function titleFromContent(content: string): string {
+  const line = content
+    .split(/\n/)
+    .map((l) => l.trim().replace(/^#+\s*/, "").replace(/^\*+/, "").replace(/\*+$/, "").replace(/^\d+[.)]\s*/, ""))
+    .find((l) => l.length > 4 && l.length < 90);
+  return (line ?? "Draft from Neural Mind").slice(0, 80);
+}
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -26,11 +48,47 @@ interface NeuralChatProps {
 }
 
 export default function NeuralChat({ conversationId, onConversationCreated, initialMessages = [] }: NeuralChatProps) {
+  const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [savingIndex, setSavingIndex] = useState<number | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const sendToStudio = useCallback((content: string) => {
+    try {
+      localStorage.setItem(
+        "connectplus:studio:new",
+        JSON.stringify({ title: titleFromContent(content), content, ts: Date.now() })
+      );
+    } catch {}
+    router.push("/studio?new=1");
+  }, [router]);
+
+  const saveAsDraft = useCallback(async (index: number, content: string) => {
+    setSavingIndex(index);
+    try {
+      const res = await fetch("/api/posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: titleFromContent(content), content, status: "DRAFT" }),
+      });
+      if (res.status === 401) {
+        router.push("/auth/signin?callbackUrl=/admin/neural");
+        return;
+      }
+      if (!res.ok) throw new Error("Save failed");
+      const data = await res.json();
+      const slug = data?.post?.slug;
+      if (slug) router.push(`/studio?edit=${data.post.id}`);
+    } catch {}
+    setSavingIndex(null);
+  }, [router]);
+
+  const copyToClipboard = useCallback((content: string) => {
+    navigator.clipboard?.writeText(content).catch(() => {});
+  }, []);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -141,10 +199,10 @@ export default function NeuralChat({ conversationId, onConversationCreated, init
               </div>
             )}
             <div className={cn(
-              "max-w-[80%] rounded-xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap",
+              "max-w-[80%] rounded-xl px-4 py-3 text-sm font-medium leading-relaxed whitespace-pre-wrap",
               msg.role === "user"
                 ? "bg-brand-500/20 text-surface-50 border border-brand-500/30"
-                : "bg-surface-800 text-surface-200 border border-surface-700"
+                : "bg-surface-800 text-surface-50 border border-surface-700"
             )}>
               {msg.content || (msg.role === "assistant" && isProcessing && i === messages.length - 1 ? (
                 <div className="flex gap-1 items-center">
@@ -155,34 +213,65 @@ export default function NeuralChat({ conversationId, onConversationCreated, init
               ) : null)}
               {msg.role === "assistant" && msg.intent && (
                 <div className="mt-2 flex gap-1.5 flex-wrap">
-                  <span className="rounded-full bg-surface-700 px-2 py-0.5 text-[10px] text-surface-400">
+                  <span className="rounded-full bg-surface-700 px-2 py-0.5 type-caption text-surface-300">
                     intent: {msg.intent}
                   </span>
                   {msg.enginesUsed?.map(e => (
                     <span key={e} className={cn(
-                      "rounded-full px-2 py-0.5 text-[10px]",
-                      e === "hive" ? "bg-amber-500/10 text-amber-400" : "bg-brand-500/10 text-brand-400"
+                      "rounded-full px-2 py-0.5 type-caption",
+                      e === "hive" ? "bg-amber-500/15 text-warning-strong" : "bg-brand-500/15 text-accent-strong"
                     )}>
                       {e === "hive" ? "🐝 " : ""}{e}
                     </span>
                   ))}
                 </div>
               )}
+              {msg.role === "assistant" &&
+                msg.content &&
+                (CONTENT_INTENTS.has(msg.intent ?? "") || msg.enginesUsed?.includes("llm")) && (
+                  <div className="mt-2.5 flex flex-wrap gap-1.5">
+                    <button
+                      onClick={() => sendToStudio(msg.content)}
+                      className="flex items-center gap-1 rounded-lg bg-brand-500/15 border border-brand-500/30 px-2 py-1 type-caption text-accent-strong hover:bg-brand-500/25 transition-colors"
+                      title="Load this content into the Story Studio editor"
+                    >
+                      <PenLine className="h-3 w-3" />
+                      Open in Studio
+                    </button>
+                    <button
+                      onClick={() => saveAsDraft(i, msg.content)}
+                      disabled={savingIndex === i}
+                      className="flex items-center gap-1 rounded-lg bg-surface-700/60 border border-surface-600/60 px-2 py-1 type-caption text-surface-300 hover:bg-surface-700 disabled:opacity-50 transition-colors"
+                      title="Save this content as a draft post"
+                    >
+                      {savingIndex === i ? <Loader2 className="h-3 w-3 animate-spin" /> : <FilePlus2 className="h-3 w-3" />}
+                      Save as draft
+                    </button>
+                    <button
+                      onClick={() => copyToClipboard(msg.content)}
+                      className="flex items-center gap-1 rounded-lg bg-surface-700/60 border border-surface-600/60 px-2 py-1 type-caption text-surface-300 hover:bg-surface-700 transition-colors"
+                      title="Copy to clipboard"
+                    >
+                      <Clipboard className="h-3 w-3" />
+                      Copy
+                    </button>
+                  </div>
+                )}
               {msg.hive && (
                 <div className="mt-2 space-y-1.5 rounded-lg border border-surface-700 bg-surface-900/60 p-2.5">
                   <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-1.5 text-[10px] font-semibold text-amber-400">
-                      <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+                    <span className="flex items-center gap-1.5 type-meta text-warning-strong">
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
                       Hive Brain Snapshot
                     </span>
-                    <span className="text-[9px] text-surface-500">
+                    <span className="type-caption text-surface-500">
                       {msg.hive.total} memories · {msg.hive.sourceBreakdown.internal ?? 0} internal / {msg.hive.sourceBreakdown.external ?? 0} external
                     </span>
                   </div>
                   {msg.hive.topTopics.slice(0, 5).map(t => (
                     <div key={t.topic} className="flex items-center justify-between">
-                      <span className="text-[10px] text-surface-400">{t.topic}</span>
-                      <span className="text-[9px] text-surface-600">×{t.count}</span>
+                      <span className="type-meta text-surface-300">{t.topic}</span>
+                      <span className="type-caption text-surface-500">×{t.count}</span>
                     </div>
                   ))}
                 </div>
@@ -190,7 +279,7 @@ export default function NeuralChat({ conversationId, onConversationCreated, init
             </div>
             {msg.role === "user" && (
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-700">
-                <span className="text-xs text-surface-300 font-medium">You</span>
+                <span className="text-xs font-semibold text-surface-200">You</span>
               </div>
             )}
           </div>

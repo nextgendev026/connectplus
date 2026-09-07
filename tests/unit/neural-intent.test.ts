@@ -40,6 +40,22 @@ describe("classifyIntent", () => {
     expect(result.confidence).toBe(0);
   });
 
+  it("classifies content-creation intents", () => {
+    expect(classifyIntent("write a post about Nairobi fintech").intent).toBe("write_content");
+    expect(classifyIntent("polish my draft").intent).toBe("rewrite_content");
+    expect(classifyIntent("summarize this article").intent).toBe("summarize_content");
+    expect(classifyIntent("suggest a headline for my post").intent).toBe("headline_suggest");
+    expect(classifyIntent("suggest tags for my draft").intent).toBe("tag_suggest");
+    expect(classifyIntent("make an outline for my story").intent).toBe("outline_suggest");
+    expect(classifyIntent("continue writing my draft").intent).toBe("expand_content");
+    expect(classifyIntent("what should I write about next").intent).toBe("curate_content");
+  });
+
+  it("classifies conversational greetings", () => {
+    expect(classifyIntent("hello there").intent).toBe("general_chat");
+    expect(classifyIntent("what can you do").intent).toBe("general_chat");
+  });
+
   it("is case-insensitive", () => {
     const lower = classifyIntent("platform health");
     const upper = classifyIntent("PLATFORM HEALTH");

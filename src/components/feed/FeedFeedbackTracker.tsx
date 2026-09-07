@@ -18,12 +18,16 @@ export function FeedFeedbackTracker({
 }: {
   variant?: string | null;
 }) {
-  const startRef = useRef(Date.now());
+  const startRef = useRef(0);
   const seenRef = useRef(new Set<string>());
   const variantRef = useRef(variant);
-  variantRef.current = variant;
 
   useEffect(() => {
+    variantRef.current = variant;
+  }, [variant]);
+
+  useEffect(() => {
+    startRef.current = Date.now();
     const logImpression = (el: Element) => {
       const id = el.getAttribute("data-feed-post");
       if (!id || seenRef.current.has(id)) return;
@@ -56,6 +60,7 @@ export function FeedFeedbackTracker({
     document.addEventListener("click", onClick);
 
     const flushTime = () => {
+      if (startRef.current === 0) return; // effect never started
       const seconds = Math.round((Date.now() - startRef.current) / 1000);
       startRef.current = Date.now();
       if (seconds >= 3) {

@@ -98,11 +98,6 @@ export default function AdminCommandCenter() {
     }
   }
 
-  const handleSend = () => {
-    // Redirect to Neural Mind
-    window.location.href = "/admin/neural";
-  };
-
   const systemStats = stats
     ? [
         {
@@ -110,7 +105,7 @@ export default function AdminCommandCenter() {
           value: formatNumber(stats.totalUsers),
           change: `+${stats.usersThisWeek} this week`,
           icon: Users,
-          color: "text-brand-500",
+          color: "text-accent-strong",
           bg: "bg-brand-500/10",
         },
         {
@@ -118,7 +113,7 @@ export default function AdminCommandCenter() {
           value: formatNumber(stats.totalPosts),
           change: `+${stats.postsThisWeek} this week`,
           icon: FileText,
-          color: "text-cyan-400",
+          color: "text-info-strong",
           bg: "bg-cyan-400/10",
         },
         {
@@ -126,7 +121,7 @@ export default function AdminCommandCenter() {
           value: formatNumber(stats.pendingModeration),
           change: `${stats.totalComments.toLocaleString()} comments`,
           icon: Shield,
-          color: "text-amber-400",
+          color: "text-warning-strong",
           bg: "bg-amber-400/10",
         },
         {
@@ -149,17 +144,17 @@ export default function AdminCommandCenter() {
     : defaultNodes.map((n) => ({ ...n, users: 0, posts: 0 }));
 
   return (
-    <div className="min-h-screen bg-surface-950 p-6 lg:p-8">
+    <div className="min-h-screen">
       <div className="mx-auto max-w-[1600px] space-y-8">
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500/10 border border-brand-500/20">
-              <Cpu className="h-6 w-6 text-brand-500" />
+              <Cpu className="h-6 w-6 text-accent-strong" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-surface-50">Command Center</h1>
-              <p className="text-sm text-surface-400">
+              <h1 className="type-display text-surface-50">Command Center</h1>
+              <p className="text-sm font-medium text-surface-400">
                 Platform overview & neural diagnostics
               </p>
             </div>
@@ -172,7 +167,7 @@ export default function AdminCommandCenter() {
             >
               <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
             </button>
-            <span className="hidden sm:inline-flex rounded-full bg-gradient-to-r from-brand-500/15 to-accent-coral/10 border border-brand-500/20 px-3 py-1.5 text-xs font-medium text-brand-500">
+            <span className="hidden sm:inline-flex rounded-full bg-gradient-to-r from-brand-500/15 to-accent-coral/10 border border-brand-500/20 px-3 py-1.5 text-xs font-medium text-accent-strong">
               <BrainCircuit className="mr-1 inline-block h-3.5 w-3.5" />
               Hive Mind Neural Engine
             </span>
@@ -186,8 +181,8 @@ export default function AdminCommandCenter() {
         {/* Loading State */}
         {loading && (
           <div className="flex items-center justify-center py-20">
-            <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-            <span className="ml-3 text-sm text-surface-400">Fetching platform telemetry...</span>
+            <Loader2 className="h-8 w-8 animate-spin text-accent-strong" />
+            <span className="ml-3 text-sm font-medium text-surface-400">Fetching platform telemetry...</span>
           </div>
         )}
 
@@ -220,7 +215,7 @@ export default function AdminCommandCenter() {
                 >
                   <div className="flex items-start justify-between">
                     <div>
-                      <p className="text-sm text-surface-400">{stat.label}</p>
+                      <p className="text-sm font-medium text-surface-400">{stat.label}</p>
                       <p className="mt-1 text-3xl font-bold text-surface-50">
                         {stat.value}
                       </p>
@@ -235,8 +230,8 @@ export default function AdminCommandCenter() {
                     </div>
                   </div>
                   <div className="mt-3 flex items-center gap-1 text-xs">
-                    <ArrowUpRight className="h-3.5 w-3.5 text-brand-500" />
-                    <span className="text-brand-500 font-medium">{stat.change}</span>
+                    <ArrowUpRight className="h-3.5 w-3.5 text-accent-strong" />
+                    <span className="text-accent-strong font-medium">{stat.change}</span>
                   </div>
                   <div
                     className={cn(
@@ -253,8 +248,8 @@ export default function AdminCommandCenter() {
               <div className="lg:col-span-2 rounded-xl bg-surface-900/50 border border-surface-800 p-6">
                 <div className="mb-5 flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Radio className="h-5 w-5 text-brand-500" />
-                    <h2 className="text-lg font-semibold text-surface-50">
+                    <Radio className="h-5 w-5 text-accent-strong" />
+                    <h2 className="type-h2 text-surface-50">
                       Active Nodes
                     </h2>
                   </div>
@@ -285,7 +280,7 @@ export default function AdminCommandCenter() {
                       <p className="mt-2 text-xl font-bold text-surface-50">
                         {node.users.toLocaleString()}
                       </p>
-                      <p className="text-[10px] text-surface-500">
+                      <p className="type-meta text-surface-400">
                         {node.posts.toLocaleString()} posts
                       </p>
                       <div className="mt-1 flex items-center gap-1.5">
@@ -299,7 +294,7 @@ export default function AdminCommandCenter() {
                                 : "bg-surface-500"
                           )}
                         />
-                        <span className="text-[10px] capitalize text-surface-500">
+                        <span className="type-meta capitalize text-surface-400">
                           {node.status}
                         </span>
                       </div>
@@ -312,7 +307,7 @@ export default function AdminCommandCenter() {
               <div className="rounded-xl bg-surface-900/50 border border-surface-800 p-6">
                 <div className="mb-5 flex items-center gap-2">
                   <TrendingUp className="h-5 w-5 text-cyan-400" />
-                  <h2 className="text-lg font-semibold text-surface-50">
+                  <h2 className="type-h2 text-surface-50">
                     Regional Trends
                   </h2>
                 </div>
@@ -323,19 +318,19 @@ export default function AdminCommandCenter() {
                       className="group flex items-center justify-between rounded-lg border border-surface-800 bg-surface-800/30 p-3 transition-all duration-200 hover:border-surface-700 hover:bg-surface-800/60"
                     >
                       <div className="flex items-center gap-3">
-                        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-surface-700 text-[10px] font-bold text-surface-300">
+                        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-surface-700 type-caption font-bold text-surface-300">
                           {i + 1}
                         </span>
                         <div>
                           <p className="text-sm font-medium text-surface-50">
                             {topic.topic}
                           </p>
-                          <p className="text-xs text-surface-500">
+                          <p className="text-xs font-medium text-surface-400">
                             {topic.mentions.toLocaleString()} mentions
                           </p>
                         </div>
                       </div>
-                      <span className="rounded-full bg-brand-500/10 px-2 py-0.5 text-[10px] font-medium text-brand-500">
+                      <span className="rounded-full bg-brand-500/10 px-2 py-0.5 type-caption text-accent-strong">
                         {topic.trend}
                       </span>
                     </div>
@@ -349,10 +344,10 @@ export default function AdminCommandCenter() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/10">
-                    <BrainCircuit className="h-5 w-5 text-brand-500" />
+                    <BrainCircuit className="h-5 w-5 text-accent-strong" />
                   </div>
                   <div>
-                    <h2 className="text-base font-semibold text-surface-50">
+                    <h2 className="type-h2 text-surface-50">
                       Neural Mind
                     </h2>
                     <p className="text-xs text-surface-500">

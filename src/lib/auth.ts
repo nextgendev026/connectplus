@@ -73,6 +73,27 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.role = user.role;
         token.username = user.username;
         token.avatar = user.avatar ?? null;
+        token.roleFetchedAt = Date.now();
+      } else if (token.id) {
+        // Keep role/username fresh: re-read from the DB at most once a minute so
+        // promotions (e.g. ADMIN -> SUPER_ADMIN) take effect without re-login.
+        const lastFetch = (token.roleFetchedAt as number | undefined) ?? 0;
+        if (Date.now() - lastFetch > 60_000) {
+          try {
+            const fresh = await prisma.user.findUnique({
+              where: { id: token.id as string },
+              select: { role: true, username: true, avatar: true },
+            });
+            if (fresh) {
+              token.role = fresh.role;
+              token.username = fresh.username ?? token.username;
+              token.avatar = fresh.avatar ?? token.avatar;
+              token.roleFetchedAt = Date.now();
+            }
+          } catch {
+            // DB hiccup — keep the cached token values.
+          }
+        }
       }
       return token;
     },

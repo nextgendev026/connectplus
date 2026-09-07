@@ -40,7 +40,7 @@ function EngineBadges({ intent, enginesUsed: engines, hive }: ChamberMessage) {
   return (
     <div className="mt-2 flex flex-wrap gap-1.5">
       {intent && (
-        <span className="rounded-full bg-surface-700 px-2 py-0.5 text-[9px] text-surface-400">
+        <span className="rounded-full bg-surface-700 px-2 py-0.5 type-caption text-surface-300">
           intent: {intent}
         </span>
       )}
@@ -48,8 +48,8 @@ function EngineBadges({ intent, enginesUsed: engines, hive }: ChamberMessage) {
         <span
           key={e}
           className={cn(
-            "rounded-full px-2 py-0.5 text-[9px]",
-            e === "hive" ? "bg-amber-500/10 text-amber-400" : "bg-brand-500/10 text-brand-400"
+            "rounded-full px-2 py-0.5 type-caption",
+            e === "hive" ? "bg-amber-500/15 text-warning-strong" : "bg-brand-500/15 text-accent-strong"
           )}
         >
           {e === "hive" ? "🐝 " : ""}
@@ -57,7 +57,7 @@ function EngineBadges({ intent, enginesUsed: engines, hive }: ChamberMessage) {
         </span>
       ))}
       {hive && (
-        <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[9px] text-emerald-400">
+        <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 type-caption text-positive-strong">
           {hive.total} memories
         </span>
       )}
@@ -215,9 +215,9 @@ export default function BrainChatWidget() {
   );
 
   const severityColor: Record<NeuralInsight["severity"], string> = {
-    info: "text-cyan-400",
-    warning: "text-amber-400",
-    critical: "text-red-400",
+    info: "text-info-strong",
+    warning: "text-warning-strong",
+    critical: "text-danger-strong",
   };
 
   if (!open) {
@@ -232,7 +232,7 @@ export default function BrainChatWidget() {
           <span className="relative inline-flex h-3 w-3 rounded-full bg-amber-400" />
         </span>
         <BrainCircuit className="h-6 w-6 text-brand-400" />
-        <span className="absolute right-14 whitespace-nowrap rounded-lg bg-surface-900 border border-surface-700 px-2.5 py-1.5 text-[11px] font-medium text-surface-300 opacity-0 group-hover:opacity-100 transition-opacity">
+        <span className="absolute right-14 whitespace-nowrap rounded-lg bg-surface-900 border border-surface-700 px-2.5 py-1.5 type-meta text-surface-300 opacity-0 group-hover:opacity-100 transition-opacity">
           Ask NeuroHive — Neural + Hive
         </span>
       </button>
@@ -249,8 +249,8 @@ export default function BrainChatWidget() {
           </div>
           <div>
             <p className="text-sm font-semibold text-surface-50">NeuroHive · Combined Brains</p>
-            <p className="flex items-center gap-1.5 text-[10px] text-surface-500">
-              <span className={cn("h-1.5 w-1.5 rounded-full", isProcessing ? "bg-amber-400 animate-pulse" : "bg-emerald-400")} />
+            <p className="type-caption text-warning-strong">
+              <span className={cn("h-1.5 w-1.5 rounded-full", isProcessing ? "bg-amber-500 animate-pulse" : "bg-emerald-500")} />
               Neural intent + Hive memory · AI teaching
             </p>
           </div>
@@ -289,19 +289,18 @@ export default function BrainChatWidget() {
           <div className="flex-1 overflow-y-auto space-y-3 p-3">
             {messages.length === 0 && (
               <div className="py-8 text-center">
-                <BrainCircuit className="mx-auto mb-2 h-8 w-8 text-surface-700" />
-                <p className="text-sm text-surface-400">Ask the combined brains anything.</p>
-                <p className="text-[11px] text-surface-600 mt-1">Logical teaching loop ON — every question you ask teaches the brains your phrasing, so they understand you better each time.</p>
+                <BrainCircuit className="mx-auto mb-2 h-8 w-8 text-surface-700" />                  <p className="text-sm font-medium text-surface-300">Ask the combined brains anything.</p>
+                  <p className="type-meta text-surface-500 mt-1">Logical teaching loop ON — every question you ask teaches the brains your phrasing, so they understand you better each time.</p>
               </div>
             )}
             {messages.map((msg, i) => (
               <div key={i} className={cn("flex gap-2", msg.role === "user" ? "justify-end" : "justify-start")}>
                 <div
                   className={cn(
-                    "max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap",
+                    "max-w-[85%] rounded-xl px-3 py-2 text-xs font-medium leading-relaxed whitespace-pre-wrap",
                     msg.role === "user"
                       ? "bg-brand-500/20 border border-brand-500/30 text-surface-50"
-                      : "bg-surface-800 border border-surface-700 text-surface-200"
+                      : "bg-surface-800 border border-surface-700 text-surface-50"
                   )}
                 >
                   {msg.content || (msg.role === "assistant" && isProcessing ? (
@@ -324,7 +323,7 @@ export default function BrainChatWidget() {
                   key={q.label}
                   onClick={() => sendMessage(q.query)}
                   disabled={isProcessing}
-                  className="rounded-full border border-surface-700 bg-surface-900 px-2 py-0.5 text-[10px] text-surface-400 hover:border-brand-500/40 hover:text-brand-400 disabled:opacity-40"
+                  className="rounded-full border border-surface-700 bg-surface-900 px-2 py-0.5 type-caption text-surface-300 hover:border-brand-500/40 hover:text-brand-600 disabled:opacity-40"
                 >
                   {q.label}
                 </button>
@@ -371,7 +370,7 @@ export default function BrainChatWidget() {
               <p className="mb-1.5 text-[9px] font-medium text-surface-500 uppercase tracking-wider">Hive signals</p>
               <div className="flex flex-wrap gap-1.5">
                 {hive.topTopics.slice(0, 12).map(t => (
-                  <span key={t.topic} className="rounded-full bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 text-[10px] text-amber-400">
+                  <span key={t.topic} className="rounded-full bg-amber-500/15 border border-amber-500/25 px-2 py-0.5 type-caption text-warning-strong">
                     {t.topic} ×{t.count}
                   </span>
                 ))}
@@ -385,8 +384,8 @@ export default function BrainChatWidget() {
               <ul className="space-y-1.5">
                 {insights.map((ins, i) => (
                   <li key={i} className="rounded-lg border border-surface-800 bg-surface-900/50 px-3 py-2">
-                    <p className={cn("text-xs font-medium", severityColor[ins.severity])}>{ins.title}</p>
-                    <p className="text-[10px] text-surface-400 mt-0.5 leading-relaxed">{ins.summary}</p>
+                    <p className={cn("text-xs font-semibold", severityColor[ins.severity])}>{ins.title}</p>
+                    <p className="type-caption text-surface-400 mt-0.5 leading-relaxed">{ins.summary}</p>
                   </li>
                 ))}
               </ul>
@@ -406,7 +405,7 @@ export default function BrainChatWidget() {
               <button
                 onClick={() => runTraining("sweep")}
                 disabled={learning !== null}
-                className="flex items-center justify-center gap-1.5 rounded-lg border border-surface-700 bg-surface-800 px-3 py-2 text-[11px] text-surface-300 disabled:opacity-50"
+                className="flex items-center justify-center gap-1.5 rounded-lg border border-surface-700 bg-surface-800 px-3 py-2 type-meta text-surface-300 disabled:opacity-50"
               >
                 {learning === "sweep" ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
                 Sweep Posts
@@ -414,7 +413,7 @@ export default function BrainChatWidget() {
               <button
                 onClick={() => runTraining("learn")}
                 disabled={learning !== null}
-                className="flex items-center justify-center gap-1.5 rounded-lg border border-surface-700 bg-surface-800 px-3 py-2 text-[11px] text-surface-300 disabled:opacity-50"
+                className="flex items-center justify-center gap-1.5 rounded-lg border border-surface-700 bg-surface-800 px-3 py-2 type-meta text-surface-300 disabled:opacity-50"
               >
                 {learning === "learn" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
                 Learn RSS

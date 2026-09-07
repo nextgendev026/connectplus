@@ -13,6 +13,15 @@ export type Intent =
   | "knowledge_search"
   | "memory_manage"
   | "run_sweep"
+  | "write_content"
+  | "rewrite_content"
+  | "summarize_content"
+  | "headline_suggest"
+  | "tag_suggest"
+  | "outline_suggest"
+  | "expand_content"
+  | "curate_content"
+  | "general_chat"
   | "general_platform"
   | "unknown";
 
@@ -171,6 +180,96 @@ const INTENT_PATTERNS: IntentPattern[] = [
       "run the learning cycle", "sweep everything",
     ],
     boostKeywords: ["posts", "feed", "learn", "train", "run", "update"],
+  },
+  {
+    intent: "curate_content",
+    keywords: ["curate", "curation", "what should i write", "content ideas", "story ideas", "content strategy"],
+    phrases: [
+      "curate content", "give me content ideas", "what should i write about",
+      "what should i write about next", "what should i write about today",
+      "suggest topics to write", "what topics are hot", "give me story ideas",
+      "what should i publish next", "content strategy", "what performs well",
+      "suggest a topic", "what is the audience reading",
+    ],
+    boostKeywords: ["should", "next", "write", "publish", "idea", "topic", "trending", "angle"],
+  },
+  {
+    intent: "write_content",
+    keywords: ["write", "create", "compose", "draft", "generate post", "generate article", "blog post", "story about", "article about"],
+    phrases: [
+      "write a post", "write an article", "write a story", "write me a post",
+      "create a post", "create content", "draft a post", "draft an article",
+      "compose a post", "write about", "write a blog", "generate a post",
+      "write me an article", "can you write", "write a piece",
+    ],
+    boostKeywords: ["topic", "idea", "title", "content", "post", "article", "story", "about"],
+  },
+  {
+    intent: "rewrite_content",
+    keywords: ["rewrite", "rephrase", "polish", "improve writing", "improve text", "better wording", "reword", "paraphrase", "tidy up", "clean up this"],
+    phrases: [
+      "rewrite this", "polish this", "rephrase this", "improve this paragraph",
+      "rewrite my post", "polish my draft", "improve this text", "reword this",
+      "make this better", "fix my writing", "edit this for me", "clean up this text",
+      "improve the writing", "make this read better", "tighten this up",
+    ],
+    boostKeywords: ["grammar", "clarity", "shorter", "engaging", "draft", "text", "paragraph"],
+  },
+  {
+    intent: "summarize_content",
+    keywords: ["summarize", "summary", "summarise", "tl;dr", "short version", "key points", "condense"],
+    phrases: [
+      "summarize this", "summarise this", "give me a summary", "summarize the post",
+      "tl dr", "summarize my draft", "make an excerpt", "write an excerpt",
+      "summarize the article", "summarize this text", "condense this",
+    ],
+    boostKeywords: ["excerpt", "brief", "short", "overview", "abstract"],
+  },
+  {
+    intent: "headline_suggest",
+    keywords: ["headline", "title idea", "headings", "titles"],
+    phrases: [
+      "suggest a headline", "suggest titles", "headline ideas", "give me a headline",
+      "what should i title", "title suggestions", "headline for this", "come up with a title",
+      "make a headline", "suggest a title", "title this post",
+    ],
+    boostKeywords: ["title", "name", "catchy", "click", "attention"],
+  },
+  {
+    intent: "tag_suggest",
+    keywords: ["tags", "hashtag", "tag this", "keywords", "categories"],
+    phrases: [
+      "suggest tags", "suggest hashtags", "what tags", "tag this post",
+      "recommend tags", "suggest keywords", "tags for this", "which tags should i use",
+      "generate tags", "suggest a category", "which category",
+    ],
+    boostKeywords: ["seo", "discover", "search", "label"],
+  },
+  {
+    intent: "outline_suggest",
+    keywords: ["outline", "structure", "sections", "plan the post", "structure the post"],
+    phrases: [
+      "make an outline", "create an outline", "give me an outline", "outline for a post",
+      "structure my post", "plan my article", "outline this topic", "suggest sections",
+    ],
+    boostKeywords: ["headings", "subheadings", "plan", "structure", "sections", "introduction", "conclusion"],
+  },
+  {
+    intent: "expand_content",
+    keywords: ["continue", "expand", "extend", "add more", "keep writing", "write more", "go on"],
+    phrases: [
+      "continue writing", "continue this", "expand this", "add a paragraph",
+      "keep going", "extend the post", "write more about this", "add more detail",
+      "continue the story", "what happens next", "expand my draft",
+    ],
+    boostKeywords: ["next", "paragraph", "section", "more", "detail", "elaborate"],
+  },
+
+  {
+    intent: "general_chat",
+    keywords: [],
+    phrases: ["hello", "hi", "hey", "jambo", "sasa", "habari", "how are you", "who are you", "what can you do", "help", "thanks", "thank you", "asante", "good morning", "good evening", "good afternoon"],
+    boostKeywords: [],
   },
 ];
 

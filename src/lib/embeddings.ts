@@ -55,10 +55,8 @@ export function embedText(text: string, dim: number = EMBEDDING_DIM): number[] {
   // Weight: 1/sqrt(freq) softens the dominance of repeated tokens, and adds a
   // hashed sign so a feature is either "toward" or "away" (random projection).
   const seen = new Map<string, number>();
-  let n = 0;
   for (const f of features) {
     seen.set(f, (seen.get(f) ?? 0) + 1);
-    n++;
   }
   for (const [f, count] of seen) {
     const weight = 1 / Math.sqrt(count);

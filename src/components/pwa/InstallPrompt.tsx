@@ -18,7 +18,11 @@ export function InstallPrompt() {
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
   const [visible, setVisible] = useState(false);
   const [dismissed, setDismissed] = useState(false);
-  const [isIOS, setIsIOS] = useState(false);
+  const isIOS =
+    typeof window !== "undefined" &&
+    /iPad|iPhone|iPod/.test(navigator.userAgent) &&
+    // @ts-expect-error non-standard
+    !window.MSStream;
 
   useEffect(() => {
     if (
@@ -31,12 +35,6 @@ export function InstallPrompt() {
     const dismissedBefore = localStorage.getItem("connectplus-install-dismissed");
     if (dismissedBefore) return;
 
-    const isSafariIOS =
-      /iPad|iPhone|iPod/.test(navigator.userAgent) &&
-      // @ts-expect-error non-standard
-      !window.MSStream;
-    setIsIOS(isSafariIOS);
-
     const onPrompt = (e: Event) => {
       e.preventDefault();
       setDeferred(e as BeforeInstallPromptEvent);
@@ -47,7 +45,7 @@ export function InstallPrompt() {
 
     // iOS has no beforeinstallprompt — nudge after a short delay instead.
     let t: ReturnType<typeof setTimeout> | undefined;
-    if (isSafariIOS) {
+    if (isIOS) {
       t = setTimeout(() => setVisible(true), 4000);
     }
 
@@ -56,7 +54,7 @@ export function InstallPrompt() {
       window.removeEventListener("appinstalled", () => setVisible(false));
       if (t) clearTimeout(t);
     };
-  }, []);
+  }, [isIOS]);
 
   const install = async () => {
     if (deferred) {

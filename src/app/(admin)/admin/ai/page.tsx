@@ -52,7 +52,7 @@ function StatCard({
   label,
   value,
   sub,
-  color = "text-brand-500",
+  color = "text-accent-strong",
 }: {
   icon: typeof Database;
   label: string;
@@ -64,7 +64,7 @@ function StatCard({
     <div className="rounded-xl bg-surface-900/50 border border-surface-800 p-5">
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-sm text-surface-400">{label}</p>
+          <p className="text-sm font-medium text-surface-300">{label}</p>
           <p className="mt-1 text-3xl font-bold text-surface-50">{value}</p>
           {sub && <p className="mt-1 text-xs text-surface-500">{sub}</p>}
         </div>
@@ -111,6 +111,7 @@ export default function AiPipelinesPage() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount: the sync setState is only an idempotent loading flag
     fetchOverview();
   }, [fetchOverview]);
 
@@ -148,16 +149,16 @@ export default function AiPipelinesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-surface-950 -m-6 p-6 lg:p-8">
+    <div className="min-h-screen">
       <div className="mx-auto max-w-[1600px] space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500/10 border border-brand-500/20">
-              <Layers className="h-6 w-6 text-brand-500" />
+              <Layers className="h-6 w-6 text-accent-strong" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-surface-50">AI Pipelines</h1>
-              <p className="text-sm text-surface-400">
+              <h1 className="type-display text-surface-50">AI Pipelines</h1>
+              <p className="text-sm font-medium text-surface-300">
                 Superadmin control over every neural pipeline — semantic index, moderation, learning loop, experiments
               </p>
             </div>
@@ -177,10 +178,10 @@ export default function AiPipelinesPage() {
               className={cn(
                 "flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all",
                 running
-                  ? "bg-surface-800 text-surface-500 cursor-not-allowed"
+                  ? "bg-surface-800 text-surface-400 cursor-not-allowed"
                   : role === "SUPER_ADMIN"
                     ? "bg-brand-500 text-white hover:bg-brand-600 shadow-glow"
-                    : "bg-surface-800 text-surface-500 cursor-not-allowed"
+                    : "bg-surface-800 text-surface-400 cursor-not-allowed"
               )}
             >
               {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
@@ -203,7 +204,7 @@ export default function AiPipelinesPage() {
             </p>
             <div className="flex flex-wrap gap-2">
               {runResult.map((s) => (
-                <span key={s.name} className="rounded-full bg-surface-900/60 border border-emerald-500/20 px-3 py-1 text-xs text-surface-300">
+                <span key={s.name} className="rounded-full bg-surface-900/60 border border-emerald-500/25 px-3 py-1 text-xs font-semibold text-positive-strong">
                   {s.name}: {s.built}
                 </span>
               ))}
@@ -212,7 +213,7 @@ export default function AiPipelinesPage() {
         )}
 
         {error && (
-          <div className="flex items-center gap-2 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-400">
+          <div className="flex items-center gap-2 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm font-medium text-danger-strong">
             <XCircle className="h-4 w-4 shrink-0" />
             {error}
             <button onClick={fetchOverview} className="ml-auto text-xs underline hover:text-red-300">
@@ -223,8 +224,8 @@ export default function AiPipelinesPage() {
 
         {loading && (
           <div className="flex items-center justify-center py-24">
-            <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-            <span className="ml-3 text-sm text-surface-400">Loading pipeline telemetry…</span>
+            <Loader2 className="h-8 w-8 animate-spin text-accent-strong" />
+            <span className="ml-3 text-sm font-medium text-surface-300">Loading pipeline telemetry…</span>
           </div>
         )}
 
@@ -236,14 +237,14 @@ export default function AiPipelinesPage() {
                 label="Semantic Index"
                 value={`${data.pipeline.semantic.coverage}%`}
                 sub={`${data.pipeline.semantic.indexedPosts} / ${data.pipeline.semantic.publishedPosts} posts · ${data.pipeline.semantic.model}`}
-                color="text-cyan-400"
+                color="text-info-strong"
               />
               <StatCard
                 icon={ShieldAlert}
                 label="Moderation Queue"
                 value={data.pipeline.moderation.pending}
                 sub={`${data.pipeline.moderation.flagged} flagged · ${data.pipeline.moderation.rejected} rejected · ${data.pipeline.moderation.duplicates} duplicates`}
-                color="text-amber-400"
+                color="text-warning-strong"
               />
               <StatCard
                 icon={BrainCircuit}
@@ -257,16 +258,16 @@ export default function AiPipelinesPage() {
                 label="Generation"
                 value={data.pipeline.generation.usesCustomModel}
                 sub="custom-model generations"
-                color="text-emerald-400"
+                color="text-positive-strong"
               />
             </div>
 
             {/* Experiment telemetry */}
             <div className="rounded-xl bg-surface-900/50 border border-surface-800 p-6">
               <div className="mb-4 flex items-center gap-2">
-                <FlaskConical className="h-5 w-5 text-brand-500" />
-                <h2 className="text-lg font-semibold text-surface-50">Feed Ranking Experiment</h2>
-                <span className="ml-auto rounded-full bg-surface-800 px-2.5 py-1 text-xs text-surface-400">A/B · feed-rank</span>
+                <FlaskConical className="h-5 w-5 text-accent-strong" />
+                <h2 className="type-h2 text-surface-50">Feed Ranking Experiment</h2>
+                <span className="ml-auto rounded-full bg-surface-800 px-2.5 py-1 text-xs font-semibold text-surface-300">A/B · feed-rank</span>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {exp?.variants.map((variant) => {
@@ -276,19 +277,19 @@ export default function AiPipelinesPage() {
                       <p className="text-xs font-medium text-surface-300 capitalize">{variant.replace("-", " ")}</p>
                       <div className="mt-2 flex items-end justify-between">
                         <div>
-                          <p className="text-2xl font-bold text-surface-50">{row.impressions}</p>
-                          <p className="text-[10px] text-surface-500">impressions</p>
+                          <p className="type-display text-surface-50">{row.impressions}</p>
+                          <p className="type-caption text-surface-500">impressions</p>
                         </div>
                         <div className="text-right">
-                          <p className="text-lg font-semibold text-brand-400">{row.ctr}%</p>
-                          <p className="text-[10px] text-surface-500">{row.clicks} clicks</p>
+                          <p className="text-lg font-semibold text-accent-strong">{row.ctr}%</p>
+                          <p className="type-caption text-surface-500">{row.clicks} clicks</p>
                         </div>
                       </div>
                     </div>
                   );
                 })}
               </div>
-              <p className="mt-3 text-[11px] text-surface-600">
+              <p className="mt-3 type-meta text-surface-600">
                 CTR compares impressions → clicks per variant. A winner can be promoted by changing the weights in{" "}
                 <code className="rounded bg-surface-800 px-1">src/lib/feed-ranker.ts</code>.
               </p>
@@ -299,7 +300,7 @@ export default function AiPipelinesPage() {
               <div className="rounded-xl bg-surface-900/50 border border-surface-800 p-6">
                 <div className="mb-4 flex items-center gap-2">
                   <ShieldAlert className="h-5 w-5 text-amber-400" />
-                  <h2 className="text-lg font-semibold text-surface-50">Flagged Content</h2>
+                  <h2 className="type-h2 text-surface-50">Flagged Content</h2>
                 </div>
                 {data.flaggedPosts.length === 0 ? (
                   <p className="text-sm text-surface-500">No flagged posts. All clear.</p>
@@ -308,22 +309,22 @@ export default function AiPipelinesPage() {
                     {data.flaggedPosts.map((p) => (
                       <div key={p.id} className="rounded-lg border border-surface-800 bg-surface-800/30 p-3">
                         <div className="flex items-center justify-between gap-3">
-                          <Link href={`/article/${p.slug}`} className="min-w-0 truncate text-sm font-medium text-surface-200 hover:text-brand-400 transition-colors">
+                          <Link href={`/article/${p.slug}`} className="min-w-0 truncate text-sm font-semibold text-surface-100 hover:text-brand-600 transition-colors">
                             {p.title}
                           </Link>
                           <span
                             className={cn(
-                              "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold",
+                              "shrink-0 rounded-full px-2 py-0.5 type-caption font-bold",
                               p.moderationStatus === "REJECTED"
-                                ? "bg-red-500/20 text-red-400"
-                                : "bg-amber-500/20 text-amber-400"
+                                ? "bg-red-500/20 text-danger-strong"
+                                : "bg-amber-500/20 text-warning-strong"
                             )}
                           >
                             {p.moderationStatus}
                           </span>
                         </div>
                         {p.aiFlags && (
-                          <p className="mt-1.5 text-[11px] text-surface-500">
+                          <p className="mt-1.5 type-meta text-surface-500">
                             <Cpu className="mr-1 inline-block h-3 w-3" />
                             {p.aiFlags}
                             {p.aiScore != null && <span className="ml-2">score {p.aiScore}</span>}
@@ -339,7 +340,7 @@ export default function AiPipelinesPage() {
               <div className="rounded-xl bg-surface-900/50 border border-surface-800 p-6">
                 <div className="mb-4 flex items-center gap-2">
                   <BrainCircuit className="h-5 w-5 text-purple-400" />
-                  <h2 className="text-lg font-semibold text-surface-50">Recent Learning Events</h2>
+                  <h2 className="type-h2 text-surface-50">Recent Learning Events</h2>
                 </div>
                 {data.recentFeedback.length === 0 ? (
                   <p className="text-sm text-surface-500">
@@ -349,10 +350,10 @@ export default function AiPipelinesPage() {
                   <div className="space-y-2">
                     {data.recentFeedback.map((f) => (
                       <div key={f.id} className="flex items-center justify-between rounded-lg border border-surface-800 bg-surface-800/30 px-3 py-2">
-                        <span className="rounded-full bg-brand-500/10 px-2 py-0.5 text-[10px] font-medium text-brand-400 capitalize">
+                        <span className="rounded-full bg-brand-500/10 px-2 py-0.5 type-caption text-accent-strong capitalize">
                           {f.type}
                         </span>
-                        <span className="text-[11px] text-surface-500">
+                        <span className="type-meta text-surface-500">
                           {f.userId ? "signed-in" : "guest"} · {f.value != null ? `${f.value}` : "—"}
                         </span>
                       </div>

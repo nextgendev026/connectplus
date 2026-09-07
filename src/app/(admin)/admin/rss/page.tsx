@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import Image from "next/image";
 import {
   Rss,
   RefreshCw,
@@ -16,6 +17,8 @@ import {
   ToggleRight,
   Clock,
   Search,
+  ChevronsUp,
+  ChevronsDown,
 } from "lucide-react";
 import { cn, timeAgo } from "@/lib/utils";
 
@@ -62,6 +65,7 @@ interface FeedStats {
 }
 
 export default function RssAdminPage() {
+  const articlesScrollRef = useRef<HTMLDivElement>(null);
   const [feeds, setFeeds] = useState<RssFeed[]>([]);
   const [articles, setArticles] = useState<RssArticle[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
@@ -131,6 +135,7 @@ export default function RssAdminPage() {
   }, [fetchFeeds, fetchArticles]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount/filter-change: the sync setState is only an idempotent loading flag
     fetchArticles();
   }, [importCategoryFilter, fetchArticles]);
 
@@ -260,8 +265,17 @@ export default function RssAdminPage() {
     );
   });
 
+  function scrollArticles(direction: "top" | "bottom") {
+    const el = articlesScrollRef.current;
+    if (!el) return;
+    el.scrollTo({
+      top: direction === "bottom" ? el.scrollHeight : 0,
+      behavior: "smooth",
+    });
+  }
+
   return (
-    <div className="min-h-screen bg-surface-950 p-6 lg:p-8">
+    <div className="min-h-screen">
       <div className="mx-auto max-w-[1600px] space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
@@ -270,8 +284,8 @@ export default function RssAdminPage() {
               <Rss className="h-6 w-6 text-orange-400" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-surface-50">RSS Feed Manager</h1>
-              <p className="text-sm text-surface-400">
+              <h1 className="type-display text-surface-50">RSS Feed Manager</h1>
+              <p className="text-sm font-medium text-surface-400">
                 Manage feeds, poll sources, import articles
               </p>
             </div>
@@ -290,8 +304,7 @@ export default function RssAdminPage() {
         {/* Loading */}
         {loading && (
           <div className="flex items-center justify-center py-20">
-            <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
-            <span className="ml-3 text-sm text-surface-400">Loading RSS data...</span>
+            <Loader2 className="h-8 w-8 animate-spin text-orange-400" />              <span className="ml-3 text-sm font-medium text-surface-300">Loading RSS data...</span>
           </div>
         )}
 
@@ -329,7 +342,7 @@ export default function RssAdminPage() {
                 {
                   label: "Imported",
                   value: stats.importedCount,
-                  color: "text-brand-500",
+                  color: "text-accent-strong",
                   bg: "bg-brand-500/10",
                 },
                 {
@@ -345,7 +358,7 @@ export default function RssAdminPage() {
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm text-surface-400">{stat.label}</p>
+                      <p className="text-sm font-medium text-surface-300">{stat.label}</p>
                       <p className="mt-1 text-2xl font-bold text-surface-50">
                         {typeof stat.value === "number" ? stat.value.toLocaleString() : stat.value}
                       </p>
@@ -368,7 +381,7 @@ export default function RssAdminPage() {
               <div className="flex items-center justify-between border-b border-surface-800 px-6 py-4">
                 <div className="flex items-center gap-2">
                   <Rss className="h-5 w-5 text-orange-400" />
-                  <h2 className="text-lg font-semibold text-surface-50">Feed Sources</h2>
+                  <h2 className="type-h2 text-surface-50">Feed Sources</h2>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -377,7 +390,7 @@ export default function RssAdminPage() {
                     className={cn(
                       "flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors",
                       pollingAll
-                        ? "bg-surface-800 text-surface-500 cursor-not-allowed"
+                        ? "bg-surface-800 text-surface-400 cursor-not-allowed"
                         : "bg-orange-400/10 border border-orange-400/20 text-orange-400 hover:bg-orange-400/20"
                     )}
                   >
@@ -397,10 +410,10 @@ export default function RssAdminPage() {
               {feeds.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16">
                   <Rss className="mb-3 h-8 w-8 text-surface-600" />
-                  <p className="text-sm text-surface-400">No feeds configured yet</p>
+                  <p className="text-sm font-medium text-surface-300">No feeds configured yet</p>
                   <button
                     onClick={() => setShowAddModal(true)}
-                    className="mt-3 text-xs text-brand-500 hover:text-brand-400"
+                    className="mt-3 text-xs text-accent-strong hover:text-brand-400"
                   >
                     Add your first feed
                   </button>
@@ -410,22 +423,22 @@ export default function RssAdminPage() {
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-surface-800">
-                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-500">
+                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-400">
                           Feed
                         </th>
-                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-500">
+                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-400">
                           Category
                         </th>
-                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-500">
+                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-400">
                           Articles
                         </th>
-                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-500">
+                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-400">
                           Last Polled
                         </th>
-                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-500">
+                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-400">
                           Status
                         </th>
-                        <th className="px-5 py-3 text-right text-xs font-medium text-surface-500">
+                        <th className="px-5 py-3 text-right text-xs font-medium text-surface-400">
                           Actions
                         </th>
                       </tr>
@@ -448,7 +461,7 @@ export default function RssAdminPage() {
                           </td>
                           <td className="px-5 py-3.5">
                             {feed.category ? (
-                              <span className="inline-flex rounded-full bg-surface-800 px-2 py-0.5 text-[10px] font-medium text-surface-300">
+                              <span className="inline-flex rounded-full bg-surface-800 px-2 py-0.5 type-caption text-surface-200">
                                 {feed.category}
                               </span>
                             ) : (
@@ -458,7 +471,7 @@ export default function RssAdminPage() {
                           <td className="px-5 py-3.5 text-sm font-medium text-surface-50 tabular-nums">
                             {feed._count?.articles ?? 0}
                           </td>
-                          <td className="px-5 py-3.5 text-xs text-surface-400">
+                          <td className="px-5 py-3.5 text-xs font-medium text-surface-300">
                             {feed.lastPolled ? timeAgo(feed.lastPolled) : "Never"}
                           </td>
                           <td className="px-5 py-3.5">
@@ -467,14 +480,14 @@ export default function RssAdminPage() {
                               className="flex items-center gap-1.5"
                             >
                               {feed.isActive ? (
-                                <ToggleRight className="h-5 w-5 text-brand-500" />
+                                <ToggleRight className="h-5 w-5 text-accent-strong" />
                               ) : (
                                 <ToggleLeft className="h-5 w-5 text-surface-500" />
                               )}
                               <span
                                 className={cn(
-                                  "text-[10px] font-medium",
-                                  feed.isActive ? "text-brand-500" : "text-surface-500"
+                                  "type-caption",
+                                  feed.isActive ? "text-accent-strong" : "text-surface-500"
                                 )}
                               >
                                 {feed.isActive ? "Active" : "Inactive"}
@@ -535,13 +548,29 @@ export default function RssAdminPage() {
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <Download className="h-5 w-5 text-cyan-400" />
-                    <h2 className="text-lg font-semibold text-surface-50">
+                    <h2 className="type-h2 text-surface-50">
                       Recent Articles
                     </h2>
                   </div>
-                  <span className="rounded-full bg-surface-800 px-2.5 py-1 text-xs text-surface-300 tabular-nums">
-                    {filteredArticles.length} articles
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => scrollArticles("top")}
+                      className="rounded-md p-1.5 text-surface-500 transition-colors hover:bg-surface-800 hover:text-surface-50"
+                      title="Scroll to top"
+                    >
+                      <ChevronsUp className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => scrollArticles("bottom")}
+                      className="rounded-md p-1.5 text-surface-500 transition-colors hover:bg-surface-800 hover:text-surface-50"
+                      title="Scroll to bottom"
+                    >
+                      <ChevronsDown className="h-3.5 w-3.5" />
+                    </button>
+                    <span className="rounded-full bg-surface-800 px-2.5 py-1 text-xs font-semibold text-surface-200 tabular-nums">
+                      {filteredArticles.length} articles
+                    </span>
+                  </div>
                 </div>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                   <div className="relative flex-1">
@@ -556,7 +585,7 @@ export default function RssAdminPage() {
                   <select
                     value={importCategoryFilter}
                     onChange={(e) => setImportCategoryFilter(e.target.value)}
-                    className="h-9 rounded-lg bg-surface-800 border border-surface-700 px-3 text-sm text-surface-300 outline-none transition-colors focus:border-orange-400/50"
+                    className="h-9 rounded-lg bg-surface-800 border border-surface-700 px-3 text-sm font-medium text-surface-100 outline-none transition-colors focus:border-brand-500/50"
                   >
                     <option value="">All Categories</option>
                     {categories.map((cat) => (
@@ -571,19 +600,24 @@ export default function RssAdminPage() {
               {filteredArticles.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16">
                   <Download className="mb-3 h-8 w-8 text-surface-600" />
-                  <p className="text-sm text-surface-400">No articles found</p>
+                  <p className="text-sm font-medium text-surface-300">No articles found</p>
                 </div>
               ) : (
-                <div className="divide-y divide-surface-800/50">
+                <div
+                  ref={articlesScrollRef}
+                  className="divide-y divide-surface-800/50 max-h-[540px] overflow-y-auto overscroll-contain scroll-smooth"
+                >
                   {filteredArticles.map((article) => (
                     <div
                       key={article.id}
                       className="flex items-start gap-4 px-6 py-4 transition-colors hover:bg-surface-800/20"
                     >
                       {article.imageUrl && (
-                        <img
+                        <Image
                           src={article.imageUrl}
                           alt=""
+                          width={64}
+                          height={64}
                           className="h-16 w-16 shrink-0 rounded-lg object-cover border border-surface-800"
                         />
                       )}
@@ -593,7 +627,7 @@ export default function RssAdminPage() {
                             {article.title}
                           </h3>
                           {article.postId && (
-                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-brand-500/10 border border-brand-500/20 px-2 py-0.5 text-[10px] font-medium text-brand-500">
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-brand-500/10 border border-brand-500/20 px-2 py-0.5 type-caption text-accent-strong">
                               <CheckCircle className="h-2.5 w-2.5" />
                               Imported
                             </span>
@@ -615,7 +649,7 @@ export default function RssAdminPage() {
                           )}
                         </div>
                         {article.summary && (
-                          <p className="mt-1.5 text-xs text-surface-400 line-clamp-2">
+                          <p className="mt-1.5 text-xs text-surface-300 line-clamp-2">
                             {article.summary}
                           </p>
                         )}
@@ -637,8 +671,8 @@ export default function RssAdminPage() {
                             className={cn(
                               "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
                               importingId === article.id
-                                ? "bg-surface-800 text-surface-500 cursor-not-allowed"
-                                : "bg-brand-500/10 border border-brand-500/20 text-brand-500 hover:bg-brand-500/20"
+                                ? "bg-surface-800 text-surface-400 cursor-not-allowed"
+                                : "bg-brand-500/10 border border-brand-500/20 text-accent-strong hover:bg-brand-500/20"
                             )}
                           >
                             {importingId === article.id ? (
@@ -665,8 +699,8 @@ export default function RssAdminPage() {
           <div className="w-full max-w-lg rounded-2xl bg-surface-900 border border-surface-800 shadow-2xl">
             <div className="flex items-center justify-between border-b border-surface-800 px-6 py-4">
               <div className="flex items-center gap-2">
-                <Rss className="h-5 w-5 text-orange-400" />
-                <h2 className="text-base font-semibold text-surface-50">Add RSS Feed</h2>
+              <Rss className="h-5 w-5 text-orange-400" />
+              <h2 className="type-h2 text-surface-50">Add RSS Feed</h2>
               </div>
               <button
                 onClick={() => {
@@ -685,7 +719,7 @@ export default function RssAdminPage() {
                 </div>
               )}
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-surface-300">
+                <label className="mb-1.5 block text-xs font-semibold text-surface-200">
                   Name *
                 </label>
                 <input
@@ -697,7 +731,7 @@ export default function RssAdminPage() {
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-surface-300">
+                <label className="mb-1.5 block text-xs font-semibold text-surface-200">
                   RSS URL *
                 </label>
                 <input
@@ -709,7 +743,7 @@ export default function RssAdminPage() {
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-surface-300">
+                <label className="mb-1.5 block text-xs font-semibold text-surface-200">
                   Category
                 </label>
                 <input
@@ -720,7 +754,7 @@ export default function RssAdminPage() {
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-surface-300">
+                <label className="mb-1.5 block text-xs font-semibold text-surface-200">
                   Description
                 </label>
                 <textarea

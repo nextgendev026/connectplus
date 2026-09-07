@@ -37,11 +37,6 @@ const SKIP_TAGS = new Set([
 /** Tags we render but with their inner content preserved (e.g. keep text of code). */
 const VOID_TAGS = new Set(["br", "hr", "img", "input", "meta", "link", "iframe"]);
 
-/** Normalize whitespace-only runs to single spaces but preserve single newlines. */
-function normalizeWs(s: string): string {
-  return s.replace(/[ \t]+/g, " ").replace(/ ?\n ?/g, "\n");
-}
-
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -62,13 +57,6 @@ function safeAttr(name: string, value: string): string | null {
     return null;
   }
   return v;
-}
-
-interface NodeLike {
-  tag: string;
-  text?: string;
-  attrs: Record<string, string>;
-  children: NodeLike[];
 }
 
 /**

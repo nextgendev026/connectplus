@@ -3,11 +3,22 @@ import { classifyIntent, applyLearnedAliases, extractUrls, isUrl, type Intent } 
 import { extractKeywords, analyzeSentiment, extractEntities, summarizeText, stripHtml } from "@/lib/neural-text";
 import { hiveBrain } from "@/lib/hive-brain";
 import { createLogger } from "@/lib/logger";
+import {
+  composeDraft,
+  continueText,
+  buildOutline,
+  polishText,
+  pickVariant,
+  stripInstruction,
+  generateHeadline,
+  generateTopics,
+  type GenerateResult,
+} from "@/lib/neural-generate";
 
 export interface NeuralResponse {
   text: string;
   intent: Intent;
-  enginesUsed: ("internal" | "external" | "hive")[];
+  enginesUsed: ("internal" | "external" | "hive" | "llm")[];
   confidence: number;
   sources: string[];
 }
@@ -454,14 +465,14 @@ class NeuralMindEngine {
       }
 
       return { success: true, memory };
-    } catch (err: any) {
-      return { success: false, error: err?.message || "Fetch failed" };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Fetch failed";
+      return { success: false, error: message };
     }
   }
 
   async getExternalKnowledge(query: string) {
     const keywords = extractKeywords(query, 5);
-    const searchTerms = [query, ...keywords.map(k => k.keyword)].join(",");
 
     const memories = await prisma.neuralMemory.findMany({
       where: {
@@ -525,13 +536,16 @@ class NeuralMindEngine {
     return out;
   }
 
-  async processQuery(input: string, history?: { role: string; content: string }[]): Promise<NeuralResponse> {
+  async processQuery(input: string, _history?: { role: string; content: string }[]): Promise<NeuralResponse> {
     const startedAt = Date.now();
     const { intent, confidence } = await this.classifyIntentWithMemory(input);
     this.log.info("processing query", { intent, confidence });
     const urls = extractUrls(input);
     const enginesUsed: ("internal" | "external" | "hive")[] = [];
     const sources: string[] = [];
+    // Each intent stores a different report shape in `data`; consumers below
+    // destructure it per-case with explicit callback types.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let data: any = {};
 
     switch (intent) {
@@ -539,6 +553,55 @@ class NeuralMindEngine {
         enginesUsed.push("hive");
         const [sweep, hive] = await Promise.all([hiveBrain.sweepInternal(), hiveBrain.status()]);
         data = { sweep, hive };
+        break;
+      }
+      case "write_content": {
+        enginesUsed.push("internal");
+        const topic = this.extractDraft(input);
+        data = { ...composeDraft(topic), topic };
+        break;
+      }
+      case "rewrite_content": {
+        enginesUsed.push("internal");
+        const draft = this.extractDraft(input);
+        data = { polish: polishText(draft), draft };
+        break;
+      }
+      case "summarize_content": {
+        enginesUsed.push("internal");
+        const draft = this.extractDraft(input);
+        data = { summary: summarizeText(stripHtml(draft), 2).slice(0, 280), draft };
+        break;
+      }
+      case "headline_suggest": {
+        enginesUsed.push("internal");
+        const draft = this.extractDraft(input);
+        const firstLine = draft.split(/\n/)[0]?.slice(0, 60) ?? "Untitled";
+        data = { result: generateHeadline(firstLine, draft), draft };
+        break;
+      }
+      case "tag_suggest": {
+        enginesUsed.push("internal");
+        const draft = this.extractDraft(input);
+        data = { result: generateTopics(draft), draft };
+        break;
+      }
+      case "outline_suggest": {
+        enginesUsed.push("internal");
+        const draft = this.extractDraft(input);
+        data = { outline: buildOutline(draft), draft };
+        break;
+      }
+      case "expand_content": {
+        enginesUsed.push("internal");
+        const draft = this.extractDraft(input);
+        data = { extension: continueText(draft), draft };
+        break;
+      }
+      case "curate_content": {
+        enginesUsed.push("internal", "hive");
+        const [analysis, engagement] = await Promise.all([this.analyzeContent(), hiveBrain.computeEngagement()]);
+        data = { analysis, engagement };
         break;
       }
       case "system_health": {
@@ -628,9 +691,12 @@ class NeuralMindEngine {
         break;
       }
       default: {
+        // The "conversational brain": decode the language of the query
+        // (greetings, thanks, identity, capabilities, or anything else) and
+        // answer dynamically instead of repeating a canned platform overview.
         enginesUsed.push("internal", "hive");
-        const [stats, hive] = await Promise.all([this.getPlatformStats(), hiveBrain.status()]);
-        data = { stats, hive };
+        const [hive, recall] = await Promise.all([hiveBrain.status(), hiveBrain.recall(input, 3)]);
+        data = { hive, recall, query: input };
         break;
       }
     }
@@ -640,7 +706,12 @@ class NeuralMindEngine {
     return { text, intent, enginesUsed, confidence, sources };
   }
 
-  async synthesizeResponse(intent: Intent, data: any, input: string): Promise<string> {
+  async synthesizeResponse(
+    intent: Intent,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    data: any,
+    _input: string
+  ): Promise<string> {
     switch (intent) {
       case "system_health": {
         const { stats, anomalies, hive } = data;
@@ -715,7 +786,7 @@ class NeuralMindEngine {
         ];
         if (moderation.pendingPosts.length > 0) {
           lines.push("", "**Awaiting Review:**");
-          moderation.pendingPosts.forEach((p: any) => lines.push(`• "${p.title}" by @${p.author.username}`));
+          moderation.pendingPosts.forEach((p: { title: string; author: { username: string } }) => lines.push(`• "${p.title}" by @${p.author.username}`));
         }
         return lines.join("\n");
       }
@@ -729,7 +800,7 @@ class NeuralMindEngine {
           "",
           `**Anomalies:** ${anomalies.length} detected`,
         ];
-        anomalies.forEach((a: any) => lines.push(`• [${a.severity.toUpperCase()}] ${a.description}`));
+        anomalies.forEach((a: { severity: string; description: string }) => lines.push(`• [${a.severity.toUpperCase()}] ${a.description}`));
         lines.push("", "**Moderation Intelligence:**", `• Pending review: ${moderation.pendingCount}`, `• Flagged (recent): ${moderation.recentFlags}`, `• Approval rate: ${(moderation.approvalRate * 100).toFixed(1)}%`);
         return lines.join("\n");
       }
@@ -743,10 +814,10 @@ class NeuralMindEngine {
           "",
           "**Daily Averages:**",
         ];
-        growth.weeklyAverages.forEach((w: any, i: number) => lines.push(`• Week ${i + 1}: ~${Math.round(w.avgUsers)} users/day, ~${Math.round(w.avgPosts)} posts/day, ~${Math.round(w.avgViews)} views/day`));
+        growth.weeklyAverages.forEach((w: { avgUsers: number; avgPosts: number; avgViews: number }, i: number) => lines.push(`• Week ${i + 1}: ~${Math.round(w.avgUsers)} users/day, ~${Math.round(w.avgPosts)} posts/day, ~${Math.round(w.avgViews)} views/day`));
         const lastWeek = growth.dailyData.slice(-7);
-        const totalUsers = lastWeek.reduce((s: number, d: any) => s + d.users, 0);
-        const totalPosts = lastWeek.reduce((s: number, d: any) => s + d.posts, 0);
+        const totalUsers = lastWeek.reduce((s: number, d: { users: number }) => s + d.users, 0);
+        const totalPosts = lastWeek.reduce((s: number, d: { posts: number }) => s + d.posts, 0);
         lines.push("", "**Last 7 Days Totals:**", `• ${totalUsers} new users`, `• ${totalPosts} new posts`);
         return lines.join("\n");
       }
@@ -760,10 +831,10 @@ class NeuralMindEngine {
           "",
           "**All Nodes (by users):**",
         ];
-        regional.regions.forEach((r: any) => lines.push(`• **${r.city}**: ${r.users} users, ${r.posts} posts, ${r.views.toLocaleString()} views (${r.viewsPerPost.toFixed(0)} views/post)`));
+        regional.regions.forEach((r: { city: string; users: number; posts: number; views: number; viewsPerPost: number }) => lines.push(`• **${r.city}**: ${r.users} users, ${r.posts} posts, ${r.views.toLocaleString()} views (${r.viewsPerPost.toFixed(0)} views/post)`));
         if (regional.mostEngaged.length > 0) {
           lines.push("", "**Most Engaged:**");
-          regional.mostEngaged.forEach((r: any) => lines.push(`• ${r.city}: ${r.viewsPerPost.toFixed(0)} views/post`));
+          regional.mostEngaged.forEach((r: { city: string; viewsPerPost: number }) => lines.push(`• ${r.city}: ${r.viewsPerPost.toFixed(0)} views/post`));
         }
         return lines.join("\n");
       }
@@ -806,12 +877,12 @@ class NeuralMindEngine {
         const lines = ["**Trend Intelligence**", ""];
         if (internalTopics.length > 0) {
           lines.push("**Platform Trends:**");
-          internalTopics.slice(0, 5).forEach((t: any, i: number) => lines.push(`${i + 1}. **${t.topic}** — ${t.count} mentions, avg ${Math.round(t.avgViews)} views`));
+          internalTopics.slice(0, 5).forEach((t: { topic: string; count: number; avgViews: number }, i: number) => lines.push(`${i + 1}. **${t.topic}** — ${t.count} mentions, avg ${Math.round(t.avgViews)} views`));
           lines.push("");
         }
         if (externalKnowledge.length > 0) {
           lines.push("**External Learnings:**");
-          externalKnowledge.slice(0, 5).forEach((m: any) => lines.push(`• ${m.content.slice(0, 120)}...`));
+          externalKnowledge.slice(0, 5).forEach((m: { content: string }) => lines.push(`• ${m.content.slice(0, 120)}...`));
           lines.push("");
         }
         if (hiveLearnings && hiveLearnings.length > 0) {
@@ -848,7 +919,7 @@ class NeuralMindEngine {
         const lines = [`**Knowledge Search Results** (${(results.length || 0) + (hiveRecall ? hiveRecall.length : 0)} found)`, ""];
         if (results.length > 0) {
           lines.push("**From External Learning:**");
-          results.slice(0, 5).forEach((m: any, i: number) => lines.push(`[${i + 1}] **${m.category}** (${m.source}) — ${m.content.slice(0, 150)}...`));
+          results.slice(0, 5).forEach((m: { category: string; source: string; content: string }, i: number) => lines.push(`[${i + 1}] **${m.category}** (${m.source}) — ${m.content.slice(0, 150)}...`));
           lines.push("");
         }
         if (hiveRecall && hiveRecall.length > 0) {
@@ -861,7 +932,7 @@ class NeuralMindEngine {
       case "memory_manage": {
         if (data.action === "clear") return `**Knowledge Base Cleared**\n\n${data.deleted} memory entries removed.`;
         const lines = [`**Knowledge Base** (${data.memories.total} total entries)`, ""];
-        data.memories.memories.slice(0, 5).forEach((m: any) => lines.push(`• [${m.source}] ${m.category}: ${m.content.slice(0, 80)}...`));
+        data.memories.memories.slice(0, 5).forEach((m: { source: string; category: string; content: string }) => lines.push(`• [${m.source}] ${m.category}: ${m.content.slice(0, 80)}...`));
         return lines.join("\n");
       }
 
@@ -899,34 +970,278 @@ class NeuralMindEngine {
         ].join("\n");
       }
 
-      default: {
-        const { stats, hive } = data;
+      case "write_content": {
+        const { draft, headline, tags, topic } = data as { draft: string; headline: string; tags: string[]; topic: string };
         return [
-          "**Platform Overview**",
+          `**✍️ Draft ready — "${headline}"**`,
           "",
-          `• Users: ${stats.totalUsers.toLocaleString()}`,
-          `• Posts: ${stats.totalPosts.toLocaleString()}`,
-          `• Comments: ${stats.totalComments.toLocaleString()}`,
-          `• Views: ${stats.totalViews.toLocaleString()}`,
-          `• Active Regions: ${Object.keys(stats.regionalBreakdown).length}`,
-          `• Moderation Queue: ${stats.pendingModeration}`,
-          `• Hive Mind: ${hive.total} knowledge entries ready`,
+          "Here is a working draft to get you started:",
           "",
-          "I can help with: system health, content analysis, user analysis, moderation reports, threat scans, growth reports, regional analysis, trend queries, hive mind reports, personalized recommendations, and external knowledge learning.",
+          draft,
+          "",
+          `**Suggested tags:** ${tags.map((t) => `#${t.replace(/\s+/g, "")}`).join(" ")}`,
+          "",
+          `_Topic detected: ${topic.slice(0, 90)}. Paste a draft into chat and ask me to rewrite, expand, summarize or tag it — I read and write content directly._`,
         ].join("\n");
+      }
+
+      case "rewrite_content": {
+        const { polish, draft } = data as { polish: ReturnType<typeof polishText>; draft: string };
+        if (!draft || draft.trim().length < 20) {
+          return "I need some text to polish. Paste your paragraph or draft into the chat (e.g. \"rewrite this: <your text>\") and I'll tighten it up.";
+        }
+        const before = polish.original.split(/\s+/).length;
+        const after = polish.rewritten.split(/\s+/).length;
+        return [
+          `**✨ Polished draft** (${polish.changes} improvements, ${before} → ${after} words)`,
+          "",
+          polish.rewritten,
+          "",
+          polish.notes.length > 0 ? ["**What changed:**", ...polish.notes.map((n) => `• ${n}`)].join("\n") : "**What changed:** your draft was already clean — no filler or marathon sentences to cut.",
+        ].join("\n");
+      }
+
+      case "summarize_content": {
+        const { summary, draft } = data as { summary: string; draft: string };
+        if (!draft || draft.trim().length < 20) {
+          return "Paste some text into chat (e.g. \"summarize this: <your text>\") and I'll condense it into a tight excerpt you can use as the post summary.";
+        }
+        return [
+          `**📝 Summary / excerpt** (${draft.split(/\s+/).length} → ${summary.split(/\s+/).length} words)`,
+          "",
+          summary,
+          "",
+          "_Drop this into the Excerpt field, or ask me for headlines, tags or an outline of the same text._",
+        ].join("\n");
+      }
+
+      case "headline_suggest": {
+        const { result } = data as { result: GenerateResult };
+        const lines = [`**📰 Headline suggestions**`, "", `1. **${result.primary}**`];
+        result.alternatives.forEach((a, i) => lines.push(`${i + 2}. ${a}`));
+        lines.push("", "_Click one to lift it straight into your title — or ask me to write, polish or outline the full piece._");
+        return lines.join("\n");
+      }
+
+      case "tag_suggest": {
+        const { result } = data as { result: GenerateResult };
+        const all = [result.primary, ...result.alternatives].filter(Boolean);
+        return [
+          `**🏷️ Tag suggestions**`,
+          "",
+          all.map((t) => `• #${t.toLowerCase().replace(/\s+/g, "-")}`).join("\n"),
+          "",
+          "_These come from keyword + entity extraction on your text. Combine with a category and your post will be discoverable in search, feeds and the topic pages._",
+        ].join("\n");
+      }
+
+      case "outline_suggest": {
+        const { outline } = data as { outline: ReturnType<typeof buildOutline> };
+        return [
+          `**🗂️ Post outline**`,
+          "",
+          `**Intro:** ${outline.intro}`,
+          "",
+          ...outline.sections,
+          "",
+          `**Closing:** ${outline.closing}`,
+          "",
+          "_Ask me to expand any section or to write the full draft from this outline._",
+        ].join("\n");
+      }
+
+      case "expand_content": {
+        const { extension, draft } = data as { extension: ReturnType<typeof continueText>; draft: string };
+        if (!draft || draft.trim().length < 20) {
+          return "Paste your draft into chat (e.g. \"continue this: <your text>\") and I'll keep writing from where you stopped.";
+        }
+        return [
+          `**➕ Continue writing**`,
+          "",
+          extension.heading ? `Suggestion for the next section: *${extension.heading}*` : "",
+          "",
+          extension.continuation,
+          "",
+          "_Append this to your draft and keep going — I can extend it again and again, always anchored to what you've already written._",
+        ].filter((l) => l !== "").join("\n");
+      }
+
+      case "curate_content": {
+        const { analysis, engagement } = data as {
+          analysis: ContentAnalysis;
+          engagement: { trending: { title: string; categoryName: string | null; velocity: number; views: number }[]; categories: { name: string; velocity: number; posts: number }[] };
+        };
+        const lines = [`**🧭 Curation brief — what to write & publish next**`, ""];
+        if (engagement.categories.length > 0) {
+          lines.push("**Hottest categories right now:**");
+          engagement.categories.slice(0, 5).forEach((c, i) => lines.push(`${i + 1}. **${c.name}** — ${c.posts} posts, velocity ${c.velocity.toFixed(0)}`));
+          lines.push("");
+        }
+        if (analysis.topTopics.length > 0) {
+          lines.push("**Angles already performing:**");
+          analysis.topTopics.slice(0, 4).forEach((t, i) => lines.push(`${i + 1}. ${t.topic} — ${t.count} posts, avg ${Math.round(t.avgViews)} views`));
+          lines.push("");
+        }
+        if (engagement.trending.length > 0) {
+          lines.push("**Trending right now (great for a follow-up or rebuttal):**");
+          engagement.trending.slice(0, 3).forEach((p) => lines.push(`• "${p.title}" — ${p.categoryName ?? "uncategorized"} (${p.views} views)`));
+        }
+        lines.push("", "_Want me to write any of these? Say \"write about <topic>\" and I'll draft the first version._");
+        return lines.join("\n");
+      }
+
+      default: {
+        const { hive, recall, query } = data as {
+          hive: { total: number; sourceBreakdown: Record<string, number> };
+          recall: { content: string; source: string; category: string }[];
+          query: string;
+        };
+        return this.generalChatResponse(query, hive.total, recall ?? []);
       }
     }
   }
 
-  private calculateHealthScore(stats: PlatformStats, anomalies: any[]): number {
+  /**
+   * The conversational brain. It decodes the language of whatever the admin
+   * typed — greetings, thanks, identity, capabilities, or free-form questions —
+   * and responds dynamically using the query's own keywords, entities and
+   * sentiment (plus hive recall) so it never repeats a canned answer.
+   */
+  private generalChatResponse(input: string, hiveTotal: number, recall: { content: string; source: string; category: string }[]): string {
+    const lower = input.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+    const seed = input.slice(0, 200);
+
+    if (/^(hi|hey|hello|jambo|sasa|mambo|habari|hujambo|yo|hola|howdy)\b/.test(lower)) {
+      return pickVariant(
+        [
+          `**Habari! 👋** I'm the Neural Mind — the platform brain wired into the feed, the hive memory and the studio. Ask me about health, growth, trends, or paste some text and I'll write, rewrite, summarize, tag or headline it for you.`,
+          `**Sasa! 🙌** Good to see you. I've got ${hiveTotal.toLocaleString()} memories in the hive and a full content toolkit — try \"write about <topic>\", \"polish this: <text>\", or \"curate content\".`,
+          `**Jambo! 👋** The brains are online — ${hiveTotal.toLocaleString()} knowledge entries and counting. Ask me anything about the platform, or hand me a draft and I'll make it shine.`,
+        ],
+        seed
+      );
+    }
+
+    if (/^(thanks|thank you|asante|nice|great work|good job)\b/.test(lower)) {
+      return pickVariant(
+        [
+          `**Karibu! 🌟** Happy to help. Whenever you have a draft, paste it here and I'll rewrite, summarize, tag or headline it — that's what I'm wired for.`,
+          `**Asante sana! 🙏** Anytime. Remember I can also curate what to publish next, scan for threats, or break down the growth report.`,
+          `**You're welcome! ✨** The hive learns from every interaction, so the more we talk, the sharper I get. What are you working on?`,
+        ],
+        seed
+      );
+    }
+
+    if (/(who are you|what are you|your name|what is your name|tell me about yourself)/.test(lower)) {
+      return [
+        `**I'm the Neural Mind — ConnectPlus's integrated brain.**`,
+        "",
+        "Under the hood I'm a pipeline of engines:",
+        `• **Neural intent** — I decode the language of your question (keywords, entities, sentiment) instead of matching canned responses.`,
+        `• **Hive Brain** — ${hiveTotal.toLocaleString()} shared memories learned from posts, comments, RSS and our conversations.`,
+        "• **Content brain** — I write, rewrite, summarize, headline, tag, outline and curate content straight from chat or the studio.",
+        "",
+        "Try: \"write about Nairobi fintech\", \"polish this: <text>\", \"suggest tags for my draft\", or \"curate content\".",
+      ].join("\n");
+    }
+
+    if (/(what can you do|what do you do|help|capabilities|commands|how do you work|what should i ask)/.test(lower)) {
+      return [
+        `**Here's everything the brains can do for you:**`,
+        "",
+        "**Content creation & writing**",
+        "• ✍️ `write about <topic>` — full draft with headline and tags",
+        "• ✨ `polish this: <text>` / `rewrite this: <text>` — tighten wording & split long sentences",
+        "• 📝 `summarize this: <text>` — instant excerpt",
+        "• 📰 `suggest a headline for: <text>` — clickable title options",
+        "• 🏷️ `suggest tags for: <text>` — SEO-ready hashtags",
+        "• 🗂️ `make an outline for <topic>` — structure for a post",
+        "• ➕ `continue this: <text>` — keeps writing from your last line",
+        "• 🧭 `curate content` — what to publish next, from live engagement data",
+        "",
+        "**Platform intelligence**",
+        "• 🩺 `system health` · 📊 `content analysis` · 👥 `user analysis`",
+        "• 🛡️ `threat scan` · 📈 `growth report` · 🗺️ `regional analysis`",
+        "• 🐝 `hive report` · 🔎 `knowledge search` · 🌐 `learn from <url>`",
+      ].join("\n");
+    }
+
+    if (/(how are you|how are things|are you ok|how is the brain)/.test(lower)) {
+      return pickVariant(
+        [
+          `**Running smooth! ⚡** All engines green — ${hiveTotal.toLocaleString()} memories in the hive, and I just finished wiring the content brain into the studio. How's your writing going today?`,
+          `**Firing on all cylinders 🧠** The hive is at ${hiveTotal.toLocaleString()} entries and the content toolkit is loaded. Point me at a draft and I'll show you what I can do.`,
+        ],
+        seed
+      );
+    }
+
+    // Free-form: decode the language — keywords, entities and sentiment.
+    const keywords = extractKeywords(input, 4).map((k) => k.keyword);
+    const entities = extractEntities(input);
+    const sentiment = analyzeSentiment(input);
+
+    const understood: string[] = [];
+    if (entities.length > 0) {
+      understood.push(`you're talking about **${entities.slice(0, 3).map((e) => e.value).join(", ")}**`);
+    }
+    if (keywords.length > 0) {
+      understood.push(`the key themes I picked up are **${keywords.slice(0, 3).join(", ")}**`);
+    }
+    if (understood.length === 0) {
+      understood.push(`I parsed **${input.trim().slice(0, 60)}** as your core question`);
+    }
+
+    const tone =
+      sentiment.sentiment === "positive"
+        ? "The tone reads positive — good energy to build on."
+        : sentiment.sentiment === "negative"
+          ? "The tone reads more cautious/negative — I can help frame this constructively."
+          : "";
+
+    const heads: string[] = [];
+    if (/write|draft|compose|create/i.test(lower)) {
+      heads.push(`• Say **\"write about ${keywords[0] ?? "your topic"}\"** and I'll draft the full post with a headline and tags.`);
+    }
+    if (/rewrite|polish|edit|improve/i.test(lower) || entities.length > 0) {
+      heads.push(`• Paste the text after **\"polish this:\"** and I'll rewrite it tighter.`);
+    }
+    if (/trend|topic|idea|write|publish|curat/i.test(lower)) {
+      heads.push(`• Ask **\"curate content\"** to see what's hot and what to publish next.`);
+    }
+    if (recall.length > 0) {
+      heads.push(`• From the hive's memory: **${recall.slice(0, 2).map((m) => m.content.slice(0, 80)).join(" | ")}**`);
+    }
+    if (heads.length === 0) {
+      heads.push("• Try **\"curate content\"** for what to publish next, or paste a draft and I'll polish it.");
+    }
+
+    return pickVariant(
+      [
+        `**Got it — ${understood.join(" and ")}.** ${tone} ${tone ? "" : "Here's how I can help:"} ${heads.join(" ")}`,
+        `**Interesting — ${understood.join(", ")}.** ${tone ? tone + " " : ""}Let me point you somewhere useful: ${heads.join(" ")}`,
+      ],
+      seed + lower
+    );
+  }
+
+  /** Extract the draft/topic from a chat instruction like "polish this: <text>". */
+  private extractDraft(input: string): string {
+    const text = stripInstruction(input);
+    if (text.length < 12) return input;
+    return text;
+  }
+
+  private calculateHealthScore(stats: PlatformStats, anomalies: { severity: string }[]): number {
     let score = 100;
     if (stats.pendingModeration > 50) score -= 15;
     else if (stats.pendingModeration > 20) score -= 8;
     if (stats.totalUsers === 0) score -= 30;
     if (stats.totalPosts === 0) score -= 20;
     if (stats.postsThisWeek === 0) score -= 10;
-    score -= anomalies.filter((a: any) => a.severity === "high").length * 10;
-    score -= anomalies.filter((a: any) => a.severity === "medium").length * 5;
+    score -= anomalies.filter((a) => a.severity === "high").length * 10;
+    score -= anomalies.filter((a) => a.severity === "medium").length * 5;
     return Math.max(0, Math.min(100, score));
   }
 
@@ -934,7 +1249,11 @@ class NeuralMindEngine {
 
   async getMemoryBank(options: { source?: string; category?: string; search?: string; limit?: number; offset?: number } = {}) {
     const { source, category, search, limit = 20, offset = 0 } = options;
-    const where: any = {};
+    const where: {
+      source?: string;
+      category?: string;
+      OR?: { content?: { contains: string }; tags?: { contains: string } }[];
+    } = {};
     if (source && source !== "all") where.source = source;
     if (category && category !== "all") where.category = category;
     if (search) {
@@ -994,7 +1313,7 @@ class NeuralMindEngine {
       });
     }
 
-    for (const a of anomalies.anomalies.filter((x: any) => x.severity !== "low")) {
+    for (const a of anomalies.anomalies.filter((x: { severity: string }) => x.severity !== "low")) {
       insights.push({
         title: "Anomaly Detected",
         summary: a.description,

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import { useState } from "react";
@@ -12,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { useTheme } from "@/components/providers/ThemeContext";
 import Logo from "@/components/ui/Logo";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { useSiteConfig } from "@/hooks/useSiteConfig";
 
 const NAV_LINKS = [
   { href: "/", label: "Feed", icon: Home },
@@ -27,8 +29,11 @@ export default function Navbar() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [lang, setLang] = useState<"EN" | "SW">("EN");
   const { theme, toggleTheme } = useTheme();
+  const siteConfig = useSiteConfig();
 
   const user = session?.user;
+  const navLinks = NAV_LINKS.filter((l) => !(l.href === "/radio" && siteConfig && !siteConfig.features.radio));
+  const signupsEnabled = siteConfig ? siteConfig.features.signups : true;
 
   return (
     <nav className="sticky top-0 z-50 border-b border-surface-800/50 bg-surface-950/80 backdrop-blur-xl">
@@ -38,7 +43,7 @@ export default function Navbar() {
             <Logo />
 
             <div className="hidden md:flex items-center gap-1">
-              {NAV_LINKS.map((link) => (
+              {navLinks.map((link) => (
                 <Link
                   key={link.href}
                   href={link.href}
@@ -137,7 +142,7 @@ export default function Navbar() {
                 <div className="relative group">
                   <button className="flex h-8 w-8 items-center justify-center rounded-full bg-surface-800 border border-surface-700 overflow-hidden">
                     {user?.avatar ? (
-                      <img src={user.avatar} alt="" className="h-full w-full object-cover" />
+                      <Image src={user.avatar} alt="" width={32} height={32} className="h-full w-full object-cover" />
                     ) : (
                       <User className="h-4 w-4 text-surface-400" />
                     )}
@@ -177,12 +182,14 @@ export default function Navbar() {
                 >
                   Sign in
                 </Link>
-                <Link
-                  href="/auth/signup"
-                  className="btn-gradient rounded-lg px-3 py-1.5 text-sm font-semibold text-white"
-                >
-                  Get started
-                </Link>
+                {signupsEnabled && (
+                  <Link
+                    href="/auth/signup"
+                    className="btn-gradient rounded-lg px-3 py-1.5 text-sm font-semibold text-white"
+                  >
+                    Get started
+                  </Link>
+                )}
               </div>
             )}
 
@@ -198,7 +205,7 @@ export default function Navbar() {
         {mobileOpen && (
           <div className="border-t border-surface-800 py-4 animate-slide-down md:hidden">
             <div className="flex flex-col gap-1">
-              {NAV_LINKS.map((link) => (
+              {navLinks.map((link) => (
                 <Link
                   key={link.href}
                   href={link.href}
@@ -237,9 +244,11 @@ export default function Navbar() {
                   <Link href="/auth/signin" onClick={() => setMobileOpen(false)} className="rounded-lg px-3 py-2.5 text-sm font-medium text-surface-400 hover:text-surface-50">
                     Sign in
                   </Link>
-                  <Link href="/auth/signup" onClick={() => setMobileOpen(false)} className="btn-gradient rounded-lg px-3 py-2.5 text-center text-sm font-semibold text-white">
-                    Get started
-                  </Link>
+                  {signupsEnabled && (
+                    <Link href="/auth/signup" onClick={() => setMobileOpen(false)} className="btn-gradient rounded-lg px-3 py-2.5 text-center text-sm font-semibold text-white">
+                      Get started
+                    </Link>
+                  )}
                 </>
               )}
             </div>

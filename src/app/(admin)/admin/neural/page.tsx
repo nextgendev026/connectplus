@@ -20,11 +20,11 @@ import NeuralKnowledgeBase from "@/components/admin/NeuralKnowledgeBase";
 import HivePanel from "@/components/admin/HivePanel";
 
 const QUICK_ACTIONS = [
-  { label: "System Health", query: "How is the platform health?", icon: Activity, color: "text-cyan-400" },
+  { label: "System Health", query: "How is the platform health?", icon: Activity, color: "text-info-strong" },
   { label: "Content Analysis", query: "Analyze our content and topics", icon: FileSearch, color: "text-purple-400" },
-  { label: "Threat Scan", query: "Run a security threat scan", icon: ShieldAlert, color: "text-red-400" },
+  { label: "Threat Scan", query: "Run a security threat scan", icon: ShieldAlert, color: "text-danger-strong" },
   { label: "Growth Report", query: "Show me the growth report", icon: TrendingUp, color: "text-green-400" },
-  { label: "Hive Mind Report", query: "Give me the hive mind report", icon: Brain, color: "text-amber-400" },
+  { label: "Hive Mind Report", query: "Give me the hive mind report", icon: Brain, color: "text-warning-strong" },
 ];
 
 export default function NeuralMindPage() {
@@ -87,17 +87,17 @@ export default function NeuralMindPage() {
   };
 
   return (
-    <div className="min-h-screen bg-surface-950 -m-6 p-6 lg:p-8">
+    <div className="min-h-screen">
       <div className="mx-auto max-w-[1600px] space-y-6">
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500/10 border border-brand-500/20">
-              <BrainCircuit className="h-6 w-6 text-brand-500" />
+              <BrainCircuit className="h-6 w-6 text-accent-strong" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-surface-50">Neural Mind</h1>
-              <p className="text-sm text-surface-400">
+              <h1 className="type-display text-surface-50">Neural Mind</h1>
+              <p className="text-sm font-medium text-surface-300">
                 Integrated brain pipeline — neural intent + hive machine learning + external web learning
               </p>
             </div>
@@ -109,7 +109,7 @@ export default function NeuralMindPage() {
               className={cn(
                 "flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all",
                 isLearning
-                  ? "bg-surface-800 text-surface-500 cursor-not-allowed"
+                  ? "bg-surface-800 text-surface-400 cursor-not-allowed"
                   : "bg-brand-500/10 text-brand-400 hover:bg-brand-500/20 border border-brand-500/20"
               )}
             >
@@ -122,8 +122,8 @@ export default function NeuralMindPage() {
               className={cn(
                 "flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all",
                 isTraining
-                  ? "bg-surface-800 text-surface-500 cursor-not-allowed"
-                  : "bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20"
+                  ? "bg-surface-800 text-surface-400 cursor-not-allowed"
+                  : "bg-amber-500/10 text-warning-strong hover:bg-amber-500/20 border border-amber-500/20"
               )}
             >
               {isTraining ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
@@ -132,16 +132,16 @@ export default function NeuralMindPage() {
             <div className="hidden sm:flex items-center gap-2 rounded-full bg-surface-800/50 px-3 py-1.5 border border-surface-700">
               <span className="h-2 w-2 rounded-full bg-brand-500 animate-pulse" />
               <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
-              <span className="text-xs text-surface-400">Neural + Hive Online</span>
+              <span className="text-xs font-semibold text-surface-300">Neural + Hive Online</span>
             </div>
           </div>
         </div>
 
         {trainingResult && (
           <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-            <Zap className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+            <Zap className="mt-0.5 h-4 w-4 shrink-0 text-warning-strong" />
             <p className="text-xs text-amber-300 leading-relaxed">{trainingResult}</p>
-            <button onClick={() => setTrainingResult(null)} className="ml-auto text-amber-500/60 hover:text-amber-400 shrink-0">
+            <button onClick={() => setTrainingResult(null)} className="ml-auto text-amber-500/60 hover:text-warning-strong shrink-0">
               <X className="h-3.5 w-3.5" />
             </button>
           </div>
@@ -160,7 +160,7 @@ export default function NeuralMindPage() {
               </div>
               <div>
                 <p className="text-sm font-medium text-surface-50">{action.label}</p>
-                <p className="text-[10px] text-surface-500">Quick query</p>
+                <p className="type-caption text-surface-500">Quick query</p>
               </div>
             </button>
           ))}
@@ -172,11 +172,11 @@ export default function NeuralMindPage() {
           <div className="lg:col-span-2 rounded-xl border border-surface-800 bg-surface-900/50 overflow-hidden" style={{ height: "600px" }}>
             <div className="flex items-center justify-between border-b border-surface-800 px-6 py-3">
               <div className="flex items-center gap-2">
-                <BrainCircuit className="h-4 w-4 text-brand-500" />
+                <BrainCircuit className="h-4 w-4 text-accent-strong" />
                 <span className="text-sm font-medium text-surface-50">Neural Chat</span>
               </div>
               {conversationId && (
-                <span className="text-[10px] text-surface-500">session: {conversationId.slice(0, 8)}...</span>
+                <span className="type-caption text-surface-500">session: {conversationId.slice(0, 8)}...</span>
               )}
             </div>
             <div style={{ height: "calc(600px - 49px)" }}>

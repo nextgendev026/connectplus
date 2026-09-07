@@ -174,6 +174,7 @@ export function CommentSection({ postId, className }: CommentSectionProps) {
   }, [postId]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount: the sync setState is only an idempotent loading flag
     loadComments();
   }, [loadComments]);
 

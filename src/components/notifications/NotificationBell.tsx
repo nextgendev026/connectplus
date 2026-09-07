@@ -3,8 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { Bell, UserPlus, MessageSquare, Reply, ShieldCheck } from "lucide-react";
+import { Bell, UserPlus, MessageSquare, Reply, ShieldCheck, BellRing } from "lucide-react";
 import { cn, timeAgo } from "@/lib/utils";
+import {
+  notificationPermissionState,
+  playNotificationSound,
+  requestNotificationPermission,
+  showSystemNotification,
+} from "@/lib/permissions";
 
 interface Actor {
   id: string;
@@ -44,6 +50,9 @@ export function NotificationBell() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const prevIdsRef = useRef<Set<string>>(new Set());
+  const [enableMsg, setEnableMsg] = useState<string | null>(null);
+  const permState = notificationPermissionState();
 
   const load = useCallback(async () => {
     if (!session?.user) return;
@@ -52,7 +61,25 @@ export function NotificationBell() {
       const res = await fetch("/api/notifications?limit=10");
       if (!res.ok) return;
       const data = await res.json();
-      setItems(data.notifications ?? []);
+      const next = (data.notifications ?? []) as Notification[];
+      // First load just seeds the baseline; later loads detect new arrivals.
+      if (prevIdsRef.current.size > 0) {
+        const fresh = next.filter((n) => !n.read && !prevIdsRef.current.has(n.id));
+        const top = fresh[0];
+        if (top) {
+          playNotificationSound();
+          showSystemNotification(
+            top.actor?.name ? `${top.actor.name} · connectPlus` : "New notification",
+            top.title ?? `${top.type?.toLowerCase().replace("_", " ") ?? "update"}${top.post ? ` on “${top.post.title}”` : ""}`,
+            {
+              sound: true,
+              url: top.post ? `/article/${top.post.slug}` : "/notifications",
+            }
+          );
+        }
+      }
+      prevIdsRef.current = new Set(next.map((n) => n.id));
+      setItems(next);
       setUnreadCount(data.unreadCount ?? 0);
     } catch {
       // silent
@@ -62,6 +89,7 @@ export function NotificationBell() {
   }, [session?.user]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount/session-change: the sync setState is only an idempotent loading flag
     if (session?.user) load();
   }, [session?.user, load]);
 
@@ -111,6 +139,14 @@ export function NotificationBell() {
     }).catch(() => {});
   }, []);
 
+  const enableNotifications = useCallback(async () => {
+    setEnableMsg(null);
+    const res = await requestNotificationPermission("alerts when someone follows you or replies to your stories");
+    if (res.status !== "granted") {
+      setEnableMsg(res.message);
+    }
+  }, []);
+
   return (
     <div ref={rootRef} className="relative">
       <button
@@ -136,12 +172,29 @@ export function NotificationBell() {
               {unreadCount > 0 && (
                 <button
                   onClick={markAllRead}
-                  className="text-xs text-brand-400 hover:text-brand-300 transition-colors"
+                  className="text-xs text-accent-strong hover:text-brand-700 transition-colors"
                 >
                   Mark all read
                 </button>
               )}
             </div>
+
+            {permState !== "granted" && permState !== "unsupported" && (
+              <div className="border-b border-surface-800 bg-surface-800/30 px-4 py-2.5">
+                <p className="text-[11px] leading-relaxed text-surface-400">
+                  Enable browser notifications to get pings — with sound — when someone
+                  follows you or replies to your stories, even while you&apos;re elsewhere.
+                </p>
+                <button
+                  onClick={enableNotifications}
+                  className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg bg-brand-500/15 border border-brand-500/30 px-2.5 py-1 text-[11px] font-semibold text-accent-strong hover:bg-brand-500/25 transition-colors"
+                >
+                  <BellRing className="h-3 w-3" />
+                  {permState === "denied" ? "Open settings" : "Enable notifications"}
+                </button>
+                {enableMsg && <p className="mt-1 text-[10px] text-danger-strong">{enableMsg}</p>}
+              </div>
+            )}
 
             <div className="max-h-96 overflow-y-auto">
               {loading ? (

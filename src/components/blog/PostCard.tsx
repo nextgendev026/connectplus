@@ -6,6 +6,7 @@ import {
   Eye,
   MessageCircle,
   Clock,
+  Newspaper,
 } from "lucide-react";
 import { cn, estimateReadTime, truncate } from "@/lib/utils";
 import type { PostWithAuthor } from "@/types";
@@ -31,6 +32,32 @@ function getPlaceholderGradient(slug: string): string {
     hash = slug.charCodeAt(i) + ((hash << 5) - hash);
   }
   return GRADIENT_PLACEHOLDERS[Math.abs(hash) % GRADIENT_PLACEHOLDERS.length] ?? "";
+}
+
+function SourceBadge({ post }: { post: PostWithAuthor }) {
+  if (!post.source && !post.sourceUrl) return null;
+  const label = post.source ? `via ${post.source}` : "via source";
+  const inner = (
+    <span className="inline-flex items-center gap-1 rounded-full bg-surface-800/90 px-2 py-0.5 text-[10px] font-medium text-surface-400 ring-1 ring-surface-700/60 transition-colors hover:text-brand-400 hover:ring-brand-500/30">
+      <Newspaper className="h-2.5 w-2.5" />
+      {label}
+    </span>
+  );
+  if (post.sourceUrl) {
+    return (
+      <a
+        href={post.sourceUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        title={`Read the original on ${post.source ?? "the source site"}`}
+        className="z-10"
+      >
+        {inner}
+      </a>
+    );
+  }
+  return inner;
 }
 
 export function PostCard({ post, variant = "default" }: PostCardProps) {
@@ -359,12 +386,13 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
             </div>
           )}
 
-          <div className="mt-4 flex items-center justify-between border-t border-surface-800/60 pt-4 text-xs text-surface-400">
-            <span className="flex items-center gap-1">
-              <Clock className="h-3.5 w-3.5" />
-              {readTime} min read
-            </span>
-            <div className="flex items-center gap-3">
+          <div className="mt-4 flex items-center justify-between gap-2 border-t border-surface-800/60 pt-4 text-xs text-surface-400">
+            <SourceBadge post={post} />
+            <div className="ml-auto flex items-center gap-3">
+              <span className="flex items-center gap-1">
+                <Clock className="h-3.5 w-3.5" />
+                {readTime} min read
+              </span>
               <span className="flex items-center gap-1">
                 <Eye className="h-3.5 w-3.5" />
                 {post.viewCount.toLocaleString()}

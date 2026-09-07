@@ -17,6 +17,9 @@ export const publishScheduled = inngest.createFunction(
     id: "publish-scheduled",
     name: "Publish scheduled stories",
     triggers: [{ cron: "*/5 * * * *" }],
+    // Never overlap runs; retry transient DB blips.
+    concurrency: 1,
+    retries: 3,
   },
   async ({ step }) => {
     const due = await step.run("find-due-posts", async () =>
@@ -93,8 +96,11 @@ export const rssPoll = inngest.createFunction(
   {
     id: "rss-poll",
     name: "Poll RSS feeds",
-    // Re-poll on the hour; per-feed lastPolled intervals throttle actual fetches
-  triggers: [{ cron: "0 * * * *" }, { event: "rss-poll" }],
+    // Re-poll on the hour; per-feed lastPolled intervals throttle actual fetches.
+    // One run at a time + a cap keeps outbound egress and Postgres writes flat.
+    triggers: [{ cron: "0 * * * *" }, { event: "rss-poll" }],
+    concurrency: 1,
+    retries: 2,
   },
   async ({ step }) => {
     const summary = await step.run("poll-feeds", async () => pollFeeds());
@@ -118,6 +124,8 @@ export const rssPollFeed = inngest.createFunction(
     id: "rss-poll-feed",
     name: "Poll a single RSS feed",
     triggers: [{ event: "rss-poll-feed" }],
+    concurrency: 2,
+    retries: 2,
   },
   async ({ event, step }) => {
     const feedId = (event.data as { feedId?: string } | undefined)?.feedId;
@@ -135,7 +143,11 @@ export const hiveSweep = inngest.createFunction(
   {
     id: "hive-sweep",
     name: "Nightly hive & neural training",
+    // Deep pass at 01:00 UTC — lowest-traffic window — never stacked, DB-heavy
+    // steps run serially via step.run already.
     triggers: [{ cron: "0 1 * * *" }],
+    concurrency: 1,
+    retries: 2,
   },
   async ({ step }) => {
     await step.run("sweep-internal", async () => hiveBrain.sweepInternal());
@@ -157,7 +169,11 @@ export const embedPosts = inngest.createFunction(
   {
     id: "embed-posts",
     name: "Index semantic embeddings",
+    // Batches at most 400 posts/run; single concurrency keeps pgvector writes
+    // and embedding egress predictable.
     triggers: [{ cron: "0 3 * * *" }, { event: "embed-posts" }],
+    concurrency: 1,
+    retries: 2,
   },
   async ({ step }) => {
     const embedded = await step.run("index-published", async () => {
@@ -176,6 +192,8 @@ export const neuralLearn = inngest.createFunction(
     id: "neural-learn",
     name: "Deep neural learning pass",
     triggers: [{ event: "neural-learn" }],
+    concurrency: 1,
+    retries: 2,
   },
   async ({ step }) => {
     await step.run("learn-rss", async () => {

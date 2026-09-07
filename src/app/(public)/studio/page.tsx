@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { extractKeywords, analyzeSentiment, extractEntities } from "@/lib/neural-text";
+import { extractKeywords } from "@/lib/neural-text";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -25,7 +26,6 @@ import {
   Image as ImageIcon,
   Lightbulb,
   Clock,
-  Check,
   ChevronDown,
   Tag,
   PenLine,
@@ -33,10 +33,12 @@ import {
   Trash2,
   Pencil,
   FileText,
-  BrainCircuit,
   Sparkles,
   AlignLeft,
   Gauge,
+  BrainCircuit,
+  Wand2,
+  Send,
 } from "lucide-react";
 
 const writingTips = [
@@ -135,6 +137,13 @@ export default function StudioPage() {
     confidence: number;
   } | null>(null);
 
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
+
   const [genBusy, setGenBusy] = useState<null | "headline" | "excerpt" | "topics">(null);
   const [generated, setGenerated] = useState<{
     type: string;
@@ -148,6 +157,18 @@ export default function StudioPage() {
     grade: string;
     readability: { sentences: number; words: number; avgSentenceWords: number; longSentenceCount: number };
     suggestions: { kind: string; message: string }[];
+  } | null>(null);
+
+  const [railTab, setRailTab] = useState<"ai" | "seo" | "stories">("ai");
+  const [reviewNotice, setReviewNotice] = useState<string | null>(null);
+  const [copilotBusy, setCopilotBusy] = useState<string | null>(null);
+  const [copilotPrompt, setCopilotPrompt] = useState("");
+  const [copilotError, setCopilotError] = useState<string | null>(null);
+  const [copilotResult, setCopilotResult] = useState<{
+    action: "rewrite" | "continue" | "outline" | "summarize" | "headline" | "tags" | "curate" | "assist";
+    text: string;
+    alternatives?: string[];
+    meta?: { notes?: string[]; score?: number; grade?: string; heading?: string; tags?: string[]; wordsBefore?: number; wordsAfter?: number };
   } | null>(null);
 
   const mountedRef = useRef(true);
@@ -203,6 +224,7 @@ export default function StudioPage() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount: the sync setState is only an idempotent loading flag
     loadCategories();
     loadMyStories();
 
@@ -368,14 +390,11 @@ export default function StudioPage() {
 
     // Use neural-text functions for analysis
     const keywords = extractKeywords(textForAnalysis, 10);
-    const sentiment = analyzeSentiment(textForAnalysis);
-    const entities = extractEntities(textForAnalysis);
 
     // Get top 5 keywords as tag suggestions
     const suggestedTags = keywords.slice(0, 5).map((k) => k.keyword);
 
     // Suggest a category based on keyword presence
-    const categoryOptions = ["Technology", "Culture", "Business", "Lifestyle", "Sports", "Music", "Food", "Travel"];
     let suggestedCategory: string | null = null;
     if (keywords.some((k) => k.keyword.toLowerCase().includes("tech") || k.keyword.toLowerCase().includes("digital"))) {
       suggestedCategory = "Technology";
@@ -400,7 +419,6 @@ export default function StudioPage() {
     try {
       const res = await fetch("/api/admin/stats", { credentials: "include" });
       if (res.ok) {
-        const data = await res.json();
         // Use the top categories as trending topics placeholder
         trendingTopics = [
           { title: "Africa Tech Summit", mentions: 1247 },
@@ -418,7 +436,7 @@ export default function StudioPage() {
       trendingTopics,
       confidence: Math.min(keywords.length / 10, 1),
     });
-  }, []);
+  }, [title, content]);
 
   const generateAssist = useCallback(
     async (type: "headline" | "excerpt" | "topics") => {
@@ -493,6 +511,122 @@ export default function StudioPage() {
     setEnhanceBusy(false);
   }, [content]);
 
+  // ── Brain Copilot: reads the typing console (content + selection), asks the
+  //    integrated brains, and writes the result back at the cursor / title /
+  //    excerpt / tags. ─────────────────────────────────────────────────────────
+  const readSelection = useCallback((): string => {
+    const ta = contentRef.current;
+    if (ta && ta.selectionStart !== ta.selectionEnd) {
+      return ta.value.slice(ta.selectionStart, ta.selectionEnd).trim();
+    }
+    return "";
+  }, []);
+
+  const runCopilot = useCallback(
+    async (action: "rewrite" | "continue" | "outline" | "summarize" | "headline" | "tags" | "curate" | "assist", usePrompt = false) => {
+      const selection = readSelection();
+      const promptText = usePrompt ? copilotPrompt.trim() : "";
+      if (action === "assist" && !promptText) {
+        setCopilotError("Type a question or instruction for the brain first.");
+        return;
+      }
+      setCopilotBusy(usePrompt ? `${action}:prompt` : action);
+      setCopilotError(null);
+      try {
+        const res = await fetch("/api/ai/studio", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            action,
+            title,
+            content,
+            prompt: promptText || undefined,
+            selection: selection || undefined,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "The brain could not answer — try again.");
+        setCopilotResult({
+          action,
+          text: data.text ?? "",
+          alternatives: data.alternatives ?? [],
+          meta: data.meta,
+        });
+      } catch (err) {
+        setCopilotError(err instanceof Error ? err.message : "The brain could not answer — try again.");
+      } finally {
+        setCopilotBusy(null);
+      }
+    },
+    [content, title, copilotPrompt, readSelection]
+  );
+
+  const applyCopilot = useCallback((result: NonNullable<typeof copilotResult>) => {
+    const ta = contentRef.current;
+    const { action, text, meta } = result;
+    const selected = ta && ta.selectionStart !== ta.selectionEnd;
+    const start = ta?.selectionStart ?? 0;
+    const end = ta?.selectionEnd ?? 0;
+
+    if (action === "headline") {
+      setTitle(text);
+      setCopilotResult(null);
+      return;
+    }
+    if (action === "summarize") {
+      setExcerpt(text);
+      setCopilotResult(null);
+      return;
+    }
+    if (action === "tags") {
+      const next = text
+        .split(",")
+        .map((t) => t.trim().toLowerCase().replace(/^#/, "").replace(/\s+/g, "-"))
+        .filter(Boolean)
+        .slice(0, 10);
+      setTags((prev) => [...new Set([...prev, ...next])].slice(0, 10));
+      setTagInput("");
+      setCopilotResult(null);
+      return;
+    }
+    if (action === "rewrite") {
+      if (selected && ta) {
+        setContent(ta.value.slice(0, start) + text + ta.value.slice(end));
+        requestAnimationFrame(() => {
+          ta.focus();
+          ta.setSelectionRange(start, start + text.length);
+        });
+      } else {
+        setContent(text);
+      }
+      setCopilotResult(null);
+      return;
+    }
+    if (action === "continue") {
+      setContent((prev) => prev.trimEnd() + "\n\n" + (meta?.heading ? `${meta.heading}\n\n` : "") + text);
+      setCopilotResult(null);
+      return;
+    }
+    // outline / curate / assist: insert markdown at the cursor (or append).
+    if (ta) {
+      if (selected) {
+        setContent(ta.value.slice(0, start) + text + "\n\n" + ta.value.slice(end));
+      } else {
+        const pos = ta.selectionStart ?? ta.value.length;
+        const suffix = pos > 0 && !/\n$/.test(ta.value.slice(0, pos)) ? "\n\n" : "";
+        setContent(ta.value.slice(0, pos) + suffix + text + "\n\n" + ta.value.slice(pos));
+      }
+      requestAnimationFrame(() => {
+        ta.focus();
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+      });
+    } else {
+      setContent((prev) => prev.trimEnd() + "\n\n" + text);
+    }
+    setCopilotResult(null);
+  }, []);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (e.key === "Enter") {
@@ -566,8 +700,17 @@ export default function StudioPage() {
     return data.url;
   }
 
+  function parseTagList(value: string): string[] {
+    return value
+      .split(",")
+      .map((t) => t.trim().toLowerCase().replace(/^#/, "").replace(/\s+/g, "-"))
+      .filter(Boolean)
+      .slice(0, 10);
+  }
+
   async function publishPost(postStatus: "published" | "draft") {
     setError(null);
+    setReviewNotice(null);
     if (!title.trim()) {
       setError("Title is required");
       return;
@@ -586,6 +729,59 @@ export default function StudioPage() {
         !isNaN(scheduleDate.getTime()) &&
         scheduleDate.getTime() > Date.now() + 60_000;
 
+      // Brain-assisted publishing: when an excerpt or tags are missing, ask the
+      // content brain to fill them and let the creator review before the final
+      // click — the values also persist as draft defaults for future edits.
+      let finalExcerpt = excerpt;
+      let finalTags = tags;
+      if (postStatus === "published" && !isScheduled && content.trim().length >= 40) {
+        const needsExcerpt = !finalExcerpt.trim();
+        const needsTags = finalTags.length === 0;
+        if (needsExcerpt || needsTags) {
+          const [sumRes, tagRes] = await Promise.all([
+            needsExcerpt
+              ? fetch("/api/ai/studio", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  credentials: "include",
+                  body: JSON.stringify({ action: "summarize", content }),
+                })
+              : Promise.resolve(null),
+            needsTags
+              ? fetch("/api/ai/studio", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  credentials: "include",
+                  body: JSON.stringify({ action: "tags", content }),
+                })
+              : Promise.resolve(null),
+          ]);
+          let filled = false;
+          if (sumRes?.ok) {
+            const d = await sumRes.json();
+            if (d?.text) {
+              finalExcerpt = d.text.slice(0, 300);
+              setExcerpt(finalExcerpt);
+              filled = true;
+            }
+          }
+          if (tagRes?.ok) {
+            const d = await tagRes.json();
+            if (d?.text) {
+              finalTags = parseTagList(d.text);
+              setTags(finalTags);
+              filled = true;
+            }
+          }
+          if (filled) {
+            setReviewNotice(
+              "✨ The brain auto-filled your missing excerpt/tags — review them, then click Publish again."
+            );
+            return;
+          }
+        }
+      }
+
       let uploadedCoverUrl: string | null = null;
       if (coverFile) {
         uploadedCoverUrl = await uploadCoverImage();
@@ -598,10 +794,10 @@ export default function StudioPage() {
       const payload = {
         title: title.trim(),
         content: content.trim(),
-        excerpt: excerpt.trim() || null,
+        excerpt: finalExcerpt.trim() || null,
         coverImage: uploadedCoverUrl,
         categoryId: matchedCategory?.id ?? null,
-        tags,
+        tags: finalTags,
         status: finalStatus,
         scheduledAt: isScheduled ? scheduleDate.toISOString() : null,
       };
@@ -648,8 +844,8 @@ export default function StudioPage() {
         }
       }
       loadMyStories();
-    } catch (err: any) {
-      setError(err.message || "Something went wrong");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setIsPublishing(false);
     }
@@ -681,8 +877,8 @@ export default function StudioPage() {
         setCoverImage(null);
         setCoverFile(null);
       }
-    } catch (err: any) {
-      setError(err.message || "Something went wrong");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
     }
   }
 
@@ -739,12 +935,17 @@ export default function StudioPage() {
     { icon: ImageIcon, label: "Image", action: () => insertMarkdown("![", "](https://)", "alt text") },
   ];
 
-  const scheduledValid = !!scheduledFor && new Date(scheduledFor).getTime() > Date.now() + 60_000;
+  const scheduledValid = !!scheduledFor && new Date(scheduledFor).getTime() > now + 60_000;
 
   return (
-    <div className="min-h-screen bg-surface-950">
+    <div className="relative min-h-screen bg-surface-950 overflow-x-clip">
+      {/* Ambient studio glow */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-72 bg-mesh-gradient opacity-60" />
+      <div className="pointer-events-none absolute -top-24 right-0 h-72 w-72 rounded-full bg-brand-500/10 blur-3xl" />
+      <div className="pointer-events-none absolute top-40 -left-24 h-72 w-72 rounded-full bg-accent-coral/5 blur-3xl" />
+
       {/* Top Bar */}
-      <div className="sticky top-0 z-40 border-b border-surface-800/50 bg-surface-950/80 backdrop-blur-md">
+      <div className="sticky top-0 z-40 border-b border-surface-800/50 bg-surface-950/85 backdrop-blur-xl">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <button
@@ -757,10 +958,17 @@ export default function StudioPage() {
             </button>
             <div className="h-5 w-px bg-surface-800 hidden sm:block" />
             <div className="flex items-center gap-2 min-w-0">
-              <PenLine className="w-4 h-4 text-brand-400 shrink-0" />
-              <span className="text-sm font-medium text-surface-50 truncate">
-                {editingId ? "Editing story" : "Story Studio"}
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-brand-500 to-accent-coral shadow-glow">
+                <PenLine className="w-3.5 h-3.5 text-white" />
               </span>
+              <div className="min-w-0">
+                <span className="text-sm font-semibold text-surface-50 truncate block leading-tight">
+                  {editingId ? "Editing story" : "Story Studio"}
+                </span>
+                <span className="type-caption text-surface-500 hidden sm:block">
+                  {editingId ? "Drafting · autosave on" : "New story · autosave on"}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -784,7 +992,7 @@ export default function StudioPage() {
               className={cn(
                 "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors border",
                 showPreview
-                  ? "bg-brand-500/10 border-brand-500/30 text-brand-400"
+                  ? "bg-brand-500/10 border-brand-500/30 text-accent-strong"
                   : "border-surface-700 text-surface-400 hover:text-surface-50"
               )}
             >
@@ -811,7 +1019,7 @@ export default function StudioPage() {
                 "rounded-lg px-4 py-1.5 text-xs font-semibold transition-all",
                 isPublishing || !title.trim()
                   ? "bg-surface-800 text-surface-500 cursor-not-allowed"
-                  : "bg-brand-500 text-white hover:bg-brand-600 shadow-glow"
+                  : "btn-gradient text-white shadow-glow hover:scale-[1.03]"
               )}
             >
               {isPublishing ? (
@@ -844,26 +1052,40 @@ export default function StudioPage() {
         </div>
       )}
 
+      {/* Brain review notice */}
+      {reviewNotice && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-4">
+          <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/25 px-4 py-3 text-sm text-emerald-300">
+            <Sparkles className="w-4 h-4 shrink-0" />
+            {reviewNotice}
+            <button onClick={() => setReviewNotice(null)} className="ml-auto text-emerald-400 hover:text-emerald-300">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px] gap-6 lg:gap-8">
           {/* Editor */}
           <div className="space-y-6">
             {showPreview ? (
-              <div className="rounded-2xl bg-surface-900/60 border border-surface-800/50 p-6 sm:p-8 min-h-[60vh]">
-                <h1 className="text-3xl font-display font-bold text-surface-50 mb-4">
+              <div className="relative overflow-hidden rounded-2xl border border-surface-700/70 bg-gradient-to-b from-surface-900/80 to-surface-900/40 p-6 sm:p-8 min-h-[60vh]">
+                <div className="pointer-events-none absolute -top-20 -right-20 h-52 w-52 rounded-full bg-brand-500/10 blur-3xl" />
+                <h1 className="text-3xl sm:text-4xl font-display font-extrabold text-surface-50 mb-4 tracking-tight">
                   {title || "Untitled Story"}
                 </h1>
                 <div className="flex items-center gap-3 text-xs text-surface-500 mb-6 flex-wrap">
-                  <span className="inline-flex items-center rounded-full bg-brand-500/15 px-2.5 py-0.5 text-brand-400 border border-brand-500/20">
+                  <span className="inline-flex items-center rounded-full bg-gradient-to-r from-brand-500/20 to-accent-coral/15 px-2.5 py-0.5 text-accent-strong border border-brand-500/25">
                     {categoryName || "Uncategorized"}
                   </span>
                   <span>{readTime} min read</span>
                   <span>{wordCount} words</span>
                 </div>
                 {coverImage && (
-                  <div className="rounded-xl overflow-hidden mb-6">
-                    <img src={coverImage} alt="Cover" className="w-full h-64 object-cover" />
+                  <div className="rounded-xl overflow-hidden mb-6 ring-1 ring-surface-700/60">
+                    <Image src={coverImage} alt="Cover" width={1024} height={576} className="w-full h-64 object-cover" />
                   </div>
                 )}
                 <div className="prose-custom space-y-4 text-[15px] text-surface-300 leading-[1.8] whitespace-pre-wrap">
@@ -872,9 +1094,9 @@ export default function StudioPage() {
                   )}
                 </div>
                 {tags.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mt-8 pt-6 border-t border-surface-800/50">
+                  <div className="flex flex-wrap gap-2 mt-8 pt-6 border-t border-surface-800/60">
                     {tags.map((tag) => (
-                      <span key={tag} className="rounded-full bg-surface-800/60 px-3 py-1 text-xs text-surface-400">
+                      <span key={tag} className="rounded-full bg-gradient-to-r from-brand-500/15 to-accent-coral/10 px-3 py-1 text-xs font-medium text-accent-strong border border-brand-500/20">
                         #{tag}
                       </span>
                     ))}
@@ -890,15 +1112,15 @@ export default function StudioPage() {
                   className={cn(
                     "relative rounded-2xl border-2 border-dashed transition-all overflow-hidden",
                     coverImage
-                      ? "border-brand-500/30"
+                      ? "border-brand-500/40 ring-1 ring-brand-500/20"
                       : isDragOver
-                        ? "border-brand-500 bg-brand-500/5"
-                        : "border-surface-700/50 hover:border-surface-600"
+                        ? "border-brand-500 bg-gradient-to-br from-brand-500/10 to-accent-coral/5"
+                        : "border-surface-700/60 bg-gradient-to-br from-surface-900/30 to-transparent hover:border-brand-500/30 hover:bg-brand-500/[0.02]"
                   )}
                 >
                   {coverImage ? (
                     <div className="relative">
-                      <img src={coverImage} alt="Cover" className="w-full h-44 sm:h-48 object-cover" />
+                      <Image src={coverImage} alt="Cover" width={768} height={432} className="w-full h-44 sm:h-48 object-cover" />
                       <div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
                         <label className="cursor-pointer rounded-lg bg-black/70 backdrop-blur-sm px-4 py-2 text-xs font-medium text-white hover:bg-black/80 transition-colors border border-white/20">
                           Change Image
@@ -920,16 +1142,18 @@ export default function StudioPage() {
                       <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
                       <div
                         className={cn(
-                          "w-12 h-12 rounded-xl flex items-center justify-center mb-3 transition-colors",
-                          isDragOver ? "bg-brand-500/20 text-brand-400" : "bg-surface-800/60 text-surface-500"
+                          "w-14 h-14 rounded-2xl flex items-center justify-center mb-3 transition-all",
+                          isDragOver
+                            ? "bg-gradient-to-br from-brand-500 to-accent-coral text-white scale-110 shadow-glow"
+                            : "bg-gradient-to-br from-brand-500/15 to-accent-coral/10 text-accent-strong border border-brand-500/20"
                         )}
                       >
-                        <Upload className="w-5 h-5" />
+                        <Upload className="w-6 h-6" />
                       </div>
-                      <p className="text-sm font-medium text-surface-400 mb-1">
+                      <p className="text-sm font-semibold text-surface-200 mb-1">
                         {isDragOver ? "Drop your image here" : "Upload a cover image"}
                       </p>
-                      <p className="text-xs text-surface-600">Drag and drop, or click to browse · JPG, PNG up to 5MB</p>
+                      <p className="text-xs text-surface-500">Drag and drop, or click to browse · JPG, PNG up to 5MB</p>
                     </label>
                   )}
                 </div>
@@ -939,22 +1163,23 @@ export default function StudioPage() {
                   placeholder="Your story title..."
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  className="w-full bg-transparent text-2xl sm:text-4xl font-display font-bold text-surface-50 placeholder:text-surface-700 focus:outline-none"
+                  className="w-full bg-transparent text-2xl sm:text-4xl font-display font-extrabold text-editor placeholder-editor focus:outline-none tracking-tight border-b-2 border-transparent pb-3 focus:border-brand-500/30 transition-colors"
                 />
 
-                <div className="flex flex-wrap items-center gap-1 p-2 rounded-xl bg-surface-900/60 border border-surface-800/50">
+                <div className="flex flex-wrap items-center gap-1 p-2 rounded-xl bg-gradient-to-b from-surface-900/80 to-surface-900/50 border border-surface-700/50 shadow-card">
+                  {/* eslint-disable-next-line react-hooks/refs -- toolbar actions only touch contentRef inside click handlers, never during render */}
                   {toolbar.map(({ icon: Icon, label, action }, i) => (
                     <button
                       key={i}
                       title={label}
                       onClick={action}
-                      className="p-2 rounded-lg text-surface-500 hover:text-surface-50 hover:bg-surface-800/60 transition-colors"
+                      className="p-2 rounded-lg text-surface-500 hover:text-brand-400 hover:bg-gradient-to-br hover:from-brand-500/15 hover:to-accent-coral/10 hover:shadow-glow transition-all"
                     >
                       <Icon className="w-4 h-4" />
                     </button>
                   ))}
-                  <div className="h-5 w-px bg-surface-800 mx-1 hidden sm:block" />
-                  <span className="text-[10px] text-surface-600 px-1 sm:px-2 hidden sm:inline">Markdown supported</span>
+                  <div className="h-5 w-px bg-surface-700/60 mx-1 hidden sm:block" />
+                  <span className="type-caption text-surface-500 px-1 sm:px-2 hidden sm:inline">Markdown supported</span>
                 </div>
 
                 <textarea
@@ -963,36 +1188,62 @@ export default function StudioPage() {
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
                   rows={20}
-                  className="w-full bg-surface-900/40 border border-surface-800/50 rounded-2xl px-4 sm:px-6 py-5 text-[15px] text-surface-300 placeholder:text-surface-700 focus:outline-none focus:border-brand-500/30 resize-none leading-[1.8] transition-colors"
+                  className="w-full min-h-[52vh] bg-gradient-to-b from-surface-900/60 to-surface-900/30 border border-surface-700/50 rounded-2xl px-4 sm:px-6 py-5 text-[15px] sm:text-base font-medium text-editor placeholder-editor placeholder:font-normal focus:outline-none focus:border-brand-500/40 focus:ring-1 focus:ring-brand-500/20 resize-none leading-[1.8] transition-all shadow-inner"
                 />
 
                 <div className="space-y-2">
-                  <label className="text-xs font-medium text-surface-400">Excerpt</label>
+                  <label className="text-xs font-semibold text-surface-300 flex items-center gap-1.5">
+                    <AlignLeft className="w-3 h-3 text-accent-strong" />
+                    Excerpt
+                  </label>
                   <textarea
                     placeholder="A brief summary of your story (shown in feeds and search results)..."
                     value={excerpt}
                     onChange={(e) => setExcerpt(e.target.value)}
                     rows={3}
                     maxLength={300}
-                    className="w-full bg-surface-900/40 border border-surface-800/50 rounded-xl px-4 py-3 text-sm text-surface-300 placeholder:text-surface-700 focus:outline-none focus:border-brand-500/30 resize-none leading-relaxed transition-colors"
+                    className="w-full bg-gradient-to-b from-surface-900/60 to-surface-900/30 border border-surface-700/50 rounded-xl px-4 py-3 text-sm text-editor font-medium placeholder-editor placeholder:font-normal focus:outline-none focus:border-brand-500/40 focus:ring-1 focus:ring-brand-500/20 resize-none leading-relaxed transition-all"
                   />
-                  <p className="text-[10px] text-surface-600 text-right">{excerpt.length}/300</p>
+                  <p className="type-caption text-surface-500 text-right">{excerpt.length}/300</p>
                 </div>
               </>
             )}
           </div>
 
-          {/* Sidebar */}
-          <aside className="space-y-6">
-            <div className="rounded-2xl bg-surface-900/60 border border-surface-800/50 p-5">
+          {/* Sidebar — tabbed rail keeps the panel short and focused */}
+          <aside className="space-y-6 lg:sticky lg:top-16 lg:self-start lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto pr-1 overscroll-contain">
+            <div className="flex gap-1 rounded-xl border border-surface-700/60 bg-surface-900/70 p-1 backdrop-blur-xl">
+              {([
+                { id: "ai", label: "AI Brain", icon: BrainCircuit },
+                { id: "seo", label: "SEO & Tags", icon: Gauge },
+                { id: "stories", label: "Stories", icon: FileText },
+              ] as const).map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setRailTab(t.id)}
+                  className={cn(
+                    "flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 type-meta transition-all",
+                    railTab === t.id
+                      ? "bg-gradient-to-r from-brand-500 to-accent-coral text-white shadow-glow"
+                      : "text-surface-400 hover:text-surface-50 hover:bg-surface-800"
+                  )}
+                >
+                  <t.icon className="h-3.5 w-3.5" />
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <div className={cn("rounded-2xl bg-surface-900/60 border border-surface-700/50 p-5 shadow-card transition-colors hover:border-surface-600", railTab !== "stories" && "hidden")}>
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-semibold text-surface-400 uppercase tracking-wider flex items-center gap-1.5">
-                  <FileText className="w-3 h-3" />
+                <h3 className="text-xs font-semibold text-surface-300 uppercase tracking-wider flex items-center gap-2">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-gradient-to-br from-brand-500/25 to-accent-coral/15 border border-brand-500/20">
+                    <FileText className="w-3 h-3 text-accent-strong" />
+                  </span>
                   My Stories
                 </h3>
                 <button
                   onClick={newStory}
-                  className="text-[11px] font-medium text-brand-400 hover:text-brand-300 transition-colors"
+                  className="rounded-full bg-gradient-to-r from-brand-500/15 to-accent-coral/10 border border-brand-500/25 px-2.5 py-1 type-meta text-accent-strong hover:bg-brand-500/25 transition-all"
                 >
                   + New
                 </button>
@@ -1003,7 +1254,7 @@ export default function StudioPage() {
               ) : storiesUnauth ? (
                 <Link
                   href="/auth/signin?callbackUrl=/studio"
-                  className="text-xs text-brand-400 hover:text-brand-300 transition-colors"
+                  className="text-xs font-medium text-accent-strong hover:text-brand-700 transition-colors"
                 >
                   Sign in to manage your stories
                 </Link>
@@ -1029,7 +1280,7 @@ export default function StudioPage() {
                           <p className="truncate text-xs font-medium text-surface-200 group-hover:text-brand-300 transition-colors">
                             {post.title}
                           </p>
-                          <p className="text-[10px] text-surface-500 mt-0.5">
+                          <p className="type-caption text-surface-500 mt-0.5">
                             {post.status === "PUBLISHED"
                               ? "Published"
                               : post.scheduledAt
@@ -1062,8 +1313,13 @@ export default function StudioPage() {
               )}
             </div>
 
-            <div className="rounded-2xl bg-surface-900/60 border border-surface-800/50 p-5">
-              <h3 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3">Status</h3>
+            <div className={cn("rounded-2xl bg-surface-900/60 border border-surface-700/50 p-5 shadow-card transition-colors hover:border-surface-600", railTab !== "seo" && "hidden")}>
+              <h3 className="text-xs font-semibold text-surface-300 uppercase tracking-wider mb-3 flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-gradient-to-br from-accent-cyan/20 to-brand-500/15 border border-accent-cyan/20">
+                  <Gauge className="w-3 h-3 text-accent-cyan" />
+                </span>
+                Status
+              </h3>
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-surface-400">Category</span>
@@ -1089,7 +1345,7 @@ export default function StudioPage() {
                                 className={cn(
                                   "w-full text-left px-3 py-2 text-xs transition-colors",
                                   categoryId === cat.id
-                                    ? "text-brand-400 bg-brand-500/10"
+                                    ? "text-accent-strong bg-brand-500/10"
                                     : "text-surface-400 hover:text-surface-50 hover:bg-surface-700/50"
                                 )}
                               >
@@ -1107,7 +1363,7 @@ export default function StudioPage() {
                                 className={cn(
                                   "w-full text-left px-3 py-2 text-xs transition-colors",
                                   categoryName === cat
-                                    ? "text-brand-400 bg-brand-500/10"
+                                    ? "text-accent-strong bg-brand-500/10"
                                     : "text-surface-400 hover:text-surface-50 hover:bg-surface-700/50"
                                 )}
                               >
@@ -1128,7 +1384,7 @@ export default function StudioPage() {
                     {scheduledFor && (
                       <button
                         onClick={() => setScheduledFor("")}
-                        className="text-[10px] text-surface-500 hover:text-red-400 transition-colors"
+                        className="type-caption text-surface-500 hover:text-red-400 transition-colors"
                       >
                         Clear
                       </button>
@@ -1137,12 +1393,12 @@ export default function StudioPage() {
                   <input
                     type="datetime-local"
                     value={scheduledFor}
-                    min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)}
+                    min={now ? new Date(now + 60_000).toISOString().slice(0, 16) : undefined}
                     onChange={(e) => setScheduledFor(e.target.value)}
                     className="w-full bg-surface-800/60 border border-surface-700/50 rounded-lg px-3 py-1.5 text-xs text-surface-300 [color-scheme:dark] focus:outline-none focus:border-brand-500/40 transition-colors"
                   />
-                  {scheduledFor && new Date(scheduledFor).getTime() <= Date.now() && (
-                    <p className="text-[10px] text-red-400 mt-1">Choose a future date to schedule.</p>
+                  {scheduledFor && new Date(scheduledFor).getTime() <= now && (
+                    <p className="type-caption text-red-400 mt-1">Choose a future date to schedule.</p>
                   )}
                 </div>
                 <div className="flex items-center justify-between">
@@ -1152,16 +1408,18 @@ export default function StudioPage() {
               </div>
             </div>
 
-            <div className="rounded-2xl bg-surface-900/60 border border-surface-800/50 p-5">
-              <h3 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                <Tag className="w-3 h-3" />
+            <div className={cn("rounded-2xl bg-surface-900/60 border border-surface-700/50 p-5 shadow-card transition-colors hover:border-surface-600", railTab !== "seo" && "hidden")}>
+              <h3 className="text-xs font-semibold text-surface-300 uppercase tracking-wider mb-3 flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-gradient-to-br from-accent-violet/20 to-brand-500/15 border border-accent-violet/20">
+                  <Tag className="w-3 h-3 text-accent-violet" />
+                </span>
                 Tags
               </h3>
               <div className="flex flex-wrap gap-1.5 mb-3">
                 {tags.map((tag) => (
                   <span
                     key={tag}
-                    className="inline-flex items-center gap-1 rounded-full bg-brand-500/15 px-2.5 py-1 text-xs text-brand-400 border border-brand-500/20"
+                    className="inline-flex items-center gap-1 rounded-full bg-brand-500/15 px-2.5 py-1 text-xs font-medium text-accent-strong border border-brand-500/20"
                   >
                     #{tag}
                     <button onClick={() => handleRemoveTag(tag)} className="hover:text-brand-300 transition-colors">
@@ -1182,40 +1440,42 @@ export default function StudioPage() {
                 <button
                   onClick={handleAddTag}
                   disabled={!tagInput.trim() || tags.length >= 10}
-                  className="p-2 rounded-lg bg-surface-800/60 border border-surface-700/50 text-surface-400 hover:text-brand-400 hover:border-brand-500/30 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                  className="p-2 rounded-lg bg-surface-800/60 border border-surface-700/50 text-surface-400 hover:text-accent-strong hover:border-brand-500/30 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                 >
                   <Plus className="w-3.5 h-3.5" />
                 </button>
                 {aiSuggestions && aiSuggestions.confidence > 0.3 && (
                   <button
                     onClick={() => setAiSuggestions(null)}
-                    className="p-2 rounded-lg bg-surface-800/60 border border-brand-500/20 text-brand-400 hover:text-brand-300 transition-all"
+                    className="p-2 rounded-lg bg-surface-800/60 border border-brand-500/20 text-accent-strong hover:text-brand-700 transition-all"
                     title="Clear suggestions"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
                 )}
                 <button
-                  onClick={assistWithPost}
-                  className="p-2 rounded-lg bg-surface-800/60 border border-brand-500/20 text-brand-400 hover:text-brand-300 transition-all"
+                  onClick={assistWithPost}                    className="p-2 rounded-lg bg-surface-800/60 border border-brand-500/20 text-accent-strong hover:text-brand-700 transition-all"
                   title="AI assist — suggest tags & category"
                 >
                   <Lightbulb className="h-3.5 w-3.5" />
                 </button>
               </div>
-              <p className="text-[10px] text-surface-600 mt-2">Press Enter to add · {tags.length}/10 tags</p>
+              <p className="type-caption text-surface-600 mt-2">Press Enter to add · {tags.length}/10 tags</p>
             </div>
 
-            <div className="rounded-2xl bg-surface-900/60 border border-surface-800/50 p-5">
-              <h3 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                <Sparkles className="w-3 h-3" />
+            <div className={cn("relative overflow-hidden rounded-2xl bg-surface-900/60 border border-brand-500/20 p-5 shadow-card transition-colors hover:border-brand-500/30", railTab !== "ai" && "hidden")}>
+              <div className="pointer-events-none absolute -top-10 -right-10 h-32 w-32 rounded-full bg-brand-500/10 blur-2xl" />
+              <h3 className="text-xs font-semibold text-accent-strong uppercase tracking-wider mb-3 flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-gradient-to-br from-brand-500 to-accent-coral shadow-glow">
+                  <Sparkles className="w-3 h-3 text-white" />
+                </span>
                 AI Content Studio
               </h3>
               <div className="grid grid-cols-3 gap-2">
                 <button
                   onClick={() => generateAssist("headline")}
                   disabled={genBusy !== null || content.trim().length < 40}
-                  className="flex flex-col items-center gap-1 rounded-lg bg-surface-800/60 border border-brand-500/20 px-2 py-2.5 text-[10px] text-brand-400 hover:bg-brand-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                  className="flex flex-col items-center gap-1 rounded-lg bg-surface-800/60 border border-brand-500/20 px-2 py-2.5 type-caption text-accent-strong hover:bg-brand-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
                 >
                   {genBusy === "headline" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PenLine className="h-3.5 w-3.5" />}
                   Headline
@@ -1223,7 +1483,7 @@ export default function StudioPage() {
                 <button
                   onClick={() => generateAssist("excerpt")}
                   disabled={genBusy !== null || content.trim().length < 40}
-                  className="flex flex-col items-center gap-1 rounded-lg bg-surface-800/60 border border-brand-500/20 px-2 py-2.5 text-[10px] text-brand-400 hover:bg-brand-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                  className="flex flex-col items-center gap-1 rounded-lg bg-surface-800/60 border border-brand-500/20 px-2 py-2.5 type-caption text-accent-strong hover:bg-brand-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
                 >
                   {genBusy === "excerpt" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <AlignLeft className="h-3.5 w-3.5" />}
                   Excerpt
@@ -1231,24 +1491,23 @@ export default function StudioPage() {
                 <button
                   onClick={() => generateAssist("topics")}
                   disabled={genBusy !== null || content.trim().length < 40}
-                  className="flex flex-col items-center gap-1 rounded-lg bg-surface-800/60 border border-brand-500/20 px-2 py-2.5 text-[10px] text-brand-400 hover:bg-brand-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                  className="flex flex-col items-center gap-1 rounded-lg bg-surface-800/60 border border-brand-500/20 px-2 py-2.5 type-caption text-accent-strong hover:bg-brand-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
                 >
                   {genBusy === "topics" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Tag className="h-3.5 w-3.5" />}
                   Topics
                 </button>
-              </div>
-              <button
-                onClick={runEnhance}
-                disabled={enhanceBusy || content.trim().length < 40}
-                className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-surface-800/60 border border-brand-500/20 px-2 py-2 text-[10px] text-brand-400 hover:bg-brand-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-              >
+              </div>                <button
+                  onClick={runEnhance}
+                  disabled={enhanceBusy || content.trim().length < 40}
+                  className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-brand-500/15 to-accent-coral/10 border border-brand-500/25 px-2 py-2 type-caption text-accent-strong hover:from-brand-500/25 hover:to-accent-coral/15 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                >
                 {enhanceBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Gauge className="h-3.5 w-3.5" />}
                 {enhanceBusy ? "Analyzing…" : "Enhance draft — readability & clarity"}
               </button>
               {enhancement && (
                 <div className="mt-3 rounded-lg border border-surface-700/60 bg-surface-950/40 p-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-medium text-surface-400 uppercase tracking-wider">
+                    <span className="type-caption text-surface-400 uppercase tracking-wider">
                       Enhancement — grade {enhancement.grade}
                     </span>
                     <button onClick={() => setEnhancement(null)} className="text-surface-500 hover:text-surface-300">
@@ -1265,30 +1524,30 @@ export default function StudioPage() {
                         style={{ width: `${enhancement.score}%` }}
                       />
                     </div>
-                    <span className="text-[10px] font-semibold text-surface-300">{enhancement.score}/100</span>
+                    <span className="type-caption text-surface-300">{enhancement.score}/100</span>
                   </div>
-                  <p className="mt-2 text-[10px] text-surface-500">
+                  <p className="mt-2 type-caption text-surface-500">
                     {enhancement.readability.sentences} sentences · {enhancement.readability.words} words · avg{" "}
                     {enhancement.readability.avgSentenceWords} words/sentence
                   </p>
                   {enhancement.suggestions.length > 0 ? (
                     <ul className="mt-2 space-y-1.5">
                       {enhancement.suggestions.map((s, i) => (
-                        <li key={i} className="flex items-start gap-1.5 text-[11px] text-surface-300 leading-relaxed">
+                        <li key={i} className="flex items-start gap-1.5 type-meta text-surface-300 leading-relaxed">
                           <span className="mt-1 h-1 w-1 shrink-0 rounded-full bg-brand-400" />
                           {s.message}
                         </li>
                       ))}
                     </ul>
                   ) : (
-                    <p className="mt-2 text-[11px] text-emerald-400">Clean draft — no actionable suggestions. Nice.</p>
+                    <p className="mt-2 type-meta text-emerald-400">Clean draft — no actionable suggestions. Nice.</p>
                   )}
                 </div>
               )}
               {generated && (
                 <div className="mt-3 space-y-2 rounded-lg border border-surface-700/60 bg-surface-950/40 p-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-medium text-surface-400 uppercase tracking-wider">
+                    <span className="type-caption text-surface-400 uppercase tracking-wider">
                       {generated.type} suggestions
                     </span>
                     <button onClick={() => setGenerated(null)} className="text-surface-500 hover:text-surface-300">
@@ -1317,7 +1576,215 @@ export default function StudioPage() {
               )}
             </div>
 
-            <div className="rounded-2xl bg-gradient-to-br from-brand-500/5 to-accent-amber/5 border border-brand-500/10 p-5">
+            <div className={cn("relative overflow-hidden rounded-2xl bg-surface-900/60 border border-accent-violet/25 p-5 shadow-card transition-colors hover:border-accent-violet/40", railTab !== "ai" && "hidden")}>
+              <div className="pointer-events-none absolute -bottom-10 -left-10 h-32 w-32 rounded-full bg-accent-violet/10 blur-2xl" />
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-xs font-semibold text-accent-violet uppercase tracking-wider flex items-center gap-2">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-gradient-to-br from-accent-violet/30 to-brand-500/20 border border-accent-violet/25">
+                    <BrainCircuit className="w-3 h-3 text-accent-violet" />
+                  </span>
+                  Brain Copilot
+                </h3>
+                {copilotBusy && (
+                  <span className="flex items-center gap-1 type-caption text-accent-violet">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    thinking…
+                  </span>
+                )}
+              </div>
+              <p className="type-caption text-surface-500 mb-3">
+                Reads your draft and selection, then writes back directly into the editor.
+              </p>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => runCopilot("rewrite")}
+                  disabled={copilotBusy !== null || content.trim().length < 20}
+                  className="flex items-center justify-center gap-1.5 rounded-lg bg-surface-800/60 border border-surface-700/50 px-2 py-2 type-caption text-surface-200 hover:border-brand-500/40 hover:text-accent-strong disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                >
+                  {copilotBusy === "rewrite" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Gauge className="h-3 w-3 text-brand-400" />}
+                  Polish
+                </button>
+                <button
+                  onClick={() => runCopilot("continue")}
+                  disabled={copilotBusy !== null || content.trim().length < 20}
+                  className="flex items-center justify-center gap-1.5 rounded-lg bg-surface-800/60 border border-surface-700/50 px-2 py-2 type-caption text-surface-200 hover:border-brand-500/40 hover:text-accent-strong disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                >
+                  {copilotBusy === "continue" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3 text-accent-cyan" />}
+                  Continue
+                </button>
+                <button
+                  onClick={() => runCopilot("outline")}
+                  disabled={copilotBusy !== null || content.trim().length < 20}
+                  className="flex items-center justify-center gap-1.5 rounded-lg bg-surface-800/60 border border-surface-700/50 px-2 py-2 type-caption text-surface-200 hover:border-brand-500/40 hover:text-accent-strong disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                >
+                  {copilotBusy === "outline" ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3 text-accent-amber" />}
+                  Outline
+                </button>
+                <button
+                  onClick={() => runCopilot("summarize")}
+                  disabled={copilotBusy !== null || content.trim().length < 20}
+                  className="flex items-center justify-center gap-1.5 rounded-lg bg-surface-800/60 border border-surface-700/50 px-2 py-2 type-caption text-surface-200 hover:border-brand-500/40 hover:text-accent-strong disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                >
+                  {copilotBusy === "summarize" ? <Loader2 className="h-3 w-3 animate-spin" /> : <AlignLeft className="h-3 w-3 text-accent-coral" />}
+                  Excerpt
+                </button>
+                <button
+                  onClick={() => runCopilot("headline")}
+                  disabled={copilotBusy !== null || content.trim().length < 20}
+                  className="flex items-center justify-center gap-1.5 rounded-lg bg-surface-800/60 border border-surface-700/50 px-2 py-2 type-caption text-surface-200 hover:border-brand-500/40 hover:text-accent-strong disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                >
+                  {copilotBusy === "headline" ? <Loader2 className="h-3 w-3 animate-spin" /> : <PenLine className="h-3 w-3 text-brand-400" />}
+                  Headline
+                </button>
+                <button
+                  onClick={() => runCopilot("tags")}
+                  disabled={copilotBusy !== null || content.trim().length < 20}
+                  className="flex items-center justify-center gap-1.5 rounded-lg bg-surface-800/60 border border-surface-700/50 px-2 py-2 type-caption text-surface-200 hover:border-brand-500/40 hover:text-accent-strong disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                >
+                  {copilotBusy === "tags" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Tag className="h-3 w-3 text-accent-violet" />}
+                  Tags
+                </button>
+                <button
+                  onClick={() => runCopilot("curate")}
+                  disabled={copilotBusy !== null}
+                  className="col-span-2 flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-accent-violet/15 to-brand-500/10 border border-accent-violet/25 px-2 py-2 type-caption text-accent-violet hover:from-accent-violet/25 hover:to-brand-500/15 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                >
+                  {copilotBusy === "curate" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                  Curate — what to publish next
+                </button>
+              </div>
+
+              <div className="mt-3 flex items-end gap-2">
+                <textarea
+                  value={copilotPrompt}
+                  onChange={(e) => setCopilotPrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      runCopilot("assist", true);
+                    }
+                  }}
+                  placeholder="Ask the brain… e.g. “write a stronger intro for my draft”"
+                  rows={2}
+                  className="flex-1 resize-none rounded-lg bg-surface-800/60 border border-surface-700/50 px-3 py-2 text-xs text-surface-200 placeholder:text-surface-600 focus:outline-none focus:border-accent-violet/40 transition-colors leading-relaxed"
+                />
+                <button
+                  onClick={() => runCopilot("assist", true)}
+                  disabled={copilotBusy !== null || !copilotPrompt.trim()}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-accent-violet to-brand-500 text-white shadow-glow hover:scale-105 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 transition-all"
+                  title="Ask the brain"
+                >
+                  {copilotBusy === "assist:prompt" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                </button>
+              </div>
+              <p className="text-[9px] text-surface-600 mt-1.5">
+                Try: “polish this”, “make the intro stronger”, “suggest a headline”, “what should I write about?”
+              </p>
+
+              {copilotError && (
+                <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2">
+                  <AlertCircle className="mt-0.5 h-3 w-3 shrink-0 text-red-400" />
+                  <p className="type-caption text-red-300 leading-relaxed">{copilotError}</p>
+                  <button onClick={() => setCopilotError(null)} className="ml-auto text-red-400 hover:text-red-300">
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
+
+              {copilotResult && (
+                <div className="mt-3 rounded-lg border border-accent-violet/25 bg-surface-950/50 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="type-caption text-accent-violet uppercase tracking-wider">
+                      {copilotResult.action === "rewrite"
+                        ? "Polished draft"
+                        : copilotResult.action === "continue"
+                          ? "Continued draft"
+                          : copilotResult.action === "outline"
+                            ? "Outline"
+                            : copilotResult.action === "summarize"
+                              ? "Excerpt"
+                              : copilotResult.action === "headline"
+                                ? "Headline"
+                                : copilotResult.action === "tags"
+                                  ? "Tags"
+                                  : copilotResult.action === "curate"
+                                    ? "Curation brief"
+                                    : "Brain answer"}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {copilotResult.meta?.wordsBefore != null && copilotResult.meta?.wordsAfter != null && (
+                        <span className="text-[9px] text-surface-500">
+                          {copilotResult.meta.wordsBefore} → {copilotResult.meta.wordsAfter} words
+                        </span>
+                      )}
+                      <button
+                        onClick={() => {
+                          navigator.clipboard?.writeText(copilotResult.text);
+                          setCopilotResult(null);
+                        }}
+                        className="rounded p-1 text-surface-500 hover:text-brand-300 transition-colors"
+                        title="Copy"
+                      >
+                        <FileText className="h-3 w-3" />
+                      </button>
+                      <button
+                        onClick={() => setCopilotResult(null)}
+                        className="rounded p-1 text-surface-500 hover:text-surface-300 transition-colors"
+                        title="Dismiss"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="max-h-44 overflow-y-auto rounded-md bg-surface-900/60 border border-surface-800 p-2.5">
+                    <p className="type-meta text-surface-200 leading-relaxed whitespace-pre-wrap">{copilotResult.text}</p>
+                  </div>
+                  {copilotResult.meta?.notes && copilotResult.meta.notes.length > 0 && (
+                    <ul className="mt-2 space-y-1">
+                      {copilotResult.meta.notes.map((n, i) => (
+                        <li key={i} className="flex items-start gap-1.5 type-caption text-surface-400 leading-relaxed">
+                          <span className="mt-1 h-1 w-1 shrink-0 rounded-full bg-emerald-400" />
+                          {n}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {copilotResult.alternatives && copilotResult.alternatives.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {copilotResult.alternatives.slice(0, 3).map((alt, i) => (
+                        <button
+                          key={i}
+                          onClick={() => setCopilotResult({ ...copilotResult, text: alt })}
+                          className="block w-full text-left rounded-md bg-surface-800/60 border border-surface-700/50 px-2.5 py-1.5 type-caption text-surface-300 hover:border-accent-violet/40 hover:text-accent-violet transition-all"
+                        >
+                          {alt}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    onClick={() => applyCopilot(copilotResult)}
+                    className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-accent-violet to-brand-500 px-3 py-2 type-meta text-white shadow-glow hover:scale-[1.02] transition-all"
+                  >
+                    <Wand2 className="h-3 w-3" />
+                    {copilotResult.action === "headline"
+                      ? "Use as title"
+                      : copilotResult.action === "summarize"
+                        ? "Use as excerpt"
+                        : copilotResult.action === "tags"
+                          ? "Add tags"
+                          : copilotResult.action === "rewrite"
+                            ? "Replace draft"
+                            : copilotResult.action === "continue"
+                              ? "Append to draft"
+                              : "Insert into editor"}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className={cn("rounded-2xl bg-gradient-to-br from-brand-500/5 to-accent-amber/5 border border-brand-500/10 p-5", railTab !== "stories" && "hidden")}>
               <h3 className="text-xs font-semibold text-brand-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
                 <Lightbulb className="w-3 h-3" />
                 Writing Tips
@@ -1328,7 +1795,7 @@ export default function StudioPage() {
                     <span className="w-4 h-4 rounded-full bg-brand-500/20 flex items-center justify-center text-[9px] font-bold text-brand-400 shrink-0 mt-0.5">
                       {i + 1}
                     </span>
-                    <p className="text-[11px] text-surface-400 leading-relaxed">{tip}</p>
+                    <p className="type-meta text-surface-400 leading-relaxed">{tip}</p>
                   </li>
                 ))}
               </ul>

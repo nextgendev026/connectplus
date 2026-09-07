@@ -16,8 +16,6 @@ import {
   MessageCircle,
   ArrowRight,
   Bookmark,
-  Flame,
-  Globe,
   Users,
   ChevronRight,
   SearchX,
@@ -153,9 +151,11 @@ function PostCard({
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 rounded-full bg-gradient-to-br from-brand-500 to-accent-cyan flex items-center justify-center text-xs font-bold text-white overflow-hidden shrink-0">
                 {post.author.avatar ? (
-                  <img
+                  <Image
                     src={post.author.avatar}
                     alt={post.author.name ?? post.author.username}
+                    width={28}
+                    height={28}
                     className="w-full h-full object-cover"
                   />
                 ) : (
@@ -302,9 +302,11 @@ function FeaturedStoryBanner({ post }: { post: PostData }) {
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-brand-500 to-accent-cyan flex items-center justify-center text-sm font-bold text-white overflow-hidden">
                   {post.author.avatar ? (
-                    <img
+                    <Image
                       src={post.author.avatar}
                       alt={post.author.name ?? post.author.username}
+                      width={40}
+                      height={40}
                       className="w-full h-full object-cover"
                     />
                   ) : (
@@ -455,9 +457,11 @@ function TrendingSidebar({
                 >
                   <div className="w-9 h-9 rounded-full bg-gradient-to-br from-brand-500 to-accent-violet flex items-center justify-center text-xs font-bold text-white shrink-0 overflow-hidden">
                     {writer.avatar ? (
-                      <img
+                      <Image
                         src={writer.avatar}
                         alt={writer.name ?? writer.username}
+                        width={36}
+                        height={36}
                         className="w-full h-full object-cover"
                       />
                     ) : (
@@ -633,7 +637,7 @@ export default async function HomeFeedPage({
   const feedIds = top.map((p) => p.id);
 
   return (
-    <div className="min-h-screen bg-surface-950">
+    <div className="min-h-screen bg-surface-950 scroll-smooth">
       <HeroSlideshow
         slides={heroPostRows}
         stats={{

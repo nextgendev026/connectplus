@@ -26,12 +26,16 @@ export async function GET(request: NextRequest) {
   let upstreamRes: Response;
   try {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 10_000);
+    // Icecast/Shoutcast servers can take a while to negotiate; 25s covers
+    // slow regional hosts without hanging the proxy forever.
+    const timer = setTimeout(() => ctrl.abort(), 25_000);
     upstreamRes = await fetch(upstream, {
       signal: ctrl.signal,
+      redirect: "follow",
       headers: {
         "User-Agent": PASS_UA,
         Accept: "*/*",
+        "Icy-MetaData": "1",
       },
     });
     clearTimeout(timer);

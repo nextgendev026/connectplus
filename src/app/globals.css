@@ -15,21 +15,22 @@
  */
 
 :root {
-  /* Dark mode (default) — the palette as originally designed */
-  --surface-50: 250 250 250;
-  --surface-100: 244 244 245;
-  --surface-200: 228 228 231;
-  --surface-300: 212 212 216;
-  --surface-400: 161 161 170;
-  --surface-500: 113 113 122;
-  --surface-600: 82 82 91;
-  --surface-700: 63 63 70;
-  --surface-800: 39 39 42;
-  --surface-850: 30 30 34;
-  --surface-900: 24 24 27;
-  --surface-950: 9 9 11;
-  --foreground: 250 250 250;
-  --background: 9 9 11;
+  /* Dark mode (default) — the palette as originally designed. Text tones are
+     pushed slightly brighter so body copy reads with real weight on cards. */
+  --surface-50: 252 252 253;
+  --surface-100: 246 246 248;
+  --surface-200: 232 232 236;
+  --surface-300: 219 219 224;
+  --surface-400: 174 174 184;
+  --surface-500: 124 124 134;
+  --surface-600: 90 90 100;
+  --surface-700: 68 68 76;
+  --surface-800: 42 42 46;
+  --surface-850: 32 32 36;
+  --surface-900: 26 26 30;
+  --surface-950: 10 10 13;
+  --foreground: 252 252 253;
+  --background: 10 10 13;
   --scrollbar-thumb: 63 63 70;
   --scrollbar-hover: 82 82 91;
   --glass-bg: 24 24 27;
@@ -47,34 +48,45 @@ html:not(.dark) {
   /* Light mode — FLIP the entire palette: surface-950 becomes the lightest
      background and surface-50 the darkest text, so every existing
      bg-surface-950 text-surface-50 pattern becomes a proper light theme.
-     Tones are warm off-white (matches the amber brand) with tuned contrast. */
-  --surface-50: 32 30 26;
-  --surface-100: 48 46 42;
-  --surface-200: 78 75 70;
-  --surface-300: 108 105 99;
-  --surface-400: 138 135 128;
-  --surface-500: 165 162 155;
-  --surface-600: 199 196 190;
-  --surface-700: 218 215 210;
-  --surface-800: 230 228 223;
-  --surface-850: 237 235 231;
-  --surface-900: 243 241 237;
-  --surface-950: 250 249 246;
-  --foreground: 32 30 26;
-  --background: 250 249 246;
-  --scrollbar-thumb: 200 198 192;
-  --scrollbar-hover: 175 173 167;
+
+     Perfect Light Mode palette:
+     • Bright orange #FF6B00 is the sole accent — reserved for CTAs, active
+       states and notifications (see brand-500).
+     • Light slate grey #F4F6F8 is the canvas — cool, glare-free.
+     • Deep charcoal #1A202C is the text — never pure black.
+     • Muted blue-grey #94A3B8 / #64748B carries icons, placeholders and
+       secondary text; hairline slate borders tie the layout together. */
+  --surface-50: 26 32 44;      /* #1A202C — deep charcoal (headings/body) */
+  --surface-100: 45 55 72;     /* #2D3748 — secondary charcoal */
+  --surface-200: 51 65 85;     /* #334155 — slate-700 */
+  --surface-300: 63 76 96;     /* #3F4C60 — slate-650 */
+  --surface-400: 71 85 105;    /* #475569 — slate-600 */
+  --surface-500: 100 116 139;  /* #64748B — muted blue-grey (secondary text) */
+  --surface-600: 148 163 184;  /* #94A3B8 — muted blue-grey (icons/placeholders) */
+  --surface-700: 203 213 225;  /* #CBD5E1 — slate-300 (soft borders) */
+  --surface-800: 226 232 240;  /* #E2E8F0 — slate-200 (hairlines, inputs) */
+  --surface-850: 233 237 242;  /* #E9EDF2 — elevated panels */
+  --surface-900: 240 243 247;  /* #F0F3F7 — cards (just under canvas) */
+  --surface-950: 244 246 248;  /* #F4F6F8 — the light slate canvas */
+  --foreground: 26 32 44;
+  --background: 244 246 248;
+  --scrollbar-thumb: 203 213 225;
+  --scrollbar-hover: 148 163 184;
   --glass-bg: 255 255 255;
-  --glass-border: 224 222 216;
+  --glass-border: 226 232 240;
   --card-bg: 255 255 255;
-  --card-border: 228 226 220;
-  --muted: 110 108 102;
+  --card-border: 226 232 240;
+  --muted: 100 116 139;
 }
 
 body {
   color: rgb(var(--foreground));
   background: rgb(var(--background));
   font-family: "Inter", system-ui, sans-serif;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 /* Scrollbar */
@@ -98,7 +110,7 @@ body {
 
 /* Selection */
 ::selection {
-  background: rgba(245, 158, 11, 0.3);
+  background: rgba(255, 107, 0, 0.28);
   color: rgb(var(--foreground));
 }
 
@@ -134,25 +146,116 @@ body {
 
 .hover-lift:hover {
   transform: translateY(-2px);
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12), 0 0 20px rgba(245, 158, 11, 0.06);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12), 0 0 20px rgba(255, 107, 0, 0.06);
 }
 
   .text-gradient-brand {
-    background: linear-gradient(120deg, #fbbf24 0%, #f97316 45%, #f43f5e 80%, #a78bfa 105%);
+    background: linear-gradient(120deg, #ffb36b 0%, #ff6b00 55%, #ff5500 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
 
   .btn-gradient {
-    background-image: linear-gradient(120deg, #fbbf24 0%, #f97316 55%, #f43f5e 120%);
+    background-image: linear-gradient(120deg, #ff8a33 0%, #ff6b00 55%, #ff5500 120%);
     transition: filter 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
   }
 
   .btn-gradient:hover {
     filter: brightness(1.08);
     transform: translateY(-1px);
-    box-shadow: 0 8px 24px rgba(249, 115, 22, 0.35);
+    box-shadow: 0 8px 24px rgba(255, 107, 0, 0.35), 0 0 0 1px rgba(255, 138, 51, 0.15);
+  }
+
+  .btn-gradient:active {
+    transform: translateY(0) scale(0.99);
+  }
+
+  /* Theme-aware accent text — AA on light canvas, bright on dark.
+     Semantic chips (badges, pills, links) should use these instead of a
+     fixed 400/600 shade so contrast holds in both themes. */
+  .text-accent-strong {
+    @apply text-brand-800;
+  }
+  .text-warning-strong {
+    @apply text-amber-800;
+  }
+  .text-positive-strong {
+    @apply text-emerald-800;
+  }
+  .text-info-strong {
+    @apply text-cyan-800;
+  }
+  .text-danger-strong {
+    @apply text-red-800;
+  }
+  html:not(.dark) .text-accent-strong {
+    @apply text-brand-800;
+  }
+  html:not(.dark) .text-warning-strong {
+    @apply text-amber-800;
+  }
+  html:not(.dark) .text-positive-strong {
+    @apply text-emerald-800;
+  }
+  html:not(.dark) .text-info-strong {
+    @apply text-cyan-800;
+  }
+  html:not(.dark) .text-danger-strong {
+    @apply text-red-800;
+  }
+  .dark .text-accent-strong {
+    @apply text-brand-300;
+  }
+  .dark .text-warning-strong {
+    @apply text-amber-300;
+  }
+  .dark .text-positive-strong {
+    @apply text-emerald-300;
+  }
+  .dark .text-info-strong {
+    @apply text-cyan-300;
+  }
+  .dark .text-danger-strong {
+    @apply text-red-300;
+  }
+
+  /* Composer surface is white in BOTH themes, so text must be the dark
+     charcoal end of the scale regardless of mode (surface-50 in light,
+     surface-950 in dark). Placeholders stay mid-tone in both themes. */
+  .text-editor {
+    @apply text-surface-950;
+  }
+  html:not(.dark) .text-editor {
+    @apply text-surface-50;
+  }
+  .placeholder-editor::placeholder {
+    @apply text-surface-500;
+  }
+
+  /* Soft radial brand glow behind hero sections */
+  .bg-brand-glow {
+    background-image:
+      radial-gradient(ellipse 60% 50% at 20% 0%, rgba(255, 107, 0, 0.12), transparent),
+      radial-gradient(ellipse 40% 40% at 90% 10%, rgba(255, 138, 51, 0.08), transparent);
+  }
+
+  /* Card with a gradient edge that intensifies on hover */
+  .card-gradient-border {
+    position: relative;
+    background: linear-gradient(var(--card-bg), var(--card-bg)) padding-box,
+      linear-gradient(120deg, rgba(255, 138, 51, 0.35), rgba(255, 85, 0, 0.22), rgba(255, 171, 107, 0.28)) border-box;
+    border: 1px solid transparent;
+    transition: box-shadow 0.3s ease, transform 0.3s ease;
+  }
+
+  .card-gradient-border:hover {
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18), 0 0 24px rgba(255, 107, 0, 0.08);
+    transform: translateY(-2px);
+  }
+
+  .text-glow {
+    text-shadow: 0 0 24px rgba(255, 107, 0, 0.25);
   }
 
   .ring-gradient-border {
@@ -167,7 +270,7 @@ body {
     inset: -1px;
     z-index: -1;
     border-radius: inherit;
-    background: linear-gradient(120deg, rgba(251, 191, 36, 0.5), rgba(244, 63, 94, 0.4), rgba(167, 139, 250, 0.4));
+    background: linear-gradient(120deg, rgba(255, 138, 51, 0.5), rgba(255, 85, 0, 0.35), rgba(255, 171, 107, 0.4));
   }
 
   .safe-area-pb {
@@ -181,6 +284,35 @@ body {
 
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
+  }
+
+  /* ------------------------------------------------------------------
+     Admin & studio type scale — semantic classes replace ad-hoc
+     text-[10px]/text-[11px] sizing so hierarchy stays consistent.
+     ------------------------------------------------------------------ */
+  .type-display {
+    @apply text-2xl font-bold tracking-tight;
+  }
+  .type-h2 {
+    @apply text-base font-semibold;
+  }
+  .type-section {
+    @apply text-sm font-semibold;
+  }
+  .type-body {
+    @apply text-sm font-medium;
+  }
+  .type-label {
+    @apply text-xs font-semibold;
+  }
+  .type-meta {
+    @apply text-[11px] font-medium;
+  }
+  .type-eyebrow {
+    @apply text-[10px] font-semibold uppercase tracking-wider;
+  }
+  .type-caption {
+    @apply text-[10px] font-medium;
   }
 }
 
@@ -197,9 +329,9 @@ body {
 
 /* Focus ring */
 *:focus-visible {
-  outline: 2px solid #f59e0b;
+  outline: 2px solid #ff6b00;
   outline-offset: 2px;
-  outline-color: color-mix(in srgb, #f59e0b 70%, #f43f5e);
+  outline-color: color-mix(in srgb, #ff6b00 85%, #ff5500);
 }
 
 /* Prose content styles */
@@ -208,6 +340,8 @@ body {
 .prose h3 {
   @apply font-bold;
   color: rgb(var(--foreground));
+  font-weight: 800;
+  letter-spacing: -0.02em;
 }
 
 .prose h1 { @apply text-3xl mb-4; }
@@ -217,7 +351,7 @@ body {
 .prose p {
   @apply leading-relaxed mb-4;
   color: rgb(var(--foreground));
-  opacity: 0.75;
+  opacity: 0.88;
 }
 
 .prose a {
@@ -242,7 +376,7 @@ body {
 
 .prose ul, .prose ol {
   @apply mb-4 pl-6;
-  opacity: 0.75;
+  opacity: 0.88;
   color: rgb(var(--foreground));
 }
 
@@ -285,7 +419,7 @@ body {
   line-height: 1.8;
   margin: 0 0 1.25em;
   color: rgb(var(--foreground));
-  opacity: 0.82;
+  opacity: 0.9;
 }
 
 .connectplus-prose a {
@@ -302,7 +436,7 @@ html:not(.dark) .connectplus-prose a { color: #15803d; }
   margin: 0 0 1.25em;
   padding-left: 1.5rem;
   color: rgb(var(--foreground));
-  opacity: 0.85;
+  opacity: 0.92;
 }
 .connectplus-prose ul { list-style: disc; }
 .connectplus-prose ol { list-style: decimal; }
@@ -313,11 +447,11 @@ html:not(.dark) .connectplus-prose a { color: #15803d; }
   margin: 1.5em 0;
   padding: 0.9em 1.25em;
   border-left: 3px solid #16a34a;
-  background: color-mix(in srgb, rgb(var(--surface-800)) 50%, transparent);
+  background: color-mix(in srgb, rgb(var(--surface-800)) 55%, transparent);
   border-radius: 0 0.75rem 0.75rem 0;
   font-style: italic;
   color: rgb(var(--foreground));
-  opacity: 0.9;
+  opacity: 0.95;
 }
 
 .connectplus-prose :is(strong, b) {
@@ -409,11 +543,11 @@ html:not(.dark) .connectplus-prose a { color: #15803d; }
 
 /* Shadow glow utilities */
 .shadow-glow {
-  box-shadow: 0 0 20px rgba(245, 158, 11, 0.1), 0 0 40px rgba(244, 63, 94, 0.05);
+  box-shadow: 0 0 20px rgba(255, 107, 0, 0.12), 0 0 40px rgba(255, 107, 0, 0.05);
 }
 
 .shadow-glow-lg {
-  box-shadow: 0 0 30px rgba(245, 158, 11, 0.14), 0 0 60px rgba(244, 63, 94, 0.08);
+  box-shadow: 0 0 30px rgba(255, 107, 0, 0.16), 0 0 60px rgba(255, 107, 0, 0.07);
 }
 
 /* Floating animations */
@@ -452,6 +586,13 @@ html:not(.dark) .connectplus-prose a { color: #15803d; }
 
 .animate-spin-slow { animation: spin-slow 30s linear infinite; }
 .animate-spin-slow-reverse { animation: spin-slow-reverse 25s linear infinite; }
+
+@keyframes spin-reverse {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-360deg); }
+}
+
+.animate-spin-reverse { animation: spin-reverse 1.1s linear infinite; }
 
 /* Word-by-word entrance animation */
 @keyframes word-in {

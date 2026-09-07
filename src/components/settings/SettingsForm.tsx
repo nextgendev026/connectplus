@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Image from "next/image";
 import {
   Camera,
   Image as ImageIcon,
@@ -306,7 +307,7 @@ export function SettingsForm({ user }: { user: SettingsUser }) {
           <div className="rounded-2xl border border-surface-800 bg-surface-900/40 overflow-hidden">
             <div className="relative h-44 w-full bg-gradient-to-br from-brand-500/25 via-accent-terracotta/15 to-surface-900">
               {coverImage ? (
-                <img src={coverImage} alt="Cover" className="h-full w-full object-cover" />
+                <Image src={coverImage} alt="Cover" fill className="h-full w-full object-cover" />
               ) : null}
               <button
                 onClick={() => coverInput.current?.click()}
@@ -336,7 +337,7 @@ export function SettingsForm({ user }: { user: SettingsUser }) {
                 <div className="relative">
                   <div className="flex h-24 w-24 items-center justify-center rounded-full border-4 border-surface-900 bg-surface-800 overflow-hidden">
                     {avatar ? (
-                      <img src={avatar} alt="Avatar" className="h-full w-full object-cover" />
+                      <Image src={avatar} alt="Avatar" width={96} height={96} className="h-full w-full object-cover" />
                     ) : (
                       <UserRound className="h-10 w-10 text-surface-500" />
                     )}

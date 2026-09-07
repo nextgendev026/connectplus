@@ -35,15 +35,16 @@ export default function NeuralInsights({ onRefresh }: NeuralInsightsProps) {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount: the sync setState is only an idempotent loading flag
     fetchInsights();
     const interval = setInterval(fetchInsights, 60000);
     return () => clearInterval(interval);
   }, []);
 
   const severityConfig = {
-    info: { icon: Info, color: "text-cyan-400", bg: "bg-cyan-400/10", border: "border-cyan-400/20" },
-    warning: { icon: AlertTriangle, color: "text-amber-400", bg: "bg-amber-400/10", border: "border-amber-400/20" },
-    critical: { icon: AlertOctagon, color: "text-red-400", bg: "bg-red-400/10", border: "border-red-400/20" },
+    info: { icon: Info, color: "text-info-strong", bg: "bg-cyan-500/15", border: "border-cyan-500/25" },
+    warning: { icon: AlertTriangle, color: "text-warning-strong", bg: "bg-amber-500/15", border: "border-amber-500/25" },
+    critical: { icon: AlertOctagon, color: "text-danger-strong", bg: "bg-red-500/15", border: "border-red-500/25" },
   };
 
   return (
@@ -71,9 +72,9 @@ export default function NeuralInsights({ onRefresh }: NeuralInsightsProps) {
               <Icon className={cn("h-4 w-4 mt-0.5 shrink-0", config.color)} />
               <div className="min-w-0">
                 <p className="text-xs font-semibold text-surface-50">{insight.title}</p>
-                <p className="mt-0.5 text-[11px] leading-relaxed text-surface-400">{insight.summary}</p>
+                <p className="mt-0.5 type-meta leading-relaxed text-surface-400">{insight.summary}</p>
                 {insight.action && (
-                  <p className="mt-1 text-[10px] text-brand-400">→ {insight.action}</p>
+                  <p className="mt-1 type-meta text-accent-strong">→ {insight.action}</p>
                 )}
               </div>
             </div>

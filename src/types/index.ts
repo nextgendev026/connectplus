@@ -19,6 +19,8 @@ export interface PostWithAuthor {
   status: string;
   featured: boolean;
   moderationStatus: string;
+  source?: string | null;
+  sourceUrl?: string | null;
   publishedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;

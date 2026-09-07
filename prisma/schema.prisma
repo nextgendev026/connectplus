@@ -224,6 +224,26 @@ model RssArticle {
   @@index([publishedAt])
 }
 
+/// Key-value platform settings powering the Admin Settings & Integrations
+/// console (site identity, SEO, analytics integrations, API keys, feature
+/// flags). Values are strings; booleans use "true"/"false".
+model PlatformSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String   @default("")
+  group     String   @default("general") // general | seo | integrations | plugins | api
+  label     String?
+  hint      String?
+  type      String   @default("text")   // text | textarea | url | boolean | number | secret
+  isPublic  Boolean  @default(false)    // exposed read-only via /api/settings/public
+  isSecret  Boolean  @default(false)    // masked in the admin UI until revealed
+  isEnabled Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@index([group])
+}
+
 model NeuralMemory {
   id           String    @id @default(cuid())
   source       String

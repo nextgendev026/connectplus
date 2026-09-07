@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { hash } from "bcryptjs";
+import { seedNeuralMind } from "./seed-neural.ts";
 
 const prisma = new PrismaClient();
 
@@ -31,7 +32,7 @@ const USERS = [
   { name: "Brian Kiprop", username: "brian_k", email: "brian@connectplus.io", bio: "Sports journalist based in Eldoret. Athletics, football, rugby, and everything in between. Former 800m runner.", role: "CREATOR", node: "Eldoret", avatar: "https://i.pravatar.cc/300?img=7" },
   { name: "Zainab Mohamed", username: "zainab_m", email: "zainab@connectplus.io", bio: "Food blogger exploring the rich culinary traditions of the Swahili coast. Cookbook author. Spice collector.", role: "CREATOR", node: "Mombasa", avatar: "https://i.pravatar.cc/300?img=9" },
   { name: "Daniel Mugisha", username: "daniel_m", email: "daniel@connectplus.io", bio: "Music producer and cultural critic. Documenting the bongo-flava and gengetone movements from Kigali to Nairobi.", role: "CREATOR", node: "Kigali", avatar: "https://i.pravatar.cc/300?img=11" },
-  { name: "Admin", username: "admin", email: "connect@plus.com", bio: "Platform administrator.", role: "ADMIN", node: "Nairobi", avatar: "https://i.pravatar.cc/300?img=12" },
+  { name: "Admin", username: "admin", email: "connect@plus.com", bio: "Platform super administrator.", role: "SUPER_ADMIN", node: "Nairobi", avatar: "https://i.pravatar.cc/300?img=12" },
   { name: "Sarah Nyambura", username: "sarah_n", email: "sarah@connectplus.io", bio: "Travel photographer and writer. Every hill and valley has a story to tell. National Geographic contributor.", role: "USER", node: "Nakuru", avatar: "https://i.pravatar.cc/300?img=16" },
   { name: "Ibrahim Osman", username: "ibrahim_o", email: "ibrahim@connectplus.io", bio: "Marine biologist turned writer. The Indian Ocean is my muse. Researcher at Kenya Marine and Fisheries Research Institute.", role: "CREATOR", node: "Mombasa", avatar: "https://i.pravatar.cc/300?img=14" },
   { name: "Grace Akoth", username: "grace_a", email: "grace@connectplus.io", bio: "Lifestyle and wellness advocate. Yoga, nutrition, and mental health in East Africa. Certified nutritionist.", role: "USER", node: "Kisumu", avatar: "https://i.pravatar.cc/300?img=20" },
@@ -577,6 +578,10 @@ async function main() {
     await prisma.rssFeed.create({ data: feed });
   }
   console.log(`   ✓ ${rssFeeds.length} RSS feeds created`);
+
+  console.log("\n🧠 Seeding the Neural Mind (hive knowledge base)...");
+  const seededMemories = await seedNeuralMind(prisma);
+  console.log(`   ✓ ${seededMemories} knowledge memories seeded (topics, entities, intent maps, lessons)`);
 
   console.log("\n✅ Seed completed successfully!");
   console.log(`   ${USERS.length} users (with avatars)`);

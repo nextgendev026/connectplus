@@ -175,7 +175,7 @@ export default function AnalyticsPage() {
           change: `+${stats.postsThisWeek} posts this week`,
           up: true,
           icon: Eye,
-          color: "text-brand-500",
+          color: "text-accent-strong",
           bg: "bg-brand-500/10",
         },
         {
@@ -184,7 +184,7 @@ export default function AnalyticsPage() {
           change: `+${stats.usersThisWeek} this week`,
           up: true,
           icon: Users,
-          color: "text-cyan-400",
+          color: "text-info-strong",
           bg: "bg-cyan-400/10",
         },
         {
@@ -202,26 +202,26 @@ export default function AnalyticsPage() {
           change: "Needs attention",
           up: false,
           icon: AlertTriangle,
-          color: "text-amber-400",
+          color: "text-warning-strong",
           bg: "bg-amber-400/10",
         },
       ]
     : [];
 
   return (
-    <div className="min-h-screen bg-surface-950 p-6 lg:p-8">
+    <div className="min-h-screen">
       <div className="mx-auto max-w-[1600px] space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-cyan-400/10 border border-cyan-400/20">
-              <BarChart3 className="h-6 w-6 text-cyan-400" />
+              <BarChart3 className="h-6 w-6 text-info-strong" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-surface-50">
+              <h1 className="type-display text-surface-50">
                 Analytics &amp; Trend Radar
               </h1>
-              <p className="text-sm text-surface-400">
+              <p className="text-sm font-medium text-surface-300">
                 Platform intelligence, growth metrics &amp; predictive models
               </p>
             </div>
@@ -245,16 +245,16 @@ export default function AnalyticsPage() {
         {/* Loading */}
         {loading && (
           <div className="flex items-center justify-center py-20">
-            <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-            <span className="ml-3 text-sm text-surface-400">Loading analytics...</span>
+            <Loader2 className="h-8 w-8 animate-spin text-accent-strong" />
+            <span className="ml-3 text-sm font-medium text-surface-300">Loading analytics...</span>
           </div>
         )}
 
         {/* Error */}
         {error && !loading && (
           <div className="flex flex-col items-center justify-center rounded-xl border border-red-500/20 bg-red-500/5 py-12">
-            <AlertTriangle className="mb-3 h-8 w-8 text-red-400" />
-            <p className="text-sm text-red-400">{error}</p>
+            <AlertTriangle className="mb-3 h-8 w-8 text-danger-strong" />
+            <p className="text-sm font-medium text-danger-strong">{error}</p>
             <button
               onClick={fetchStats}
               className="mt-4 rounded-lg bg-surface-800 border border-surface-700 px-4 py-2 text-xs text-surface-300 transition-colors hover:text-surface-50"
@@ -275,7 +275,7 @@ export default function AnalyticsPage() {
                 >
                   <div className="flex items-start justify-between">
                     <div>
-                      <p className="text-sm text-surface-400">{stat.label}</p>
+                      <p className="text-sm font-medium text-surface-300">{stat.label}</p>
                       <p className="mt-1 text-3xl font-bold text-surface-50">
                         {stat.value}
                       </p>
@@ -291,11 +291,11 @@ export default function AnalyticsPage() {
                   </div>
                   <div className="mt-3 flex items-center gap-1 text-xs">
                     {stat.up ? (
-                      <ArrowUpRight className="h-3.5 w-3.5 text-brand-500" />
+                      <ArrowUpRight className="h-3.5 w-3.5 text-accent-strong" />
                     ) : (
-                      <ArrowDownRight className="h-3.5 w-3.5 text-brand-500" />
+                      <ArrowDownRight className="h-3.5 w-3.5 text-accent-strong" />
                     )}
-                    <span className="text-brand-500 font-medium">
+                    <span className="text-accent-strong font-medium">
                       {stat.change}
                     </span>
                   </div>
@@ -309,8 +309,8 @@ export default function AnalyticsPage() {
               <div className="rounded-xl bg-surface-900/50 border border-surface-800 p-6">
                 <div className="mb-5 flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Eye className="h-5 w-5 text-brand-500" />
-                    <h2 className="text-base font-semibold text-surface-50">
+                    <Eye className="h-5 w-5 text-accent-strong" />
+                    <h2 className="type-h2 text-surface-50">
                       Traffic Overview
                     </h2>
                   </div>
@@ -368,8 +368,8 @@ export default function AnalyticsPage() {
               <div className="rounded-xl bg-surface-900/50 border border-surface-800 p-6">
                 <div className="mb-5 flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Users className="h-5 w-5 text-cyan-400" />
-                    <h2 className="text-base font-semibold text-surface-50">
+                    <Users className="h-5 w-5 text-info-strong" />
+                    <h2 className="type-h2 text-surface-50">
                       User Growth
                     </h2>
                   </div>
@@ -416,7 +416,7 @@ export default function AnalyticsPage() {
               <div className="rounded-xl bg-surface-900/50 border border-surface-800 p-6">
                 <div className="mb-5 flex items-center gap-2">
                   <Globe className="h-5 w-5 text-purple-400" />
-                  <h2 className="text-base font-semibold text-surface-50">
+                  <h2 className="type-h2 text-surface-50">
                     Regional Breakdown
                   </h2>
                 </div>
@@ -484,8 +484,8 @@ export default function AnalyticsPage() {
               {/* Top Performing Content */}
               <div className="lg:col-span-2 rounded-xl bg-surface-900/50 border border-surface-800 p-6">
                 <div className="mb-5 flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-amber-400" />
-                  <h2 className="text-base font-semibold text-surface-50">
+                  <FileText className="h-5 w-5 text-warning-strong" />
+                  <h2 className="type-h2 text-surface-50">
                     Platform Content Summary
                   </h2>
                 </div>
@@ -493,7 +493,7 @@ export default function AnalyticsPage() {
                   <div className="rounded-lg border border-surface-700 bg-surface-800/30 p-4">
                     <p className="text-xs text-surface-500">Total Posts</p>
                     <p className="mt-1 text-2xl font-bold text-surface-50">{formatNumber(stats.totalPosts)}</p>
-                    <p className="mt-1 text-xs text-brand-500">+{stats.postsThisWeek} this week</p>
+                    <p className="mt-1 text-xs text-accent-strong">+{stats.postsThisWeek} this week</p>
                   </div>
                   <div className="rounded-lg border border-surface-700 bg-surface-800/30 p-4">
                     <p className="text-xs text-surface-500">Total Comments</p>
@@ -540,12 +540,12 @@ export default function AnalyticsPage() {
             <div className="rounded-xl bg-surface-900/50 border border-surface-800 p-6">
               <div className="mb-5 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <BrainCircuit className="h-5 w-5 text-brand-500" />
-                  <h2 className="text-base font-semibold text-surface-50">
+                  <BrainCircuit className="h-5 w-5 text-accent-strong" />
+                  <h2 className="type-h2 text-surface-50">
                     Predictive Trend Models
                   </h2>
                 </div>
-                <span className="rounded-full bg-brand-500/10 border border-brand-500/20 px-3 py-1 text-xs font-medium text-brand-500">
+                <span className="rounded-full bg-brand-500/10 border border-brand-500/20 px-3 py-1 text-xs font-medium text-accent-strong">
                   <Zap className="mr-1 inline-block h-3 w-3" />
                   Neural Engine Powered
                 </span>
@@ -564,16 +564,16 @@ export default function AnalyticsPage() {
                       <span className="text-xs text-surface-400">{model.period}</span>
                       <div className="flex items-center gap-1">
                         {model.trend === "up" && (
-                          <ArrowUpRight className="h-3 w-3 text-brand-500" />
+                          <ArrowUpRight className="h-3 w-3 text-accent-strong" />
                         )}
                         {model.trend === "down" && (
-                          <ArrowDownRight className="h-3 w-3 text-brand-500" />
+                          <ArrowDownRight className="h-3 w-3 text-accent-strong" />
                         )}
                         <span
                           className={cn(
                             "text-xs font-medium",
                             model.trend === "up" || model.trend === "down"
-                              ? "text-brand-500"
+                              ? "text-accent-strong"
                               : "text-surface-400"
                           )}
                         >
@@ -583,8 +583,8 @@ export default function AnalyticsPage() {
                     </div>
                     <div className="mt-3">
                       <div className="flex items-center justify-between mb-1">
-                        <span className="text-[10px] text-surface-500">Confidence</span>
-                        <span className="text-[10px] font-bold text-brand-500 tabular-nums">
+                        <span className="type-caption text-surface-500">Confidence</span>
+                        <span className="type-caption font-bold text-accent-strong tabular-nums">
                           {model.confidence}%
                         </span>
                       </div>

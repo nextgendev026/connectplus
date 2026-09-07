@@ -167,24 +167,24 @@ export default function ModerationQueue() {
   ];
 
   const statusConfig: Record<string, { color: string; bg: string; border: string }> = {
-    pending: { color: "text-amber-400", bg: "bg-amber-400/10", border: "border-amber-400/20" },
-    flagged: { color: "text-red-400", bg: "bg-red-400/10", border: "border-red-400/20" },
+    pending: { color: "text-warning-strong", bg: "bg-amber-500/15", border: "border-amber-500/25" },
+    flagged: { color: "text-danger-strong", bg: "bg-red-500/15", border: "border-red-500/25" },
     rejected: { color: "text-red-500", bg: "bg-red-500/10", border: "border-red-500/20" },
-    approved: { color: "text-brand-500", bg: "bg-brand-500/10", border: "border-brand-500/20" },
+    approved: { color: "text-accent-strong", bg: "bg-brand-500/10", border: "border-brand-500/20" },
   };
 
   return (
-    <div className="min-h-screen bg-surface-950 p-6 lg:p-8">
+    <div className="min-h-screen">
       <div className="mx-auto max-w-[1600px] space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-amber-400/10 border border-amber-400/20">
-              <Shield className="h-6 w-6 text-amber-400" />
+              <Shield className="h-6 w-6 text-warning-strong" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-surface-50">Moderation Queue</h1>
-              <p className="text-sm text-surface-400">
+              <h1 className="type-display text-surface-50">Moderation Queue</h1>
+              <p className="text-sm font-medium text-surface-300">
                 AI-assisted content review & community safety
               </p>
             </div>
@@ -197,7 +197,7 @@ export default function ModerationQueue() {
             >
               <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
             </button>
-            <span className="rounded-full bg-amber-400/10 border border-amber-400/20 px-3 py-1.5 text-xs font-medium text-amber-400">
+            <span className="rounded-full bg-amber-400/10 border border-amber-400/20 px-3 py-1.5 text-xs font-medium text-warning-strong">
               <BrainCircuit className="mr-1 inline-block h-3.5 w-3.5" />
               AI Moderation Active
             </span>
@@ -207,16 +207,16 @@ export default function ModerationQueue() {
         {/* Loading */}
         {loading && (
           <div className="flex items-center justify-center py-20">
-            <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-            <span className="ml-3 text-sm text-surface-400">Loading moderation queue...</span>
+            <Loader2 className="h-8 w-8 animate-spin text-accent-strong" />
+            <span className="ml-3 text-sm font-medium text-surface-300">Loading moderation queue...</span>
           </div>
         )}
 
         {/* Error */}
         {error && !loading && (
           <div className="flex flex-col items-center justify-center rounded-xl border border-red-500/20 bg-red-500/5 py-12">
-            <AlertTriangle className="mb-3 h-8 w-8 text-red-400" />
-            <p className="text-sm text-red-400">{error}</p>
+            <AlertTriangle className="mb-3 h-8 w-8 text-danger-strong" />
+            <p className="text-sm text-danger-strong">{error}</p>
             <button
               onClick={fetchItems}
               className="mt-4 rounded-lg bg-surface-800 border border-surface-700 px-4 py-2 text-xs text-surface-300 transition-colors hover:text-surface-50"
@@ -245,9 +245,9 @@ export default function ModerationQueue() {
                     {tab.label}
                     <span
                       className={cn(
-                        "ml-1.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full px-1 text-[10px] font-bold",
+                        "ml-1.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full px-1 type-caption font-bold",
                         activeFilter === tab.value
-                          ? "bg-brand-500/20 text-brand-500"
+                          ? "bg-brand-500/20 text-accent-strong"
                           : "bg-surface-800 text-surface-500"
                       )}
                     >
@@ -272,24 +272,24 @@ export default function ModerationQueue() {
             {/* Bulk Actions */}
             {selectedItems.size > 0 && (
               <div className="flex items-center gap-3 rounded-lg bg-brand-500/5 border border-brand-500/20 px-4 py-2.5">
-                <span className="text-xs text-brand-500 font-medium">
+                <span className="text-xs text-accent-strong font-medium">
                   {selectedItems.size} selected
                 </span>
                 <button
                   onClick={() => handleBulkAction("approve")}
-                  className="rounded-md bg-brand-500/10 px-3 py-1 text-xs font-medium text-brand-500 transition-colors hover:bg-brand-500/20"
+                  className="rounded-md bg-brand-500/10 px-3 py-1 text-xs font-medium text-accent-strong transition-colors hover:bg-brand-500/20"
                 >
                   Approve All
                 </button>
                 <button
                   onClick={() => handleBulkAction("reject")}
-                  className="rounded-md bg-red-500/10 px-3 py-1 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/20"
+                  className="rounded-md bg-red-500/10 px-3 py-1 text-xs font-medium text-danger-strong transition-colors hover:bg-red-500/20"
                 >
                   Reject All
                 </button>
                 <button
                   onClick={() => setSelectedItems(new Set())}
-                  className="ml-auto text-xs text-surface-500 hover:text-surface-300"
+                  className="ml-auto text-xs font-medium text-surface-400 hover:text-surface-200"
                 >
                   Clear selection
                 </button>
@@ -300,7 +300,8 @@ export default function ModerationQueue() {
               {/* Moderation List */}
               <div className="space-y-3">
                 {/* Table Header */}
-                <div className="grid grid-cols-[32px_1fr_140px_100px_80px_100px] gap-4 rounded-lg bg-surface-900 border border-surface-800 px-4 py-2.5 text-xs font-medium text-surface-500">
+                <div className="overflow-x-auto rounded-lg">
+                <div className="grid min-w-[880px] grid-cols-[32px_1fr_140px_100px_80px_100px] gap-4 rounded-lg bg-surface-900 border border-surface-800 px-4 py-2.5 text-xs font-medium text-surface-400">
                   <div>
                     <input
                       type="checkbox"
@@ -315,7 +316,9 @@ export default function ModerationQueue() {
                   <div>Time</div>
                   <div>Actions</div>
                 </div>
+                </div>
 
+                <div className="max-h-[540px] space-y-3 overflow-y-auto overscroll-contain pr-1 scroll-smooth">
                 {filteredItems.map((item) => {
                   const st = statusConfig[item.status] ?? statusConfig.pending!;
                   return (
@@ -323,7 +326,7 @@ export default function ModerationQueue() {
                       key={item.id}
                       onClick={() => setSelectedDetail(item)}
                       className={cn(
-                        "group grid grid-cols-[32px_1fr_140px_100px_80px_100px] gap-4 rounded-lg border px-4 py-3 transition-all duration-200 cursor-pointer",
+                        "group grid min-w-[880px] grid-cols-[32px_1fr_140px_100px_80px_100px] gap-4 rounded-lg border px-4 py-3 transition-all duration-200 cursor-pointer",
                         selectedDetail?.id === item.id
                           ? "border-brand-500/30 bg-surface-900/80"
                           : "border-surface-800 bg-surface-900/50 hover:border-surface-700 hover:bg-surface-900/70",
@@ -345,25 +348,25 @@ export default function ModerationQueue() {
                             {item.title}
                           </p>
                           {item.status === "approved" && (
-                            <CheckCircle className="h-3.5 w-3.5 shrink-0 text-brand-500" />
+                            <CheckCircle className="h-3.5 w-3.5 shrink-0 text-accent-strong" />
                           )}
                           {item.status === "rejected" && (
-                            <XCircle className="h-3.5 w-3.5 shrink-0 text-red-400" />
+                            <XCircle className="h-3.5 w-3.5 shrink-0 text-danger-strong" />
                           )}
                         </div>
-                        <p className="mt-0.5 truncate text-[10px] text-surface-500">
+                        <p className="mt-0.5 truncate type-caption text-surface-500">
                           {item.content?.slice(0, 80) ?? ""}
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
-                        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-surface-700 text-[10px] font-bold text-surface-300">
+                        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-surface-700 type-caption font-bold text-surface-200">
                           {item.author.name.charAt(0)}
                         </div>
                         <div className="min-w-0">
-                          <p className="truncate text-xs text-surface-300">
+                          <p className="truncate text-xs font-medium text-surface-200">
                             {item.author.name}
                           </p>
-                          <p className="text-[10px] text-surface-600">
+                          <p className="type-caption text-surface-600">
                             @{item.author.username}
                           </p>
                         </div>
@@ -371,7 +374,7 @@ export default function ModerationQueue() {
                       <div>
                         <span
                           className={cn(
-                            "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium border",
+                            "inline-flex items-center rounded-full px-2 py-0.5 type-caption border",
                             st.bg,
                             st.color,
                             st.border
@@ -381,7 +384,7 @@ export default function ModerationQueue() {
                         </span>
                       </div>
                       <div>
-                        <p className="text-xs text-surface-400">{timeAgo(item.createdAt)}</p>
+                        <p className="text-xs font-medium text-surface-300">{timeAgo(item.createdAt)}</p>
                       </div>
                       <div className="flex items-center gap-1">
                         {item.status !== "approved" && item.status !== "rejected" && (
@@ -392,7 +395,7 @@ export default function ModerationQueue() {
                                 handleAction(item.id, "approve");
                               }}
                               disabled={actionLoading === item.id}
-                              className="rounded-md p-1.5 text-surface-500 transition-colors hover:bg-brand-500/10 hover:text-brand-500 disabled:opacity-50"
+                              className="rounded-md p-1.5 text-surface-500 transition-colors hover:bg-brand-500/10 hover:text-accent-strong disabled:opacity-50"
                               title="Approve"
                             >
                               <CheckCircle className="h-3.5 w-3.5" />
@@ -403,7 +406,7 @@ export default function ModerationQueue() {
                                 handleAction(item.id, "reject");
                               }}
                               disabled={actionLoading === item.id}
-                              className="rounded-md p-1.5 text-surface-500 transition-colors hover:bg-red-500/10 hover:text-red-400 disabled:opacity-50"
+                              className="rounded-md p-1.5 text-surface-500 transition-colors hover:bg-red-500/10 hover:text-danger-strong disabled:opacity-50"
                               title="Reject"
                             >
                               <XCircle className="h-3.5 w-3.5" />
@@ -418,9 +421,10 @@ export default function ModerationQueue() {
                 {filteredItems.length === 0 && (
                   <div className="flex flex-col items-center justify-center rounded-lg border border-surface-800 bg-surface-900/50 py-16">
                     <Filter className="mb-3 h-8 w-8 text-surface-600" />
-                    <p className="text-sm text-surface-400">No items match your filters</p>
+                    <p className="text-sm font-medium text-surface-300">No items match your filters</p>
                   </div>
                 )}
+                </div>
               </div>
 
               {/* Detail Sidebar */}
@@ -435,7 +439,7 @@ export default function ModerationQueue() {
                         </span>
                         <span
                           className={cn(
-                            "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium border",
+                            "inline-flex items-center rounded-full px-2 py-0.5 type-caption border",
                             (statusConfig[selectedDetail.status] ?? statusConfig.pending!).bg,
                             (statusConfig[selectedDetail.status] ?? statusConfig.pending!).color,
                             (statusConfig[selectedDetail.status] ?? statusConfig.pending!).border
@@ -471,7 +475,7 @@ export default function ModerationQueue() {
                           <button
                             onClick={() => handleAction(selectedDetail.id, "approve")}
                             disabled={actionLoading === selectedDetail.id}
-                            className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand-500/10 border border-brand-500/20 px-4 py-2 text-xs font-medium text-brand-500 transition-colors hover:bg-brand-500/20 disabled:opacity-50"
+                            className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand-500/10 border border-brand-500/20 px-4 py-2 text-xs font-medium text-accent-strong transition-colors hover:bg-brand-500/20 disabled:opacity-50"
                           >
                             <CheckCircle className="h-3.5 w-3.5" />
                             Approve Content
@@ -479,7 +483,7 @@ export default function ModerationQueue() {
                           <button
                             onClick={() => handleAction(selectedDetail.id, "flag")}
                             disabled={actionLoading === selectedDetail.id}
-                            className="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-400/10 border border-amber-400/20 px-4 py-2 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-400/20 disabled:opacity-50"
+                            className="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-400/10 border border-amber-400/20 px-4 py-2 text-xs font-medium text-warning-strong transition-colors hover:bg-amber-400/20 disabled:opacity-50"
                           >
                             <Flag className="h-3.5 w-3.5" />
                             Flag for Review
@@ -487,7 +491,7 @@ export default function ModerationQueue() {
                           <button
                             onClick={() => handleAction(selectedDetail.id, "reject")}
                             disabled={actionLoading === selectedDetail.id}
-                            className="flex w-full items-center justify-center gap-2 rounded-lg bg-red-500/10 border border-red-500/20 px-4 py-2 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/20 disabled:opacity-50"
+                            className="flex w-full items-center justify-center gap-2 rounded-lg bg-red-500/10 border border-red-500/20 px-4 py-2 text-xs font-medium text-danger-strong transition-colors hover:bg-red-500/20 disabled:opacity-50"
                           >
                             <XCircle className="h-3.5 w-3.5" />
                             Reject Content
@@ -499,7 +503,7 @@ export default function ModerationQueue() {
                     {selectedDetail.status === "approved" ||
                     selectedDetail.status === "rejected" ? (
                       <div className="rounded-xl bg-surface-900/50 border border-surface-800 p-5 text-center">
-                        <CheckCircle className="mx-auto mb-2 h-8 w-8 text-brand-500" />
+                        <CheckCircle className="mx-auto mb-2 h-8 w-8 text-accent-strong" />
                         <p className="text-sm font-medium text-surface-50">
                           Already Reviewed
                         </p>
@@ -512,7 +516,7 @@ export default function ModerationQueue() {
                 ) : (
                   <div className="rounded-xl bg-surface-900/50 border border-surface-800 p-8 text-center">
                     <Eye className="mx-auto mb-3 h-8 w-8 text-surface-600" />
-                    <p className="text-sm text-surface-400">
+                    <p className="text-sm font-medium text-surface-400">
                       Select an item to view details
                     </p>
                     <p className="text-xs text-surface-600 mt-1">

@@ -3,15 +3,18 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Send, Link2, Share2, Copy, Check } from "lucide-react";
+import { MessageCircle, Link2, Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ShareMenu } from "./ShareMenu";
 
 interface ArticleActionsProps {
   url: string;
   title: string;
+  description?: string;
+  image?: string | null;
 }
 
-export function ArticleActions({ url, title }: ArticleActionsProps) {
+export function ArticleActions({ url, title, description, image }: ArticleActionsProps) {
   const { status } = useSession();
   const router = useRouter();
   const [copied, setCopied] = useState(false);
@@ -49,18 +52,6 @@ export function ArticleActions({ url, title }: ArticleActionsProps) {
     return true;
   };
 
-  const handleShare = async () => {
-    if (typeof navigator !== "undefined" && navigator.share) {
-      try {
-        await navigator.share({ title, url: absoluteUrl });
-        return;
-      } catch {
-        // fall through to copy
-      }
-    }
-    copy();
-  };
-
   const openMessenger = () => {
     if (!requireAuth()) return;
     const text = encodeURIComponent(`${title}\n${absoluteUrl}`);
@@ -79,7 +70,7 @@ export function ArticleActions({ url, title }: ArticleActionsProps) {
         aria-label="Share via message"
         title="Share via message"
       >
-        <Send className="h-4 w-4" />
+        <MessageCircle className="h-4 w-4" />
       </button>
       <button
         onClick={copy}
@@ -89,14 +80,13 @@ export function ArticleActions({ url, title }: ArticleActionsProps) {
       >
         {copied ? <Check className="h-4 w-4 text-brand-400" /> : <Link2 className="h-4 w-4" />}
       </button>
-      <button
-        onClick={handleShare}
-        className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-800 text-surface-400 hover:bg-surface-700 hover:text-surface-50 transition-colors"
-        aria-label="Share"
-        title="Share"
-      >
-        <Share2 className="h-4 w-4" />
-      </button>
+      <ShareMenu
+        url={url}
+        title={title}
+        description={description}
+        image={image}
+        align="right"
+      />
       <button
         onClick={copy}
         className={cn(

@@ -11,6 +11,7 @@ export default function ThemeProvider({
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [mounted, setMounted] = useState(false);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- hydration-safe theme bootstrap: one-time sync setState on mount, then static */
   useEffect(() => {
     setMounted(true);
     const stored = localStorage.getItem("connectplus-theme") as
@@ -21,6 +22,7 @@ export default function ThemeProvider({
     setTheme(initial);
     document.documentElement.classList.toggle("dark", initial === "dark");
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const toggleTheme = useCallback(() => {
     setTheme((prev) => {

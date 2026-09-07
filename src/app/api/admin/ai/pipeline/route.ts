@@ -11,7 +11,7 @@ function isAdmin(role?: string) {
  * Superadmin pipeline overview (Phase 0-4). Aggregates the state of every AI
  * pipeline: semantic index, content intelligence, learning loop, and generation.
  */
-export async function GET(_request: NextRequest) {
+export async function GET() {
   try {
     const session = await auth();
     if (!session?.user) {

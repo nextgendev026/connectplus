@@ -99,6 +99,19 @@ async function resolveImage(item: {
 }
 
 export async function pollFeeds(feedId?: string): Promise<PollSummary> {
+  // Feature flag: admins can pause ingestion from Settings & Integrations.
+  if (feedId == null) {
+    try {
+      const { getSettings } = await import("@/lib/settings");
+      const settings = await getSettings(false);
+      if (settings.enableRssIngestion === "false") {
+        log.info("rss ingestion disabled via settings; skipping poll cycle");
+        return { feedsPolled: 0, newArticles: 0, errors: 0, details: [] };
+      }
+    } catch {
+      // default to polling when settings are unavailable
+    }
+  }
   const defaultAuthor = await prisma.user.findFirst({ select: { id: true } });
   const feedWhere: { isActive: boolean; id?: string } = { isActive: true };
   if (feedId) {
@@ -130,11 +143,18 @@ export async function pollFeeds(feedId?: string): Promise<PollSummary> {
       }
     }
 
+    // Stagger feed fetches ~200ms apart so a poll cycle never spikes outbound
+    // egress against all sources at once.
+    if (feeds.length > 1) {
+      await new Promise((r) => setTimeout(r, 200));
+    }
+
     try {
       const parsed = await parser.parseURL(feed.url);
       let feedNewArticles = 0;
 
-      const items = parsed.items || [];
+      // Cap per-feed imports so one busy source can't flood Postgres in a run.
+      const items = (parsed.items || []).slice(0, 25);
 
       for (const item of items) {
         const articleUrl = item.link || item.guid;

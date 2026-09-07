@@ -22,11 +22,10 @@ const MASKABLE_MARGIN = 0.08;
 
 mkdirSync(OUT, { recursive: true });
 
-async function renderEmblem(size, { maskable = false, pad = false } = {}) {
+async function renderEmblem(size, { maskable = false } = {}) {
   const left = EMBLEM_LEFT;
   const top = EMBLEM_TOP;
   const size0 = EMBLEM_SIZE;
-  const margin = maskable ? Math.round(size * MASKABLE_MARGIN) : 0;
   // To keep the emblem radius constant relative to the plate, expand the crop
   // by the same fraction for maskable so the roundel stays inside safe zone.
   const cropSize = Math.round(size0 * (1 + (maskable ? MASKABLE_MARGIN * 2 : 0)));
@@ -34,16 +33,6 @@ async function renderEmblem(size, { maskable = false, pad = false } = {}) {
   const cy0 = top + size0 / 2;
   const cropLeft = Math.round(cx0 - cropSize / 2);
   const cropTop = Math.round(cy0 - cropSize / 2);
-  const canvas = maskable ? cropSize : size;
-
-  let bg;
-  if (maskable) {
-    const solid = await sharp(SRC, { density: 300 }).resize(cropSize, cropSize).toBuffer();
-    // Re-extract the same emblem region from a resized source for a full-bleed plate.
-    bg = solid;
-  } else {
-    bg = null;
-  }
 
   let chip = sharp(SRC, { density: 300 });
   chip = chip.extract({

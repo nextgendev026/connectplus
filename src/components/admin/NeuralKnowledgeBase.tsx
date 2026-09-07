@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Search, Trash2, Database, Globe, Cpu } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 interface Memory {
   id: string;
@@ -25,7 +24,7 @@ export default function NeuralKnowledgeBase() {
   const [page, setPage] = useState(0);
   const limit = 10;
 
-  const fetchMemories = async () => {
+  const fetchMemories = useCallback(async () => {
     try {
       setLoading(true);
       const params = new URLSearchParams({ limit: String(limit), offset: String(page * limit) });
@@ -44,9 +43,10 @@ export default function NeuralKnowledgeBase() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, sourceFilter, categoryFilter, search, limit]);
 
-  useEffect(() => { fetchMemories(); }, [page, sourceFilter, categoryFilter]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount/page-change: the sync setState is only an idempotent loading flag
+  useEffect(() => { fetchMemories(); }, [fetchMemories]);
 
   const handleSearch = () => { setPage(0); fetchMemories(); };
 
@@ -66,7 +66,7 @@ export default function NeuralKnowledgeBase() {
       <div className="flex items-center gap-2">
         <Database className="h-4 w-4 text-brand-500" />
         <h3 className="text-sm font-semibold text-surface-50">Knowledge Base</h3>
-        <span className="ml-auto rounded-full bg-surface-800 px-2 py-0.5 text-[10px] text-surface-400">{total} entries</span>
+        <span className="ml-auto rounded-full bg-surface-800 px-2 py-0.5 type-caption text-surface-400">{total} entries</span>
       </div>
 
       <div className="flex gap-2">
@@ -115,12 +115,12 @@ export default function NeuralKnowledgeBase() {
                   <span className="rounded bg-surface-700 px-1.5 py-0.5 text-[9px] font-medium text-surface-300">{m.category}</span>
                   <span className="text-[9px] text-surface-500">confidence: {(m.confidence * 100).toFixed(0)}%</span>
                 </div>
-                <p className="mt-1 text-[11px] text-surface-400 line-clamp-2">{m.content}</p>
+                <p className="mt-1 type-meta text-surface-400 line-clamp-2">{m.content}</p>
                 <p className="mt-0.5 text-[9px] text-surface-600 truncate">{m.tags}</p>
               </div>
               <button
                 onClick={() => handleDelete(m.id)}
-                className="shrink-0 rounded p-1 text-surface-600 opacity-0 transition-all hover:bg-red-500/10 hover:text-red-400 group-hover:opacity-100"
+                className="shrink-0 rounded p-1 text-surface-500 opacity-0 transition-all hover:bg-red-500/15 hover:text-red-600 group-hover:opacity-100"
               >
                 <Trash2 className="h-3 w-3" />
               </button>
@@ -131,9 +131,9 @@ export default function NeuralKnowledgeBase() {
 
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
-          <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="text-[11px] text-surface-400 hover:text-surface-50 disabled:opacity-30">← Prev</button>
-          <span className="text-[10px] text-surface-500">Page {page + 1} of {totalPages}</span>
-          <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="text-[11px] text-surface-400 hover:text-surface-50 disabled:opacity-30">Next →</button>
+          <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="type-meta text-surface-400 hover:text-surface-50 disabled:opacity-30">← Prev</button>
+          <span className="type-caption text-surface-500">Page {page + 1} of {totalPages}</span>
+          <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="type-meta text-surface-400 hover:text-surface-50 disabled:opacity-30">Next →</button>
         </div>
       )}
     </div>

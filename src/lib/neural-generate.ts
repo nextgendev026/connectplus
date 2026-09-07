@@ -270,7 +270,7 @@ export function enhanceText(rawContent: string): EnhancementResult {
     ? Math.round((words.length / sentences.length) * 10) / 10
     : 0;
 
-  let score = Math.max(20, 100 - penalty);
+  const score = Math.max(20, 100 - penalty);
   const grade: EnhancementResult["grade"] =
     score >= 90 ? "A" : score >= 75 ? "B" : score >= 60 ? "C" : score >= 45 ? "D" : "F";
 
@@ -285,4 +285,261 @@ export function enhanceText(rawContent: string): EnhancementResult {
     },
     suggestions,
   };
+}
+
+// ── Phase 3/4: the writing brain ────────────────────────────────────────────
+// Deterministic "copilot" operations shared by the admin Neural Chat and the
+// studio's Brain Copilot. Everything is a pure function of the input text, so
+// the same brain powers both surfaces.
+
+export interface PolishResult {
+  original: string;
+  rewritten: string;
+  changes: number;
+  notes: string[];
+}
+
+const FILLERS_TO_CUT = new Set([
+  "very", "really", "actually", "basically", "just", "quite", "literally",
+  "simply", "pretty", "rather", "totally", "absolutely", "so", "just",
+  "obviously", "definitely", "certainly", "truly", "honestly",
+]);
+
+const HEDGES_TO_CUT = new Set([
+  "maybe", "perhaps", "possibly", "probably", "seems", "seem", "kind of",
+  "sort of", "somewhat", "i think", "i feel", "i believe", "i guess",
+]);
+
+function splitLongSentence(sentence: string): string[] {
+  const words = sentence.split(/\s+/);
+  if (words.length <= 45) return [sentence];
+  // Prefer splitting at a conjunction near the middle.
+  const mid = Math.floor(words.length / 2);
+  const candidates = [
+    [" and ", " but ", " so ", " because ", " which ", " that ", "; "],
+  ][0]!;
+  let bestIdx = -1;
+  let bestDist = words.length;
+  for (let i = 10; i < words.length - 10; i++) {
+    const w = words[i]!.toLowerCase();
+    const isSplit = candidates.some((c) => w.includes(c.trim()) || (w === c.trim() && c.trim().length > 0));
+    if (isSplit && Math.abs(i - mid) < bestDist) {
+      bestDist = Math.abs(i - mid);
+      bestIdx = i;
+    }
+  }
+  if (bestIdx > 0) {
+    const left = words.slice(0, bestIdx).join(" ").replace(/[,;]\s*$/, "");
+    const right = words.slice(bestIdx).join(" ");
+    return [left, right.charAt(0).toUpperCase() + right.slice(1)];
+  }
+  // Fall back: cut at the mid word boundary.
+  const left = words.slice(0, mid).join(" ").replace(/[,;]\s*$/, "");
+  const right = words.slice(mid).join(" ");
+  return [left, right.charAt(0).toUpperCase() + right.slice(1)];
+}
+
+function stripFillerWords(text: string): { out: string; removed: string[] } {
+  const words = text.split(/(\s+)/);
+  const removed: string[] = [];
+  const out = words
+    .map((tok) => {
+      const w = tok.toLowerCase().replace(/[^a-z']/g, "");
+      if ((FILLERS_TO_CUT.has(w) || HEDGES_TO_CUT.has(w)) && tok.trim().length > 0) {
+        removed.push(tok.trim());
+        return "";
+      }
+      return tok;
+    })
+    .join("")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([.,;:!?])/g, "$1")
+    .trim();
+  return { out, removed };
+}
+
+/**
+ * Deterministic rewrite pass: cuts filler + hedging, splits marathon sentences,
+ * and converts common passive constructions to active voice. Returns the
+ * polished draft plus a human-readable change log.
+ */
+export function polishText(rawContent: string): PolishResult {
+  const text = stripHtml(rawContent).trim();
+  if (text.length === 0) {
+    return { original: text, rewritten: text, changes: 0, notes: [] };
+  }
+
+  let working = text;
+  const notes: string[] = [];
+
+  // 1. Cut filler + hedge words.
+  const filler = stripFillerWords(working);
+  if (filler.removed.length > 0) {
+    working = filler.out;
+    notes.push(`Removed ${filler.removed.length} filler/hedging word${filler.removed.length > 1 ? "s" : ""} (${[...new Set(filler.removed)].slice(0, 5).join(", ")}).`);
+  }
+
+  // 2. Split marathon sentences.
+  const sentences = working.split(/(?<=[.!?])\s+/);
+  const splitOut: string[] = [];
+  let splits = 0;
+  for (const s of sentences) {
+    const parts = splitLongSentence(s);
+    if (parts.length > 1) splits += 1;
+    splitOut.push(...parts);
+  }
+  if (splits > 0) {
+    working = splitOut.join(" ");
+    notes.push(`Split ${splits} over-long sentence${splits > 1 ? "s" : ""} into shorter, punchier ones.`);
+  }
+
+  // 3. Passive → active for common constructions.
+  const active = working.replace(
+    /\b(was|were|is|are|been)\s+(\w+ed)\s+by\s+(the\s+)?([a-z][a-z ]{1,24}?)(?=[\.,;!?\s]|$)/gi,
+    (_m, _be, verb, _the, agent) => {
+      const subject = agent.trim().replace(/\s+/g, " ");
+      if (!subject) return _m;
+      return `${capitalize(subject)} ${verb}`;
+    }
+  );
+  if (active !== working) {
+    notes.push("Converted passive constructions to active voice for momentum.");
+    working = active;
+  }
+
+  working = working.replace(/\s{2,}/g, " ").replace(/\s+([.,;:!?])/g, "$1").trim();
+
+  const changes =
+    notes.length +
+    Math.abs(working.split(/\s+/).length - text.split(/\s+/).length);
+  return {
+    original: text,
+    rewritten: working,
+    changes,
+    notes,
+  };
+}
+
+/** Pick a template variant deterministically from a seed so answers vary. */
+export function pickVariant(templates: string[], seed: string): string {
+  if (templates.length === 0) return "";
+  // FNV-1a: spreads seed strings well so different inputs pick different variants.
+  let h = 0x811c9dc5;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return templates[h % templates.length]!;
+}
+
+/**
+ * Continue writing: drafts a flowing next paragraph anchored to the last
+ * sentence's topic/keywords so it reads like a natural extension.
+ */
+export function continueText(rawContent: string): { continuation: string; heading?: string } {
+  const text = stripHtml(rawContent).trim();
+  const kws = extractKeywords(text, 4).map((k) => k.keyword);
+  const entities = extractEntities(text);
+  const lastSentence =
+    text.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 10).pop()?.trim() ?? text;
+  const topic = kws[0] ?? entities[0]?.value?.split(" ")[0] ?? "the story";
+  const second = kws[1] ?? (entities[1]?.value?.split(" ")[0] ?? "the community");
+  const place = entities.find((e) => e.type === "place")?.value ?? "across East Africa";
+
+  const openers = [
+    `What makes this worth watching is what comes next. The momentum around ${topic} is not slowing down — ${second} are paying attention in new ways, and ${place} is already feeling the shift.`,
+    `Dig deeper and the picture sharpens. Beyond the headlines, ${topic} is reshaping how ${second} think about the future — and the ripple effects are just beginning to show ${place}.`,
+    `The bigger question is where this leads. If the energy behind ${topic} keeps building, ${second} will have to respond — and ${place} stands to gain the most from what happens next.`,
+  ];
+
+  const continuations = [
+    `Take the numbers: engagement around ${topic} keeps climbing week after week. Creators who lean into ${second} are seeing real returns, and the pattern is consistent enough to plan around. The smart play is to document the change while it is happening, not after.`,
+    `For anyone following closely, the signal is clear: ${topic} is becoming a defining theme for ${place}. The question is no longer whether it matters, but who will own the conversation first. That is an opportunity worth acting on.`,
+    `Look at the way the story has already moved. What started as a niche interest is now part of the everyday conversation in ${place}. The next chapter belongs to whoever brings fresh angles on ${topic} — and there is still room for a genuinely new voice.`,
+  ];
+
+  const heading = pickVariant(
+    [
+      `## Why ${capitalize(topic)} matters more than ever`,
+      `## The momentum behind ${capitalize(topic)}`,
+      `## What ${capitalize(second)} should watch next`,
+      `## Where ${capitalize(topic)} goes from here`,
+    ],
+    text.slice(-80)
+  );
+
+  const seed = `${lastSentence} ${kws.join(" ")}`;
+  return {
+    continuation: `${pickVariant(openers, seed)} ${pickVariant(continuations, seed + "c")}`,
+    heading,
+  };
+}
+
+/** Build a structured outline for a post about a topic or from draft content. */
+export function buildOutline(rawContentOrTopic: string): { intro: string; sections: string[]; closing: string } {
+  const kws = extractKeywords(rawContentOrTopic, 5).map((k) => k.keyword);
+  const entities = extractEntities(rawContentOrTopic);
+  const topic = kws[0] ?? entities[0]?.value?.split(" ")[0] ?? "the story";
+  const angle = kws[1] ?? "the people behind it";
+  const place = entities.find((e) => e.type === "place")?.value ?? "East Africa";
+  const org = entities.find((e) => e.type === "organization")?.value;
+
+  const intro = `Open with a scene or a number that makes ${topic} feel immediate — why it matters to readers in ${place} right now, and what changed recently.`;
+  const sections = [
+    `## The current state of ${capitalize(topic)}`,
+    `## What ${capitalize(angle)} tells us`,
+    org ? `## Inside ${org}: the players to watch` : `## The people driving ${capitalize(topic)} forward`,
+    `## Challenges nobody is talking about`,
+    `## What happens next — and how readers can stay ahead`,
+  ];
+  const closing = `End with a forward-looking take: the one thing that would change the picture for ${topic} in the next six months, and a question that invites readers to share their own experience.`;
+  return { intro, sections, closing };
+}
+
+/** Compose a complete short-form draft from a topic (write-from-scratch brain). */
+export function composeDraft(rawTopic: string): { draft: string; headline: string; tags: string[] } {
+  const kws = extractKeywords(rawTopic, 5).map((k) => k.keyword);
+  const entities = extractEntities(rawTopic);
+  const topic = kws[0] ?? entities[0]?.value?.split(" ")[0] ?? "the story";
+  const angle = kws[1] ?? (entities[1]?.value?.split(" ")[0] ?? "creators");
+  const place = entities.find((e) => e.type === "place")?.value ?? "East Africa";
+  const headline = pickVariant(
+    [
+      `${capitalize(topic)}: the story shaping ${place} right now`,
+      `Inside ${capitalize(topic)} — what ${angle} need to know`,
+      `How ${capitalize(topic)} is changing the game ${place}`,
+      `${capitalize(topic)} explained: a field guide for ${angle}`,
+    ],
+    rawTopic
+  );
+  const tags = [...new Set([...kws.slice(0, 5), ...entities.slice(0, 2).map((e) => e.value.toLowerCase().split(" ")[0]!), "Africa"].map((t) => t.toLowerCase()))].slice(0, 8);
+
+  const draft = [
+    `There is a quiet shift happening around ${topic}, and ${place} is at the centre of it. What started as a handful of conversations is becoming a movement — and the people closest to it are already changing how the region thinks about ${angle}.`,
+    "",
+    `## The state of play`,
+    `To understand ${topic}, start with the people. ${capitalize(angle)} are experimenting, comparing notes and building on each other's wins in ways that were impossible a few years ago. The result is a faster feedback loop between ideas and outcomes.`,
+    "",
+    `## What is driving it`,
+    `Three forces are pushing ${topic} forward: demand from a younger, mobile-first audience; lower barriers to entry for new voices; and a growing willingness to back local ideas with local capital. Together they are compounding.`,
+    "",
+    `## The gap nobody is filling`,
+    `For all the momentum, the conversation is still missing depth. Most coverage recycles press releases instead of reporting on the ground. That is where the opportunity lives — original, specific, human stories about ${topic} in ${place}.`,
+    "",
+    `## Where it goes next`,
+    `Watch the next six months. If the current trajectory holds, ${topic} will move from a niche interest to a mainstream talking point ${place}. The creators who start documenting it now will own the narrative.`,
+    "",
+    `*What is your experience with ${topic}? Share your story in the comments — the best perspectives come from readers like you.*`,
+  ].join("\n");
+
+  return { draft, headline, tags };
+}
+
+/** Strip a leading instruction ("rewrite this:", "write about", …) from chat text. */
+export function stripInstruction(input: string): string {
+  let text = input.trim();
+  const prefix =
+    /^(?:please\s+)?(?:can\s+you\s+)?(?:rewrite|rephrase|polish|improve|summarize|summarise|condense|expand|continue|extend|write|compose|create|draft|generate|make|give\s+me|suggest)\s*(?:this|about|(?:my|your|the|this)\s+(?:draft|post|article|story|text|paragraph|content|piece|following))?\s*(?:for\s+me)?\s*[\-—–:]?\s*/i;
+  text = text.replace(prefix, "").trim();
+  return text;
 }

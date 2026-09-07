@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { Send, Heart, Loader2 } from "lucide-react";
@@ -113,7 +114,7 @@ export function CommentsSection({ postId, initialComments }: CommentsSectionProp
             <Link href={`/profile/${comment.author.username}`} className="shrink-0">
               <div className="h-8 w-8 flex-shrink-0 rounded-full bg-surface-700 flex items-center justify-center text-xs font-bold text-surface-50 overflow-hidden">
                 {comment.author.avatar ? (
-                  <img src={comment.author.avatar} alt="" className="w-full h-full object-cover" />
+                  <Image src={comment.author.avatar} alt="" width={32} height={32} className="w-full h-full object-cover" />
                 ) : (
                   comment.author.name?.charAt(0) ?? "?"
                 )}
@@ -143,7 +144,7 @@ export function CommentsSection({ postId, initialComments }: CommentsSectionProp
                       <Link href={`/profile/${reply.author.username}`} className="shrink-0">
                         <div className="h-6 w-6 flex-shrink-0 rounded-full bg-surface-700 flex items-center justify-center text-[10px] font-bold text-surface-50 overflow-hidden">
                           {reply.author.avatar ? (
-                            <img src={reply.author.avatar} alt="" className="w-full h-full object-cover" />
+                            <Image src={reply.author.avatar} alt="" width={24} height={24} className="w-full h-full object-cover" />
                           ) : (
                             reply.author.name?.charAt(0) ?? "?"
                           )}
