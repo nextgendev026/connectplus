@@ -3,7 +3,11 @@ import Image from "next/image";
 import Script from "next/script";
 import { prisma } from "@/lib/prisma";
 import { cn, estimateReadTime, timeAgo } from "@/lib/utils";
+import { auth } from "@/lib/auth";
+import { rankFeed } from "@/lib/feed-ranker";
 import { FeedLiveRefresh } from "@/components/feed/FeedLiveRefresh";
+import { FeedFeedbackTracker } from "@/components/feed/FeedFeedbackTracker";
+import { LoadMoreFeed } from "@/components/feed/LoadMoreFeed";
 import { HeroSlideshow } from "@/components/feed/HeroSlideshow";
 import {
   TrendingUp,
@@ -93,6 +97,7 @@ function PostCard({
     <AnimatedCard index={index}>
       <Link
         href={`/article/${post.slug}`}
+        data-feed-post={post.id}
         className={cn(
           "group relative rounded-2xl bg-surface-900/60 border border-surface-800/50 overflow-hidden transition-all duration-300 hover:border-brand-500/30 hover:shadow-glow block",
           featured ? "md:col-span-2" : ""
@@ -112,13 +117,13 @@ function PostCard({
               className="object-cover transition-transform duration-700 group-hover:scale-105"
             />
           ) : null}
-          <div className="absolute inset-0 bg-gradient-to-t from-surface-950/90 via-surface-950/30 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
           <div className="absolute top-4 left-4">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-500/20 px-3 py-1 text-xs font-medium text-brand-400 border border-brand-500/20 backdrop-blur-sm">
               {post.category?.name ?? "Uncategorized"}
             </span>
           </div>
-          <button className="absolute top-4 right-4 p-2 rounded-full bg-surface-950/40 backdrop-blur-sm text-surface-400 hover:text-brand-400 transition-all opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100">
+          <button className="absolute top-4 right-4 p-2 rounded-full bg-black/40 backdrop-blur-sm text-surface-400 hover:text-brand-400 transition-all opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100">
             <Bookmark className="w-4 h-4" />
           </button>
           {featured && (
@@ -253,6 +258,7 @@ function FeaturedStoryBanner({ post }: { post: PostData }) {
     <AnimatedCard index={0}>
       <Link
         href={`/article/${post.slug}`}
+        data-feed-post={post.id}
         className="group relative block rounded-2xl overflow-hidden bg-gradient-to-br from-brand-500/10 via-surface-900 to-accent-cyan/5 border border-surface-800/50 hover:border-brand-500/30 transition-all duration-500 hover:shadow-glow-lg"
       >
         <div className="relative h-64 sm:h-80 md:h-96 overflow-hidden">
@@ -267,7 +273,7 @@ function FeaturedStoryBanner({ post }: { post: PostData }) {
           ) : null}
           {/* Gradient overlay */}
           <div className="absolute inset-0 bg-gradient-to-br from-brand-500/20 via-transparent to-accent-cyan/10" />
-          <div className="absolute inset-0 bg-gradient-to-t from-surface-950 via-surface-950/60 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent" />
 
           {/* Decorative elements */}
           <div className="absolute top-0 right-0 w-1/3 h-full bg-gradient-to-l from-brand-500/5 to-transparent" />
@@ -281,15 +287,15 @@ function FeaturedStoryBanner({ post }: { post: PostData }) {
                 Featured
               </span>
               {post.category && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-surface-800/80 px-3 py-1 text-xs font-medium text-surface-300 border border-surface-700/50 backdrop-blur-sm">
+                <span className="inline-flex items-center gap-1 rounded-full bg-black/40 px-3 py-1 text-xs font-medium text-white/80 border border-white/20 backdrop-blur-sm">
                   {post.category.name}
                 </span>
               )}
             </div>
-            <h2 className="text-2xl sm:text-3xl md:text-4xl font-display font-bold text-surface-50 leading-tight mb-3 group-hover:text-brand-400 transition-colors">
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-display font-bold text-white leading-tight mb-3 group-hover:text-brand-400 transition-colors drop-shadow-md">
               {post.title}
             </h2>
-            <p className="text-surface-400 text-sm sm:text-base leading-relaxed mb-6 line-clamp-2 max-w-2xl">
+            <p className="text-white/80 text-sm sm:text-base leading-relaxed mb-6 line-clamp-2 max-w-2xl">
               {post.excerpt}
             </p>
             <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
@@ -308,15 +314,15 @@ function FeaturedStoryBanner({ post }: { post: PostData }) {
                   )}
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-surface-50">
+                  <p className="text-sm font-medium text-white">
                     {post.author.name ?? post.author.username}
                   </p>
-                  <p className="text-xs text-surface-500">
+                  <p className="text-xs text-white/70">
                     {timeAgo(post.createdAt)}
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-4 text-surface-500 text-xs">
+              <div className="flex items-center gap-4 text-white/70 text-xs">
                 <span className="flex items-center gap-1.5">
                   <Clock className="w-3.5 h-3.5" />
                   {estimateReadTime(
@@ -550,7 +556,8 @@ export default async function HomeFeedPage({
         _count: { select: { comments: true, likes: true } },
       },
       orderBy: { createdAt: "desc" },
-      take: 20,
+      // Larger pool for the adaptive ranker; filtered views stay at page size.
+      take: categoryFilter ? 20 : 200,
     }),
     prisma.post.findMany({
       where: {
@@ -615,8 +622,15 @@ export default async function HomeFeedPage({
     .sort((a, b) => b._count.posts - a._count.posts)
     .slice(0, 5);
 
-  const featuredPost = posts.find((p) => p.featured) ?? posts[0];
-  const feedPosts = posts.filter((p) => p.id !== featuredPost?.id);
+  // Phase 1: adaptive ranking (recency for anonymous users, personalized for
+  // signed-in users per their A/B variant). The displayed page is always the
+  // top 20 of the ranked pool so "load more" slices continue cleanly.
+  const session = await auth();
+  const { posts: ranked, variant } = await rankFeed(posts, session?.user?.id ?? null);
+  const top = ranked.slice(0, 20);
+  const featuredPost = top.find((p) => p.featured) ?? top[0];
+  const feedPosts = top.filter((p) => p.id !== featuredPost?.id);
+  const feedIds = top.map((p) => p.id);
 
   return (
     <div className="min-h-screen bg-surface-950">
@@ -651,7 +665,8 @@ export default async function HomeFeedPage({
                   : "Latest Stories"}
               </h2>
               <span className="text-xs text-surface-500">
-                {posts.length} {posts.length === 1 ? "story" : "stories"}
+                {feedPosts.length + (featuredPost ? 1 : 0)}{" "}
+                {feedPosts.length + (featuredPost ? 1 : 0) === 1 ? "story" : "stories"}
                 {categoryFilter ? " in this category" : " from across East Africa"}
               </span>
             </div>
@@ -667,12 +682,10 @@ export default async function HomeFeedPage({
             )}
 
             {posts.length > 0 && (
-              <div className="flex justify-center mt-12">
-                <button className="group inline-flex items-center gap-2 rounded-xl border border-surface-700 px-8 py-3 text-sm font-medium text-surface-300 hover:bg-surface-800/50 hover:border-brand-500/30 hover:text-brand-400 transition-all">
-                  Load More Stories
-                  <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
-                </button>
-              </div>
+              <LoadMoreFeed
+                initialIds={feedIds}
+                startPage={Math.floor(feedIds.length / 10) + 1}
+              />
             )}
           </div>
 
@@ -684,6 +697,8 @@ export default async function HomeFeedPage({
       </div>
 
       <StaggerObserverScript />
+
+      <FeedFeedbackTracker variant={variant} />
 
       <FeedLiveRefresh />
     </div>

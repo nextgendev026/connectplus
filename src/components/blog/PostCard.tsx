@@ -194,8 +194,8 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
                 )}
               />
             )}
-            <div className="absolute inset-0 bg-gradient-to-t from-surface-950 via-surface-950/60 to-transparent" />
-            <div className="absolute inset-0 bg-gradient-to-r from-surface-950/40 to-transparent" />
+            <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent" />
+            <div className="absolute inset-0 bg-gradient-to-r from-black/40 to-transparent" />
           </div>
 
           <div className="relative flex h-full flex-col justify-end p-8">
@@ -205,12 +205,12 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
               </span>
             )}
 
-            <h2 className="font-display text-3xl font-bold text-surface-50 leading-tight transition-colors group-hover:text-brand-300">
+            <h2 className="font-display text-3xl font-bold text-white leading-tight transition-colors group-hover:text-brand-300">
               {post.title}
             </h2>
 
             {excerpt && (
-              <p className="mt-3 max-w-xl text-sm leading-relaxed text-surface-300 line-clamp-3">
+              <p className="mt-3 max-w-xl text-sm leading-relaxed text-white/85 line-clamp-3">
                 {excerpt}
               </p>
             )}
@@ -226,14 +226,14 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
                   />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-surface-50">
+                  <p className="text-sm font-medium text-white">
                     {post.author.name || post.author.username}
                   </p>
-                  <p className="text-xs text-surface-400">@{post.author.username}</p>
+                  <p className="text-xs text-white/70">@{post.author.username}</p>
                 </div>
               </div>
 
-              <div className="ml-auto flex items-center gap-5 text-sm text-surface-300">
+              <div className="ml-auto flex items-center gap-5 text-sm text-white/80">
                 {post.publishedAt && (
                   <span>
                     {new Date(post.publishedAt).toLocaleDateString("en-GB", {
@@ -301,10 +301,10 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
               )}
             />
           )}
-          <div className="absolute inset-0 bg-gradient-to-t from-surface-950/50 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
 
           {post.category && (
-            <span className="absolute left-4 top-4 rounded-full bg-surface-900/70 px-3 py-1 text-xs font-medium text-brand-400 backdrop-blur-sm ring-1 ring-surface-700/50">
+            <span className="absolute left-4 top-4 rounded-full bg-black/50 px-3 py-1 text-xs font-medium text-brand-300 backdrop-blur-sm ring-1 ring-white/15">
               {post.category.name}
             </span>
           )}

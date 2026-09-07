@@ -100,7 +100,7 @@ export function ArticleActions({ url, title }: ArticleActionsProps) {
       <button
         onClick={copy}
         className={cn(
-          "flex h-9 w-9 items-center justify-center rounded-full bg-surface-800 text-surface-400 transition-colors",
+          "hidden sm:flex h-9 w-9 items-center justify-center rounded-full bg-surface-800 text-surface-400 transition-colors",
           copied ? "text-brand-400" : "hover:bg-surface-700 hover:text-surface-50"
         )}
         aria-label="Copy"

@@ -109,7 +109,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
   return (
     <div className="min-h-screen bg-surface-950">
       {/* Hero */}
-      <div className="relative h-[50vh] min-h-[400px] overflow-hidden">
+      <div className="relative h-[46vh] min-h-[360px] overflow-hidden">
         {post.coverImage ? (
           <Image
             src={post.coverImage}
@@ -119,25 +119,25 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
             priority
           />
         ) : null}
-        <div className="absolute inset-0 bg-gradient-to-br from-brand-900/50 via-surface-950/80 to-surface-950" />
+        <div className="absolute inset-0 bg-gradient-to-br from-brand-900/50 via-black/80 to-black" />
         <div className="absolute inset-0 bg-mesh-gradient opacity-40" />
-        <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-surface-950 to-transparent" />
+        <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-black to-transparent" />
         <div className="relative mx-auto flex h-full max-w-4xl flex-col justify-end px-4 pb-8 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-2 text-sm text-surface-400">
-            <Link href="/" className="hover:text-surface-50 transition-colors">Home</Link>
+          <div className="flex items-center gap-2 text-sm text-white/70">
+            <Link href="/" className="hover:text-white transition-colors">Home</Link>
             <ChevronRight className="h-3 w-3" />
             {post.category && (
-              <Link href={`/categories/${post.category.slug}`} className="hover:text-surface-50 transition-colors">
+              <Link href={`/categories/${post.category.slug}`} className="hover:text-white transition-colors">
                 {post.category.name}
               </Link>
             )}
           </div>
-          <h1 className="mt-3 text-3xl font-bold leading-tight text-surface-50 sm:text-4xl lg:text-5xl">
+          <h1 className="mt-3 break-words text-3xl font-bold leading-tight text-white sm:text-4xl lg:text-5xl drop-shadow-md">
             {post.title}
           </h1>
-          <div className="mt-4 flex items-center gap-4">
+          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
             <Link href={`/profile/${post.author.username}`} className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-full bg-surface-700 overflow-hidden flex items-center justify-center text-sm font-bold text-surface-50">
+              <div className="h-10 w-10 rounded-full bg-white/20 backdrop-blur-sm border border-white/20 overflow-hidden flex items-center justify-center text-sm font-bold text-white">
                 {post.author.avatar ? (
                   <img src={post.author.avatar} alt={post.author.name ?? ""} className="w-full h-full object-cover" />
                 ) : (
@@ -145,11 +145,11 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
                 )}
               </div>
               <div>
-                <p className="text-sm font-medium text-surface-50">{post.author.name ?? "Anonymous"}</p>
-                <p className="text-xs text-surface-400">@{post.author.username}</p>
+                <p className="text-sm font-medium text-white">{post.author.name ?? "Anonymous"}</p>
+                <p className="text-xs text-white/60">@{post.author.username}</p>
               </div>
             </Link>
-            <div className="flex items-center gap-4 text-xs text-surface-500">
+            <div className="flex items-center gap-4 text-xs text-white/70">
               <span>{publishedDate}</span>
               <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{readTime} min read</span>
               <span className="flex items-center gap-1"><Eye className="h-3 w-3" />{viewCount.toLocaleString()}</span>
@@ -159,9 +159,9 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
       </div>
 
       {/* Article Content */}
-      <div className="mx-auto max-w-4xl px-4 py-12 sm:px-6 lg:px-8">
-        <div className="grid grid-cols-1 gap-12 lg:grid-cols-[1fr_280px]">
-          <article>
+      <div className="mx-auto max-w-4xl min-w-0 px-4 py-10 sm:px-6 lg:px-8">
+        <div className="grid min-w-0 grid-cols-1 gap-12 lg:grid-cols-[1fr_280px]">
+          <article className="min-w-0">
             <div className="flex flex-wrap gap-2 mb-8">
               {post.tags.map((tag) => (
                 <span key={tag.id} className="rounded-full bg-surface-800 px-3 py-1 text-xs text-surface-300 hover:bg-surface-700 transition-colors cursor-pointer">
@@ -172,23 +172,51 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
 
             <StyledContent content={post.content} />
 
-            {/* Actions */}
-            <div className="mt-12 flex items-center justify-between border-t border-surface-800 pt-6">
-              <div className="flex items-center gap-4">
-                <LikeButton postId={post.id} initialCount={post._count.likes} />
-                <a
-                  href="#comments"
-                  className="flex items-center gap-2 rounded-full bg-surface-800 px-4 py-2 text-sm text-surface-300 hover:bg-surface-700 hover:text-surface-50 transition-colors"
-                >
-                  <MessageCircle className="h-4 w-4" />
-                  <span>{post._count.comments}</span>
-                </a>
-                <BookmarkButton postId={post.id} fetchState variant="pill" />
-              </div>
-              <div className="flex items-center gap-2">
-                <ArticleActions url={`/article/${post.slug}`} title={post.title} />
+            {/* Actions — wraps into two rows on phones instead of overflowing */}
+            <div className="mt-12 border-t border-surface-800 pt-6">
+              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <LikeButton postId={post.id} initialCount={post._count.likes} />
+                  <a
+                    href="#comments"
+                    className="flex items-center gap-2 rounded-full bg-surface-800 px-4 py-2 text-sm text-surface-300 hover:bg-surface-700 hover:text-surface-50 transition-colors"
+                  >
+                    <MessageCircle className="h-4 w-4" />
+                    <span>{post._count.comments}</span>
+                  </a>
+                  <BookmarkButton postId={post.id} fetchState variant="pill" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <ArticleActions url={`/article/${post.slug}`} title={post.title} />
+                </div>
               </div>
             </div>
+
+            {/* Mobile related stories (horizontal strip) */}
+            {relatedPosts.length > 0 && (
+              <div className="mt-12 lg:hidden">
+                <h4 className="mb-4 flex items-center gap-2 text-sm font-bold text-surface-50">
+                  <span className="h-1 w-1 rounded-full bg-brand-400" />
+                  Related Stories
+                </h4>
+                <div className="scrollbar-hide -mx-4 flex gap-3 overflow-x-auto px-4 pb-2">
+                  {relatedPosts.map((rp) => (
+                    <Link
+                      key={rp.id}
+                      href={`/article/${rp.slug}`}
+                      className="group w-64 shrink-0 rounded-2xl border border-surface-800 bg-surface-900/50 p-4 transition-colors hover:border-brand-500/30"
+                    >
+                      <p className="text-sm font-medium leading-snug text-surface-300 group-hover:text-brand-400 transition-colors line-clamp-3">
+                        {rp.title}
+                      </p>
+                      <p className="mt-2 text-xs text-surface-500">
+                        {rp.author.name} · {estimateReadTime(rp.content)} min read
+                      </p>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Comments */}
             <div id="comments">

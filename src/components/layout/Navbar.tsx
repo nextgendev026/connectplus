@@ -6,7 +6,7 @@ import { useSession, signOut } from "next-auth/react";
 import { useState } from "react";
 import {
   Search, Menu, X, PenLine, Shield, LogOut, User, Settings,
-  Globe, Sun, Moon,
+  Globe, Sun, Moon, Home, Flame, LayoutGrid, Radio,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/components/providers/ThemeContext";
@@ -14,10 +14,10 @@ import Logo from "@/components/ui/Logo";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 
 const NAV_LINKS = [
-  { href: "/", label: "Feed" },
-  { href: "/trending", label: "Trending" },
-  { href: "/categories", label: "Categories" },
-  { href: "/radio", label: "Radio" },
+  { href: "/", label: "Feed", icon: Home },
+  { href: "/trending", label: "Trending", icon: Flame },
+  { href: "/categories", label: "Categories", icon: LayoutGrid },
+  { href: "/radio", label: "Radio", icon: Radio },
 ];
 
 export default function Navbar() {
@@ -129,7 +129,7 @@ export default function Navbar() {
                 ) : null}
                 <Link
                   href="/studio"
-                  className="flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-600 transition-colors"
+                  className="btn-gradient flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
                 >
                   <PenLine className="h-3.5 w-3.5" />
                   Write
@@ -179,7 +179,7 @@ export default function Navbar() {
                 </Link>
                 <Link
                   href="/auth/signup"
-                  className="rounded-lg bg-brand-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600 transition-colors"
+                  className="btn-gradient rounded-lg px-3 py-1.5 text-sm font-semibold text-white"
                 >
                   Get started
                 </Link>
@@ -204,32 +204,40 @@ export default function Navbar() {
                   href={link.href}
                   onClick={() => setMobileOpen(false)}
                   className={cn(
-                    "rounded-lg px-3 py-2 text-sm font-medium",
+                    "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                     pathname === link.href
                       ? "text-brand-400 bg-brand-500/10"
                       : "text-surface-400 hover:text-surface-50 hover:bg-surface-800"
                   )}
                 >
+                  <link.icon className="h-4 w-4 text-brand-500/70" />
                   {link.label}
                 </Link>
               ))}
               {session ? (
                 <>
-                  <Link href="/studio" onClick={() => setMobileOpen(false)} className="rounded-lg bg-brand-500 px-3 py-2 text-center text-sm font-medium text-white">
+                  <Link
+                    href="/studio"
+                    onClick={() => setMobileOpen(false)}
+                    className="btn-gradient mt-1 rounded-lg px-3 py-2.5 text-center text-sm font-semibold text-white"
+                  >
                     Write a story
                   </Link>
                   {(user?.role === "ADMIN" || user?.role === "SUPER_ADMIN") && (
-                    <Link href="/admin" onClick={() => setMobileOpen(false)} className="rounded-lg px-3 py-2 text-sm font-medium text-accent-amber">
+                    <Link href="/admin" onClick={() => setMobileOpen(false)} className="rounded-lg px-3 py-2.5 text-sm font-medium text-accent-amber">
                       Admin Panel
                     </Link>
                   )}
+                  <Link href="/settings" onClick={() => setMobileOpen(false)} className="rounded-lg px-3 py-2.5 text-sm font-medium text-surface-400 hover:text-surface-50">
+                    Settings
+                  </Link>
                 </>
               ) : (
                 <>
-                  <Link href="/auth/signin" onClick={() => setMobileOpen(false)} className="rounded-lg px-3 py-2 text-sm font-medium text-surface-400 hover:text-surface-50">
+                  <Link href="/auth/signin" onClick={() => setMobileOpen(false)} className="rounded-lg px-3 py-2.5 text-sm font-medium text-surface-400 hover:text-surface-50">
                     Sign in
                   </Link>
-                  <Link href="/auth/signup" onClick={() => setMobileOpen(false)} className="rounded-lg bg-brand-500 px-3 py-2 text-center text-sm font-medium text-white">
+                  <Link href="/auth/signup" onClick={() => setMobileOpen(false)} className="btn-gradient rounded-lg px-3 py-2.5 text-center text-sm font-semibold text-white">
                     Get started
                   </Link>
                 </>

@@ -37,7 +37,7 @@ export default function Logo({
           Plus
         </span>
         {showBadge && (
-          <span className="ml-1.5 rounded-md bg-brand-500/10 px-1.5 py-0.5 text-[9px] font-bold text-brand-600 dark:text-brand-400 border border-brand-500/20">
+          <span className="ml-1.5 rounded-md bg-gradient-to-r from-brand-500 to-accent-coral/80 px-1.5 py-0.5 text-[9px] font-bold text-white shadow-glow">
             BETA
           </span>
         )}

@@ -130,8 +130,8 @@ export function HeroSlideshow({ slides, stats }: HeroSlideshowProps) {
             alt=""
             className="w-full h-full object-cover"
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-surface-950 via-surface-950/75 to-surface-950/40" />
-          <div className="absolute inset-0 bg-surface-950/20" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/75 to-black/40" />
+          <div className="absolute inset-0 bg-black/20" />
         </div>
       ))}
 
@@ -148,17 +148,17 @@ export function HeroSlideshow({ slides, stats }: HeroSlideshowProps) {
             <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-500/15 border border-brand-500/30 px-3.5 py-1 text-xs font-medium text-brand-400 backdrop-blur-sm">
               {slide.category?.name ?? "Featured story"}
             </span>
-            <span className="inline-flex items-center gap-1 rounded-full bg-surface-950/40 border border-surface-700/50 px-3 py-1 text-[11px] text-surface-300">
+            <span className="inline-flex items-center gap-1 rounded-full bg-black/40 border border-white/20 px-3 py-1 text-[11px] text-white/80 backdrop-blur-sm">
               <Eye className="w-3 h-3" />
               {slide.viewCount.toLocaleString()} reads
             </span>
           </div>
 
-          <h1 className="text-4xl sm:text-5xl md:text-7xl font-display font-bold tracking-tight leading-[1.05] mb-6 text-surface-50 drop-shadow-lg">
+          <h1 className="text-4xl sm:text-5xl md:text-7xl font-display font-bold tracking-tight leading-[1.05] mb-6 text-white drop-shadow-lg">
             {slide.title}
           </h1>
 
-          <p className="text-base sm:text-lg md:text-xl text-surface-300 leading-relaxed max-w-2xl mb-8 line-clamp-3">
+          <p className="text-base sm:text-lg md:text-xl text-white/85 leading-relaxed max-w-2xl mb-8 line-clamp-3">
             {slide.excerpt ?? slide.title}
           </p>
 
@@ -171,11 +171,11 @@ export function HeroSlideshow({ slides, stats }: HeroSlideshowProps) {
               <ArrowRight className="w-4 h-4" />
             </Link>
             <div className="flex items-center gap-2.5">
-              <span className="text-xs font-medium text-surface-200">
+              <span className="text-xs font-medium text-white/90">
                 by {slide.author.name ?? slide.author.username}
               </span>
-              <span className="w-1 h-1 rounded-full bg-surface-600" />
-              <span className="text-xs text-surface-400">
+              <span className="w-1 h-1 rounded-full bg-white/40" />
+              <span className="text-xs text-white/60">
                 {timeAgo(slide.createdAt.toISOString())}
               </span>
             </div>
@@ -190,14 +190,14 @@ export function HeroSlideshow({ slides, stats }: HeroSlideshowProps) {
         <button
           onClick={() => go(-1)}
           aria-label="Previous story"
-          className="p-2.5 rounded-full bg-surface-950/50 border border-surface-700/60 text-surface-300 hover:text-surface-50 hover:border-brand-500/40 hover:bg-surface-900/70 transition-all backdrop-blur-sm"
+          className="p-2.5 rounded-full bg-black/50 border border-white/25 text-white/80 hover:text-white hover:border-brand-400/60 hover:bg-black/70 transition-all backdrop-blur-sm"
         >
           <ChevronLeft className="w-4 h-4" />
         </button>
         <button
           onClick={() => go(1)}
           aria-label="Next story"
-          className="p-2.5 rounded-full bg-surface-950/50 border border-surface-700/60 text-surface-300 hover:text-surface-50 hover:border-brand-500/40 hover:bg-surface-900/70 transition-all backdrop-blur-sm"
+          className="p-2.5 rounded-full bg-black/50 border border-white/25 text-white/80 hover:text-white hover:border-brand-400/60 hover:bg-black/70 transition-all backdrop-blur-sm"
         >
           <ChevronRight className="w-4 h-4" />
         </button>
@@ -214,7 +214,7 @@ export function HeroSlideshow({ slides, stats }: HeroSlideshowProps) {
               "h-1.5 rounded-full transition-all duration-500",
               i === active
                 ? "w-8 bg-brand-400"
-                : "w-3 bg-surface-600 hover:bg-surface-400"
+                : "w-3 bg-white/30 hover:bg-white/70"
             )}
           />
         ))}
@@ -231,22 +231,22 @@ function HeroStats({
   return (
     <div className="grid grid-cols-3 gap-4 sm:gap-8 max-w-md animate-fade-in-up">
       <div>
-        <span className="text-xl sm:text-2xl md:text-3xl font-bold text-surface-50 font-display">
+        <span className="text-xl sm:text-2xl md:text-3xl font-bold text-white font-display">
           {stats.writers.toLocaleString()}+
         </span>
-        <p className="text-xs sm:text-sm text-surface-400">Writers</p>
+        <p className="text-xs sm:text-sm text-white/60">Writers</p>
       </div>
       <div>
-        <span className="text-xl sm:text-2xl md:text-3xl font-bold text-surface-50 font-display">
+        <span className="text-xl sm:text-2xl md:text-3xl font-bold text-white font-display">
           {stats.stories.toLocaleString()}+
         </span>
-        <p className="text-xs sm:text-sm text-surface-400">Stories</p>
+        <p className="text-xs sm:text-sm text-white/60">Stories</p>
       </div>
       <div>
-        <span className="inline-flex items-center gap-1.5 text-xl sm:text-2xl md:text-3xl font-bold text-surface-50 font-display">
+        <span className="inline-flex items-center gap-1.5 text-xl sm:text-2xl md:text-3xl font-bold text-white font-display">
           {stats.cities}
         </span>
-        <p className="text-xs sm:text-sm text-surface-400">
+        <p className="text-xs sm:text-sm text-white/60">
           Cities Connected
         </p>
       </div>

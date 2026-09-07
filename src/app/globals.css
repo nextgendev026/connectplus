@@ -44,29 +44,31 @@
 }
 
 html:not(.dark) {
-  /* Light mode — FLIP the entire palette with carefully tuned contrast.
-     Muted/secondary text (surface-400/500) is darkened, borders (surface-700/800)
-     are deepened, and surfaces get a warm off-white so text pops against white. */
---surface-50: 245 245 240;
-  --surface-100: 240 240 235;
-  --surface-200: 230 230 225;
-  --surface-300: 220 220 215;
-  --surface-400: 210 210 205;
-  --surface-500: 180 180 175;
-  --surface-600: 150 150 145;
-  --surface-700: 120 120 115;
-  --surface-800: 100 100 95;
-  --surface-850: 80 80 75;
-  --surface-900: 50 50 45;
-  --surface-950: 30 30 25;
-  --background: 245 245 240;
-  --scrollbar-thumb: 200 200 208;
-  --scrollbar-hover: 161 161 170;
+  /* Light mode — FLIP the entire palette: surface-950 becomes the lightest
+     background and surface-50 the darkest text, so every existing
+     bg-surface-950 text-surface-50 pattern becomes a proper light theme.
+     Tones are warm off-white (matches the amber brand) with tuned contrast. */
+  --surface-50: 32 30 26;
+  --surface-100: 48 46 42;
+  --surface-200: 78 75 70;
+  --surface-300: 108 105 99;
+  --surface-400: 138 135 128;
+  --surface-500: 165 162 155;
+  --surface-600: 199 196 190;
+  --surface-700: 218 215 210;
+  --surface-800: 230 228 223;
+  --surface-850: 237 235 231;
+  --surface-900: 243 241 237;
+  --surface-950: 250 249 246;
+  --foreground: 32 30 26;
+  --background: 250 249 246;
+  --scrollbar-thumb: 200 198 192;
+  --scrollbar-hover: 175 173 167;
   --glass-bg: 255 255 255;
-  --glass-border: 222 222 229;
-  --card-bg: 248 248 251;
-  --card-border: 224 224 231;
-  --muted: 112 112 122;
+  --glass-border: 224 222 216;
+  --card-bg: 255 255 255;
+  --card-border: 228 226 220;
+  --muted: 110 108 102;
 }
 
 body {
@@ -96,7 +98,7 @@ body {
 
 /* Selection */
 ::selection {
-  background: rgba(34, 197, 94, 0.25);
+  background: rgba(245, 158, 11, 0.3);
   color: rgb(var(--foreground));
 }
 
@@ -130,16 +132,42 @@ body {
     @apply transition-all duration-300;
   }
 
-  .hover-lift:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12);
-  }
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12), 0 0 20px rgba(245, 158, 11, 0.06);
+}
 
   .text-gradient-brand {
-    background: linear-gradient(135deg, #22c55e, #22d3ee);
+    background: linear-gradient(120deg, #fbbf24 0%, #f97316 45%, #f43f5e 80%, #a78bfa 105%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
+  }
+
+  .btn-gradient {
+    background-image: linear-gradient(120deg, #fbbf24 0%, #f97316 55%, #f43f5e 120%);
+    transition: filter 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .btn-gradient:hover {
+    filter: brightness(1.08);
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(249, 115, 22, 0.35);
+  }
+
+  .ring-gradient-border {
+    position: relative;
+    background-clip: padding-box;
+    border: 1px solid transparent;
+  }
+
+  .ring-gradient-border::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    z-index: -1;
+    border-radius: inherit;
+    background: linear-gradient(120deg, rgba(251, 191, 36, 0.5), rgba(244, 63, 94, 0.4), rgba(167, 139, 250, 0.4));
   }
 
   .safe-area-pb {
@@ -169,8 +197,9 @@ body {
 
 /* Focus ring */
 *:focus-visible {
-  outline: 2px solid #22c55e;
+  outline: 2px solid #f59e0b;
   outline-offset: 2px;
+  outline-color: color-mix(in srgb, #f59e0b 70%, #f43f5e);
 }
 
 /* Prose content styles */
@@ -380,11 +409,11 @@ html:not(.dark) .connectplus-prose a { color: #15803d; }
 
 /* Shadow glow utilities */
 .shadow-glow {
-  box-shadow: 0 0 20px rgba(245, 158, 11, 0.08), 0 0 40px rgba(245, 158, 11, 0.04);
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.1), 0 0 40px rgba(244, 63, 94, 0.05);
 }
 
 .shadow-glow-lg {
-  box-shadow: 0 0 30px rgba(245, 158, 11, 0.12), 0 0 60px rgba(245, 158, 11, 0.06);
+  box-shadow: 0 0 30px rgba(245, 158, 11, 0.14), 0 0 60px rgba(244, 63, 94, 0.08);
 }
 
 /* Floating animations */

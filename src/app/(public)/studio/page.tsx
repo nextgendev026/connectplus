@@ -10,6 +10,7 @@ import {
   Eye,
   EyeOff,
   Upload,
+  Loader2,
   X,
   Plus,
   Bold,
@@ -33,6 +34,9 @@ import {
   Pencil,
   FileText,
   BrainCircuit,
+  Sparkles,
+  AlignLeft,
+  Gauge,
 } from "lucide-react";
 
 const writingTips = [
@@ -129,6 +133,21 @@ export default function StudioPage() {
     category: string | null;
     trendingTopics: { title: string; mentions: number }[];
     confidence: number;
+  } | null>(null);
+
+  const [genBusy, setGenBusy] = useState<null | "headline" | "excerpt" | "topics">(null);
+  const [generated, setGenerated] = useState<{
+    type: string;
+    primary: string;
+    alternatives: string[];
+  } | null>(null);
+
+  const [enhanceBusy, setEnhanceBusy] = useState(false);
+  const [enhancement, setEnhancement] = useState<{
+    score: number;
+    grade: string;
+    readability: { sentences: number; words: number; avgSentenceWords: number; longSentenceCount: number };
+    suggestions: { kind: string; message: string }[];
   } | null>(null);
 
   const mountedRef = useRef(true);
@@ -400,6 +419,79 @@ export default function StudioPage() {
       confidence: Math.min(keywords.length / 10, 1),
     });
   }, []);
+
+  const generateAssist = useCallback(
+    async (type: "headline" | "excerpt" | "topics") => {
+      if (content.trim().length < 40) {
+        setError("Write at least 40 characters of content to generate AI suggestions.");
+        return;
+      }
+      setGenBusy(type);
+      setError(null);
+      try {
+        const res = await fetch("/api/ai/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ type, title, content }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setGenerated({ type, primary: data.primary, alternatives: data.alternatives ?? [] });
+        } else {
+          const err = await res.json().catch(() => ({}));
+          setError(err.error ?? "AI generation failed.");
+        }
+      } catch {
+        setError("AI generation failed. Check your connection.");
+      }
+      setGenBusy(null);
+    },
+    [title, content]
+  );
+
+  const applyGenerated = (value: string) => {
+    if (!generated) return;
+    if (generated.type === "headline") setTitle(value);
+    else if (generated.type === "excerpt") setExcerpt(value);
+    else if (generated.type === "topics") {
+      const next = value.split(",").map((t) => t.trim().toLowerCase().replace(/^#/, "")).filter(Boolean).slice(0, 10);
+      setTags((prev) => [...new Set([...prev, ...next])].slice(0, 10));
+      setTagInput("");
+    }
+  };
+
+  const runEnhance = useCallback(async () => {
+    if (content.trim().length < 40) {
+      setError("Write at least 40 characters of content to analyze.");
+      return;
+    }
+    setEnhanceBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/ai/enhance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ content }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setEnhancement({
+          score: data.score,
+          grade: data.grade,
+          readability: data.readability,
+          suggestions: data.suggestions ?? [],
+        });
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setError(err.error ?? "Enhancement analysis failed.");
+      }
+    } catch {
+      setError("Enhancement analysis failed. Check your connection.");
+    }
+    setEnhanceBusy(false);
+  }, [content]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -807,8 +899,8 @@ export default function StudioPage() {
                   {coverImage ? (
                     <div className="relative">
                       <img src={coverImage} alt="Cover" className="w-full h-44 sm:h-48 object-cover" />
-                      <div className="absolute inset-0 bg-surface-950/40 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
-                        <label className="cursor-pointer rounded-lg bg-surface-950/80 backdrop-blur-sm px-4 py-2 text-xs font-medium text-surface-50 hover:bg-surface-950 transition-colors border border-surface-700">
+                      <div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                        <label className="cursor-pointer rounded-lg bg-black/70 backdrop-blur-sm px-4 py-2 text-xs font-medium text-white hover:bg-black/80 transition-colors border border-white/20">
                           Change Image
                           <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
                         </label>
@@ -1112,6 +1204,117 @@ export default function StudioPage() {
                 </button>
               </div>
               <p className="text-[10px] text-surface-600 mt-2">Press Enter to add · {tags.length}/10 tags</p>
+            </div>
+
+            <div className="rounded-2xl bg-surface-900/60 border border-surface-800/50 p-5">
+              <h3 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <Sparkles className="w-3 h-3" />
+                AI Content Studio
+              </h3>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  onClick={() => generateAssist("headline")}
+                  disabled={genBusy !== null || content.trim().length < 40}
+                  className="flex flex-col items-center gap-1 rounded-lg bg-surface-800/60 border border-brand-500/20 px-2 py-2.5 text-[10px] text-brand-400 hover:bg-brand-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                >
+                  {genBusy === "headline" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PenLine className="h-3.5 w-3.5" />}
+                  Headline
+                </button>
+                <button
+                  onClick={() => generateAssist("excerpt")}
+                  disabled={genBusy !== null || content.trim().length < 40}
+                  className="flex flex-col items-center gap-1 rounded-lg bg-surface-800/60 border border-brand-500/20 px-2 py-2.5 text-[10px] text-brand-400 hover:bg-brand-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                >
+                  {genBusy === "excerpt" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <AlignLeft className="h-3.5 w-3.5" />}
+                  Excerpt
+                </button>
+                <button
+                  onClick={() => generateAssist("topics")}
+                  disabled={genBusy !== null || content.trim().length < 40}
+                  className="flex flex-col items-center gap-1 rounded-lg bg-surface-800/60 border border-brand-500/20 px-2 py-2.5 text-[10px] text-brand-400 hover:bg-brand-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                >
+                  {genBusy === "topics" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Tag className="h-3.5 w-3.5" />}
+                  Topics
+                </button>
+              </div>
+              <button
+                onClick={runEnhance}
+                disabled={enhanceBusy || content.trim().length < 40}
+                className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-surface-800/60 border border-brand-500/20 px-2 py-2 text-[10px] text-brand-400 hover:bg-brand-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                {enhanceBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Gauge className="h-3.5 w-3.5" />}
+                {enhanceBusy ? "Analyzing…" : "Enhance draft — readability & clarity"}
+              </button>
+              {enhancement && (
+                <div className="mt-3 rounded-lg border border-surface-700/60 bg-surface-950/40 p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-medium text-surface-400 uppercase tracking-wider">
+                      Enhancement — grade {enhancement.grade}
+                    </span>
+                    <button onClick={() => setEnhancement(null)} className="text-surface-500 hover:text-surface-300">
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="h-1.5 flex-1 rounded-full bg-surface-800">
+                      <div
+                        className={cn(
+                          "h-1.5 rounded-full",
+                          enhancement.score >= 75 ? "bg-emerald-500" : enhancement.score >= 50 ? "bg-amber-500" : "bg-red-500"
+                        )}
+                        style={{ width: `${enhancement.score}%` }}
+                      />
+                    </div>
+                    <span className="text-[10px] font-semibold text-surface-300">{enhancement.score}/100</span>
+                  </div>
+                  <p className="mt-2 text-[10px] text-surface-500">
+                    {enhancement.readability.sentences} sentences · {enhancement.readability.words} words · avg{" "}
+                    {enhancement.readability.avgSentenceWords} words/sentence
+                  </p>
+                  {enhancement.suggestions.length > 0 ? (
+                    <ul className="mt-2 space-y-1.5">
+                      {enhancement.suggestions.map((s, i) => (
+                        <li key={i} className="flex items-start gap-1.5 text-[11px] text-surface-300 leading-relaxed">
+                          <span className="mt-1 h-1 w-1 shrink-0 rounded-full bg-brand-400" />
+                          {s.message}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-2 text-[11px] text-emerald-400">Clean draft — no actionable suggestions. Nice.</p>
+                  )}
+                </div>
+              )}
+              {generated && (
+                <div className="mt-3 space-y-2 rounded-lg border border-surface-700/60 bg-surface-950/40 p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-medium text-surface-400 uppercase tracking-wider">
+                      {generated.type} suggestions
+                    </span>
+                    <button onClick={() => setGenerated(null)} className="text-surface-500 hover:text-surface-300">
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => applyGenerated(generated.primary)}
+                    className="block w-full text-left rounded-md bg-brand-500/10 border border-brand-500/20 px-3 py-2 text-xs text-brand-200 hover:bg-brand-500/20 transition-all"
+                    title="Click to use"
+                  >
+                    {generated.primary}
+                  </button>
+                  {generated.alternatives.map((alt, i) => (
+                    <button
+                      key={i}
+                      onClick={() => applyGenerated(alt)}
+                      className="block w-full text-left rounded-md bg-surface-800/60 border border-surface-700/50 px-3 py-2 text-xs text-surface-300 hover:border-brand-500/30 hover:text-brand-300 transition-all"
+                      title="Click to use"
+                    >
+                      {alt}
+                    </button>
+                  ))}
+                  <p className="text-[9px] text-surface-600">Click a suggestion to apply it.</p>
+                </div>
+              )}
             </div>
 
             <div className="rounded-2xl bg-gradient-to-br from-brand-500/5 to-accent-amber/5 border border-brand-500/10 p-5">

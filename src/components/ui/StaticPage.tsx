@@ -29,19 +29,19 @@ export function StaticPage({
     <div className="min-h-screen bg-surface-950">
       <div className="relative overflow-hidden">
         <div className="absolute inset-0 bg-mesh-gradient" />
-        <div className="absolute inset-0 bg-gradient-to-b from-surface-950 via-surface-950/40 to-surface-950" />
+        <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-black/40 to-black/70" />
         <div className="absolute top-0 right-0 w-full h-full pointer-events-none overflow-hidden">
           <div className="absolute top-[10%] right-[8%] w-72 h-72 bg-brand-500/6 rounded-full blur-3xl animate-float" />
           <div className="absolute bottom-[15%] left-[5%] w-48 h-48 bg-accent-cyan/6 rounded-full blur-3xl animate-float-delayed" />
         </div>
 
         <div className="relative max-w-4xl mx-auto px-4 sm:px-6 py-16 md:py-24">
-          <nav className="flex items-center gap-1.5 text-xs text-surface-500 mb-8">
-            <Link href="/" className="hover:text-brand-400 transition-colors">
+          <nav className="flex items-center gap-1.5 text-xs text-white/60 mb-8">
+            <Link href="/" className="hover:text-brand-300 transition-colors">
               Home
             </Link>
             <ChevronRight className="w-3 h-3" />
-            <span className="text-surface-400">{title}</span>
+            <span className="text-white/70">{title}</span>
           </nav>
 
           <div className="inline-flex items-center gap-2 rounded-full bg-brand-500/10 border border-brand-500/20 px-4 py-1.5 mb-6 animate-fade-in-up">
@@ -51,10 +51,10 @@ export function StaticPage({
             </span>
           </div>
 
-          <h1 className="font-display text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight leading-tight text-surface-50 mb-4 animate-fade-in-up animation-delay-100">
+          <h1 className="font-display text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight leading-tight text-white mb-4 animate-fade-in-up animation-delay-100">
             {title}
           </h1>
-          <p className="text-base sm:text-lg text-surface-400 leading-relaxed max-w-2xl animate-fade-in-up animation-delay-200">
+          <p className="text-base sm:text-lg text-white/75 leading-relaxed max-w-2xl animate-fade-in-up animation-delay-200">
             {subtitle}
           </p>
         </div>

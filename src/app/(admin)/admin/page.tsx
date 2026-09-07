@@ -152,7 +152,7 @@ export default function AdminCommandCenter() {
     <div className="min-h-screen bg-surface-950 p-6 lg:p-8">
       <div className="mx-auto max-w-[1600px] space-y-8">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500/10 border border-brand-500/20">
               <Cpu className="h-6 w-6 text-brand-500" />
@@ -172,7 +172,7 @@ export default function AdminCommandCenter() {
             >
               <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
             </button>
-            <span className="rounded-full bg-brand-500/10 border border-brand-500/20 px-3 py-1.5 text-xs font-medium text-brand-500">
+            <span className="hidden sm:inline-flex rounded-full bg-gradient-to-r from-brand-500/15 to-accent-coral/10 border border-brand-500/20 px-3 py-1.5 text-xs font-medium text-brand-500">
               <BrainCircuit className="mr-1 inline-block h-3.5 w-3.5" />
               Hive Mind Neural Engine
             </span>

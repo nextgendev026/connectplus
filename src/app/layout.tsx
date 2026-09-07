@@ -3,6 +3,7 @@ import "./globals.css";
 import ThemeProvider from "@/components/providers/ThemeProvider";
 import { RadioPlayerProvider } from "@/components/radio/RadioPlayerContext";
 import { MiniRadioPlayer } from "@/components/radio/MiniRadioPlayer";
+import { InstallPrompt } from "@/components/pwa/InstallPrompt";
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.AUTH_URL ?? "https://connectplusapp.vercel.app"),
@@ -49,6 +50,7 @@ export const viewport: Viewport = {
   themeColor: "#17130f",
   width: "device-width",
   initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
@@ -63,6 +65,7 @@ export default function RootLayout({
           <RadioPlayerProvider>
             {children}
             <MiniRadioPlayer />
+            <InstallPrompt />
           </RadioPlayerProvider>
         </ThemeProvider>
       </body>

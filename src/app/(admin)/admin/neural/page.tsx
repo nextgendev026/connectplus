@@ -90,7 +90,7 @@ export default function NeuralMindPage() {
     <div className="min-h-screen bg-surface-950 -m-6 p-6 lg:p-8">
       <div className="mx-auto max-w-[1600px] space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500/10 border border-brand-500/20">
               <BrainCircuit className="h-6 w-6 text-brand-500" />
@@ -129,7 +129,7 @@ export default function NeuralMindPage() {
               {isTraining ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
               {isTraining ? "Training..." : "Train the Brains"}
             </button>
-            <div className="flex items-center gap-2 rounded-full bg-surface-800/50 px-3 py-1.5 border border-surface-700">
+            <div className="hidden sm:flex items-center gap-2 rounded-full bg-surface-800/50 px-3 py-1.5 border border-surface-700">
               <span className="h-2 w-2 rounded-full bg-brand-500 animate-pulse" />
               <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
               <span className="text-xs text-surface-400">Neural + Hive Online</span>
