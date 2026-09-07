@@ -3,6 +3,7 @@ import Image from "next/image";
 import Script from "next/script";
 import { prisma } from "@/lib/prisma";
 import { cn, estimateReadTime, timeAgo } from "@/lib/utils";
+import { FeedLiveRefresh } from "@/components/feed/FeedLiveRefresh";
 import {
   TrendingUp,
   Eye,
@@ -792,6 +793,8 @@ export default async function HomeFeedPage({
       </div>
 
       <StaggerObserverScript />
+
+      <FeedLiveRefresh />
     </div>
   );
 }
@@ -827,9 +830,16 @@ function StaggerObserverScript() {
             });
           }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
 
-          document.querySelectorAll('.stagger-card').forEach(function(card) {
-            observer.observe(card);
-          });
+          function observeCards() {
+            document.querySelectorAll('.stagger-card:not(.is-visible)').forEach(function(card) {
+              observer.observe(card);
+            });
+          }
+
+          observeCards();
+
+          var mo = new MutationObserver(observeCards);
+          mo.observe(document.documentElement, { childList: true, subtree: true });
         })();
       `}
     </Script>

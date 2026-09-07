@@ -140,6 +140,7 @@ export async function POST(request: NextRequest) {
         authorId: userId,
         categoryId: categoryId || null,
         status: postStatus,
+        moderationStatus: postStatus === "PUBLISHED" ? "APPROVED" : "PENDING",
         publishedAt: postStatus === "PUBLISHED" ? new Date() : null,
         tags: { connect: tagConnections },
       },

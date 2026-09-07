@@ -3,7 +3,7 @@ import "./globals.css";
 import ThemeProvider from "@/components/providers/ThemeProvider";
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.AUTH_URL ?? "https://connectplus-fawn.vercel.app"),
+  metadataBase: new URL(process.env.AUTH_URL ?? "https://connectplusapp.vercel.app"),
   title: "connectPlus - Stories that connect East Africa",
   description:
     "A modern social blogging platform sharing stories, ideas, and perspectives from across East Africa. Join the conversation.",

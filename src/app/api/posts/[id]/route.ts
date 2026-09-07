@@ -94,6 +94,7 @@ export async function PUT(
       categoryId?: string | null;
       featured?: boolean;
       status?: string;
+      moderationStatus?: string;
       publishedAt?: Date;
     } = {};
 
@@ -108,6 +109,7 @@ export async function PUT(
       updateData.status = String(status);
       if (status === "PUBLISHED") {
         updateData.publishedAt = new Date();
+        updateData.moderationStatus = "APPROVED";
       }
     }
 
