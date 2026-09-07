@@ -1,0 +1,272 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 620" width="720" height="620">
+  <defs>
+    <!-- Sunset sky gradient -->
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#9D4E2F"/>
+      <stop offset="35%" stop-color="#C87040"/>
+      <stop offset="65%" stop-color="#E89B53"/>
+      <stop offset="100%" stop-color="#FCD88C"/>
+    </linearGradient>
+    <!-- Elephant gradient -->
+    <linearGradient id="eleph" x1="0.4" y1="0" x2="0.6" y2="1">
+      <stop offset="0%" stop-color="#C47A48"/>
+      <stop offset="50%" stop-color="#B75D35"/>
+      <stop offset="100%" stop-color="#9D4E2F"/>
+    </linearGradient>
+    <!-- Ear gradient -->
+    <radialGradient id="earG" cx="0.55" cy="0.45" r="0.55">
+      <stop offset="0%" stop-color="#D09050"/>
+      <stop offset="100%" stop-color="#B06038"/>
+    </radialGradient>
+    <!-- Sun glow -->
+    <radialGradient id="sunGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#FFFDE8"/>
+      <stop offset="70%" stop-color="#FFF5CC"/>
+      <stop offset="100%" stop-color="#FCD88C"/>
+    </radialGradient>
+    <!-- Hill gradients -->
+    <linearGradient id="hillFar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7A4020"/>
+      <stop offset="100%" stop-color="#5C2E14"/>
+    </linearGradient>
+    <linearGradient id="hillNear" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4C2815"/>
+      <stop offset="100%" stop-color="#3A1A0A"/>
+    </linearGradient>
+    <!-- Branch / network line gradient -->
+    <linearGradient id="branchG" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#1E0E06"/>
+      <stop offset="50%" stop-color="#3D2210"/>
+      <stop offset="100%" stop-color="#1E0E06"/>
+    </linearGradient>
+    <!-- Node glow -->
+    <radialGradient id="nodeGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="50%" stop-color="#E8A558"/>
+      <stop offset="100%" stop-color="#C87040"/>
+    </radialGradient>
+    <!-- Circle clip -->
+    <clipPath id="cc">
+      <circle cx="360" cy="215" r="175"/>
+    </clipPath>
+    <!-- Text shadow -->
+    <filter id="tsh" x="-2%" y="-2%" width="104%" height="104%">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="1" flood-color="#00000015"/>
+    </filter>
+    <!-- Glow filter for nodes -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- ====== BACKGROUND ====== -->
+  <rect width="720" height="620" fill="#F5F0E6"/>
+
+  <!-- ====== EMBLEM CIRCLE ====== -->
+  <g clip-path="url(#cc)">
+    <!-- Sky -->
+    <circle cx="360" cy="215" r="175" fill="url(#sky)"/>
+
+    <!-- Sun -->
+    <circle cx="335" cy="300" r="26" fill="url(#sunGlow)"/>
+
+    <!-- Far hills -->
+    <path d="M185 312 Q220 282 265 296 Q305 278 345 290 Q385 275 420 286 Q455 272 490 285 Q525 275 535 312 L535 390 L185 390 Z" 
+          fill="url(#hillFar)" opacity="0.7"/>
+
+    <!-- Near hills -->
+    <path d="M185 330 Q220 305 268 318 Q310 302 350 313 Q385 300 418 310 Q450 298 485 308 Q515 300 535 330 L535 390 L185 390 Z" 
+          fill="url(#hillNear)"/>
+
+    <!-- Ground fill -->
+    <rect x="185" y="360" width="350" height="35" fill="#2E140A"/>
+
+    <!-- ============================================================ -->
+    <!-- ====== ACACIA TREE WITH CONNECTED BRANCHES NETWORK ====== -->
+    <!-- ============================================================ -->
+    <g>
+      <!-- ====== TRUNK ====== -->
+      <path d="M235 365 Q233 340 230 310 Q228 290 232 270 Q234 255 238 245" 
+            stroke="#1E0E06" stroke-width="7" fill="none" stroke-linecap="round"/>
+      <!-- Trunk taper line -->
+      <path d="M235 365 Q237 340 240 310 Q242 290 240 270 Q238 255 236 245" 
+            stroke="#1E0E06" stroke-width="4" fill="none" stroke-linecap="round" opacity="0.3"/>
+
+      <!-- ====== PRIMARY BRANCH STRUCTURE ====== -->
+      <!-- Main left branch (largest canopy) -->
+      <path d="M238 248 Q220 230 195 215 Q170 200 140 195" 
+            stroke="#1E0E06" stroke-width="5" fill="none" stroke-linecap="round"/>
+      <!-- Secondary left branch -->
+      <path d="M225 275 Q210 260 190 252 Q168 245 148 248" 
+            stroke="#1E0E06" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+      <!-- Tertiary left branch -->
+      <path d="M222 295 Q205 285 188 280 Q170 277 155 280" 
+            stroke="#1E0E06" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+
+      <!-- Main right branch (secondary canopy) -->
+      <path d="M236 252 Q255 235 278 222 Q300 212 325 208" 
+            stroke="#1E0E06" stroke-width="4.5" fill="none" stroke-linecap="round"/>
+      <!-- Secondary right branch -->
+      <path d="M238 268 Q260 255 282 248 Q305 240 322 242" 
+            stroke="#1E0E06" stroke-width="3" fill="none" stroke-linecap="round"/>
+
+      <!-- Upper canopy connector branch -->
+      <path d="M195 215 Q230 200 278 222" 
+            stroke="#1E0E06" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+      <!-- Cross connector: left main to right secondary -->
+      <path d="M170 210 Q210 195 255 200 Q285 205 310 215" 
+            stroke="#1E0E06" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.7"/>
+
+      <!-- ====== CONNECTED NETWORK BRANCHES (the "connectivity" concept) ====== -->
+      <!-- These thinner branches form an interconnected network pattern -->
+      
+      <!-- Upper network web -->
+      <path d="M148 200 Q160 185 180 178 Q200 172 218 180 Q235 186 248 200" 
+            stroke="#3D2210" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+      <path d="M180 178 Q195 168 215 165 Q235 162 255 168 Q270 175 280 185" 
+            stroke="#3D2210" stroke-width="1.5" fill="none" stroke-linecap="round" opacity="0.8"/>
+      <path d="M215 165 Q235 158 258 160 Q278 164 300 175" 
+            stroke="#3D2210" stroke-width="1.2" fill="none" stroke-linecap="round" opacity="0.6"/>
+      
+      <!-- Mid network web -->
+      <path d="M155 255 Q175 245 200 242 Q225 240 250 248" 
+            stroke="#3D2210" stroke-width="1.5" fill="none" stroke-linecap="round" opacity="0.7"/>
+      <path d="M148 248 Q168 238 192 235 Q218 232 248 238 Q270 245 288 255" 
+            stroke="#3D2210" stroke-width="1.5" fill="none" stroke-linecap="round" opacity="0.6"/>
+      <path d="M190 252 Q210 242 235 240 Q260 238 282 248" 
+            stroke="#3D2210" stroke-width="1.2" fill="none" stroke-linecap="round" opacity="0.5"/>
+
+      <!-- Diagonal connectors (network links) -->
+      <path d="M160 195 Q175 230 188 280" 
+            stroke="#3D2210" stroke-width="1" fill="none" stroke-linecap="round" opacity="0.35" stroke-dasharray="4,3"/>
+      <path d="M250 205 Q265 230 275 255" 
+            stroke="#3D2210" stroke-width="1" fill="none" stroke-linecap="round" opacity="0.35" stroke-dasharray="4,3"/>
+      <path d="M218 180 Q225 215 232 270" 
+            stroke="#3D2210" stroke-width="1" fill="none" stroke-linecap="round" opacity="0.3" stroke-dasharray="4,3"/>
+      <path d="M195 215 Q210 235 222 295" 
+            stroke="#3D2210" stroke-width="1" fill="none" stroke-linecap="round" opacity="0.3" stroke-dasharray="4,3"/>
+      <path d="M140 198 Q155 225 155 280" 
+            stroke="#3D2210" stroke-width="1" fill="none" stroke-linecap="round" opacity="0.3" stroke-dasharray="4,3"/>
+      <path d="M310 212 Q315 230 322 248" 
+            stroke="#3D2210" stroke-width="1" fill="none" stroke-linecap="round" opacity="0.35" stroke-dasharray="4,3"/>
+
+      <!-- ====== NETWORK NODES (connection points) ====== -->
+      <!-- These glowing dots represent social connections / blog nodes -->
+      <!-- Primary nodes at branch junctions -->
+      <circle cx="238" cy="248" r="4" fill="url(#nodeGlow)" filter="url(#glow)"/>
+      <circle cx="195" cy="215" r="3.5" fill="url(#nodeGlow)" filter="url(#glow)"/>
+      <circle cx="278" cy="222" r="3.5" fill="url(#nodeGlow)" filter="url(#glow)"/>
+      <circle cx="148" cy="200" r="3" fill="url(#nodeGlow)" filter="url(#glow)"/>
+      <circle cx="325" cy="210" r="3" fill="url(#nodeGlow)" filter="url(#glow)"/>
+
+      <!-- Secondary nodes at branch tips -->
+      <circle cx="140" cy="195" r="2.5" fill="url(#nodeGlow)" filter="url(#glow)"/>
+      <circle cx="148" cy="248" r="2.5" fill="url(#nodeGlow)" filter="url(#glow)"/>
+      <circle cx="155" cy="280" r="2" fill="url(#nodeGlow)" filter="url(#glow)"/>
+      <circle cx="322" cy="242" r="2.5" fill="url(#nodeGlow)" filter="url(#glow)"/>
+
+      <!-- Tertiary nodes on the network web -->
+      <circle cx="180" cy="178" r="2" fill="url(#nodeGlow)" filter="url(#glow)"/>
+      <circle cx="218" cy="180" r="2" fill="url(#nodeGlow)" filter="url(#glow)"/>
+      <circle cx="255" cy="168" r="2" fill="url(#nodeGlow)" filter="url(#glow)"/>
+      <circle cx="215" cy="165" r="1.8" fill="url(#nodeGlow)" filter="url(#glow)"/>
+      <circle cx="300" cy="175" r="1.8" fill="url(#nodeGlow)" filter="url(#glow)"/>
+      <circle cx="235" cy="162" r="1.5" fill="url(#nodeGlow)" filter="url(#glow)"/>
+      <circle cx="200" cy="242" r="2" fill="url(#nodeGlow)" filter="url(#glow)"/>
+      <circle cx="250" cy="248" r="2" fill="url(#nodeGlow)" filter="url(#glow)"/>
+      <circle cx="192" cy="235" r="1.8" fill="url(#nodeGlow)" filter="url(#glow)"/>
+      <circle cx="170" cy="210" r="2" fill="url(#nodeGlow)" filter="url(#glow)"/>
+      <circle cx="248" cy="200" r="2" fill="url(#nodeGlow)" filter="url(#glow)"/>
+      <circle cx="282" cy="248" r="2" fill="url(#nodeGlow)" filter="url(#glow)"/>
+      <circle cx="258" cy="160" r="1.5" fill="url(#nodeGlow)" filter="url(#glow)"/>
+
+      <!-- ====== FLAT CANOPY CAPS (acacia style) ====== -->
+      <!-- Main left canopy -->
+      <ellipse cx="168" cy="195" rx="45" ry="14" fill="#1E0E06"/>
+      <ellipse cx="150" cy="200" rx="25" ry="10" fill="#1E0E06"/>
+      <ellipse cx="190" cy="198" rx="22" ry="9" fill="#1E0E06"/>
+
+      <!-- Right canopy -->
+      <ellipse cx="305" cy="205" rx="35" ry="12" fill="#1E0E06"/>
+      <ellipse cx="325" cy="210" rx="20" ry="9" fill="#1E0E06"/>
+      <ellipse cx="285" cy="208" rx="18" ry="8" fill="#1E0E06"/>
+
+      <!-- Upper floating canopy wisps -->
+      <ellipse cx="215" cy="168" rx="30" ry="8" fill="#1E0E06" opacity="0.7"/>
+      <ellipse cx="245" cy="162" rx="20" ry="6" fill="#1E0E06" opacity="0.5"/>
+      <ellipse cx="270" cy="170" rx="18" ry="6" fill="#1E0E06" opacity="0.5"/>
+    </g>
+
+    <!-- ====== ELEPHANT HEAD ====== -->
+    <g transform="translate(410, 135)">
+      <!-- Ear - large spiral shape -->
+      <path d="M-5 -5 Q-15 -30 -5 -52 Q12 -72 38 -68 Q60 -62 68 -42 Q76 -22 68 -5 
+               Q60 8 48 12 Q38 16 30 10 Q22 5 18 -2 Q12 -12 14 -22 Q16 -32 24 -38 
+               Q32 -42 38 -36 Q42 -30 40 -20 Q38 -14 34 -10 Q28 -6 22 -10 Q18 -14 20 -20 Q22 -26 28 -24"
+            fill="url(#earG)" stroke="#3D2210" stroke-width="2" stroke-linejoin="round"/>
+
+      <!-- PLUS SIGN inside ear -->
+      <g transform="translate(28, -34)">
+        <rect x="-4.5" y="-15" width="9" height="30" rx="2" fill="#FFFFFF"/>
+        <rect x="-15" y="-4.5" width="30" height="9" rx="2" fill="#FFFFFF"/>
+      </g>
+
+      <!-- Head / face -->
+      <path d="M48 12 Q60 18 70 8 Q82 -5 85 -22 Q88 -42 78 -55 Q68 -66 52 -68 
+               Q38 -66 30 -55 Q22 -44 20 -28 Q18 -14 22 -2 Q26 8 34 14 Q42 18 48 12 Z"
+            fill="url(#eleph)" stroke="#3D2210" stroke-width="2" stroke-linejoin="round"/>
+
+      <!-- Forehead-to-trunk bridge -->
+      <path d="M48 12 Q55 22 60 35 Q66 48 68 62"
+            stroke="#3D2210" stroke-width="2" fill="none"/>
+
+      <!-- Trunk J-hook -->
+      <path d="M60 35 Q68 50 72 68 Q74 82 68 92 Q62 100 54 96 Q48 90 50 80 Q52 70 56 60 Q60 50 60 35 Z"
+            fill="url(#eleph)" stroke="#3D2210" stroke-width="2" stroke-linejoin="round"/>
+      <path d="M66 58 Q62 68 60 78" stroke="#8A5020" stroke-width="1" fill="none" opacity="0.4"/>
+      <path d="M64 65 Q60 74 58 82" stroke="#8A5020" stroke-width="0.8" fill="none" opacity="0.3"/>
+
+      <!-- Tusk -->
+      <path d="M58 30 Q68 40 66 55 Q64 60 60 54 Q56 46 58 30 Z"
+            fill="#F5F0E6" stroke="#3D2210" stroke-width="1.2" stroke-linejoin="round"/>
+
+      <!-- Eye -->
+      <ellipse cx="58" cy="-16" rx="5" ry="6.5" fill="#140A04"/>
+      <ellipse cx="59.5" cy="-17.5" rx="2" ry="3" fill="#FFFFFF" opacity="0.75"/>
+
+      <!-- Head wrinkle detail -->
+      <path d="M42 -42 Q56 -52 68 -48" stroke="#7A3A18" stroke-width="1.5" fill="none" opacity="0.3"/>
+      <path d="M36 -35 Q50 -44 62 -42" stroke="#7A3A18" stroke-width="1" fill="none" opacity="0.2"/>
+    </g>
+  </g>
+
+  <!-- ====== CIRCLE BORDER ====== -->
+  <circle cx="360" cy="215" r="175" fill="none" stroke="#3D5266" stroke-width="7"/>
+
+  <!-- ====== TEXT ====== -->
+  <!-- CONNECT -->
+  <text y="455" font-family="'Arial Black', 'Helvetica Neue', Impact, sans-serif" 
+        font-weight="900" font-size="58" fill="#3D5266" letter-spacing="2" filter="url(#tsh)">
+    <tspan x="115">CONNECT</tspan>
+  </text>
+
+  <!-- PLUS! -->
+  <text y="455" font-family="'Arial Black', 'Helvetica Neue', Impact, sans-serif" 
+        font-weight="900" font-size="58" fill="#B75D35" letter-spacing="2" filter="url(#tsh)">
+    <tspan x="438">PLUS!</tspan>
+  </text>
+
+  <!-- Tagline -->
+  <text x="360" y="492" text-anchor="middle" 
+        font-family="'Helvetica Neue', 'Segoe UI', Arial, sans-serif" 
+        font-weight="500" font-size="14" fill="#3D5266" letter-spacing="7">
+    SOCIAL BLOGGING APP
+  </text>
+
+  <!-- Decorative accent line -->
+  <line x1="265" y1="504" x2="455" y2="504" stroke="#B75D35" stroke-width="1.5" opacity="0.35" stroke-linecap="round"/>
+</svg>

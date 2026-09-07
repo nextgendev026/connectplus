@@ -158,7 +158,7 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
       setRecentlyPlayed(recent);
       safeSetStorage("radio-recently", JSON.stringify(recent));
 
-      audio.src = next.streamUrl;
+      audio.src = `/api/radio/stream?stationId=${encodeURIComponent(next.id)}`;
       setStreamState("connecting");
       audio.play().catch(() => {
         setStreamState("error");

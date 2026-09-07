@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import SavannaMark from "@/components/ui/SavannaMark";
+import ConnectPlusMark from "@/components/ui/ConnectPlusMark";
 
 export default function Logo({
   size = "md",
@@ -27,7 +27,7 @@ export default function Logo({
           s.icon
         )}
       >
-        <SavannaMark className="h-full w-full" />
+        <ConnectPlusMark className="h-full w-full" />
       </div>
       <div className="flex items-baseline">
         <span className={cn("font-extrabold text-surface-50 tracking-tight leading-none", s.text)}>

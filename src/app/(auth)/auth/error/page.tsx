@@ -1,5 +1,5 @@
 import Link from "next/link";
-import SavannaMark from "@/components/ui/SavannaMark";
+import ConnectPlusMark from "@/components/ui/ConnectPlusMark";
 import { AlertTriangle, ArrowLeft, LifeBuoy } from "lucide-react";
 
 interface SearchParams {
@@ -39,7 +39,7 @@ export default async function AuthErrorPage({ searchParams }: { searchParams: Pr
       <div className="relative w-full max-w-md">
         {/* Logo */}
         <Link href="/" className="flex items-center justify-center gap-2 mb-8">
-          <SavannaMark className="w-10 h-10" />
+          <ConnectPlusMark className="w-10 h-10" />
           <span className="text-xl font-display font-bold text-surface-50">
             connect<span className="text-brand-400">Plus</span>
           </span>

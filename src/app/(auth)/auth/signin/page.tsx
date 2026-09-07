@@ -5,7 +5,7 @@ import Link from "next/link";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
-import SavannaMark from "@/components/ui/SavannaMark";
+import ConnectPlusMark from "@/components/ui/ConnectPlusMark";
 import {
   Mail,
   Lock,
@@ -66,7 +66,7 @@ export default function SignInPage() {
       <div className="relative w-full max-w-md">
         {/* Logo */}
         <Link href="/" className="flex items-center justify-center gap-2 mb-8">
-          <SavannaMark className="w-10 h-10" />
+          <ConnectPlusMark className="w-10 h-10" />
           <span className="text-xl font-display font-bold">
             connect<span className="text-brand-400">Plus</span>
           </span>

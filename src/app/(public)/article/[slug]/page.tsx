@@ -1,22 +1,16 @@
 import Link from "next/link";
 import Image from "next/image";
 
-import {
-  Clock,
-  Eye,
-  Heart,
-  MessageCircle,
-  Share2,
-  Send,
-  Link2,
-  Copy,
-  ChevronRight,
-} from "lucide-react";
+import { Clock, Eye, MessageCircle, ChevronRight } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { timeAgo, formatDate, estimateReadTime } from "@/lib/utils";
 import { BookmarkButton } from "@/components/ui/BookmarkButton";
 import { FollowButton } from "@/components/ui/FollowButton";
+import { LikeButton } from "@/components/ui/LikeButton";
+import { ArticleActions } from "@/components/ui/ArticleActions";
+import { CommentsSection } from "@/components/ui/CommentsSection";
+import { StyledContent } from "@/components/ui/StyledContent";
 
 export default async function ArticlePage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
@@ -176,94 +170,29 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
               ))}
             </div>
 
-            <div className="prose prose-lg max-w-none">
-              {post.content.split("\n\n").map((paragraph, i) => (
-                <p key={i} className="text-surface-300 leading-relaxed mb-6 text-base">
-                  {paragraph}
-                </p>
-              ))}
-            </div>
+            <StyledContent content={post.content} />
 
             {/* Actions */}
             <div className="mt-12 flex items-center justify-between border-t border-surface-800 pt-6">
               <div className="flex items-center gap-4">
-                <button className="flex items-center gap-2 rounded-full bg-surface-800 px-4 py-2 text-sm text-surface-300 hover:bg-surface-700 hover:text-surface-50 transition-colors">
-                  <Heart className="h-4 w-4" />
-                  <span>{post._count.likes}</span>
-                </button>
-                <button className="flex items-center gap-2 rounded-full bg-surface-800 px-4 py-2 text-sm text-surface-300 hover:bg-surface-700 hover:text-surface-50 transition-colors">
+                <LikeButton postId={post.id} initialCount={post._count.likes} />
+                <a
+                  href="#comments"
+                  className="flex items-center gap-2 rounded-full bg-surface-800 px-4 py-2 text-sm text-surface-300 hover:bg-surface-700 hover:text-surface-50 transition-colors"
+                >
                   <MessageCircle className="h-4 w-4" />
                   <span>{post._count.comments}</span>
-                </button>
-                <BookmarkButton
-                  postId={post.id}
-                  fetchState
-                  variant="pill"
-                />
+                </a>
+                <BookmarkButton postId={post.id} fetchState variant="pill" />
               </div>
               <div className="flex items-center gap-2">
-                <button className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-800 text-surface-400 hover:bg-surface-700 hover:text-surface-50 transition-colors">
-                  <Send className="h-4 w-4" />
-                </button>
-                <button className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-800 text-surface-400 hover:bg-surface-700 hover:text-surface-50 transition-colors">
-                  <Link2 className="h-4 w-4" />
-                </button>
-                <button className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-800 text-surface-400 hover:bg-surface-700 hover:text-surface-50 transition-colors">
-                  <Share2 className="h-4 w-4" />
-                </button>
-                <button className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-800 text-surface-400 hover:bg-surface-700 hover:text-surface-50 transition-colors">
-                  <Copy className="h-4 w-4" />
-                </button>
+                <ArticleActions url={`/article/${post.slug}`} title={post.title} />
               </div>
             </div>
 
             {/* Comments */}
-            <div className="mt-12">
-              <h3 className="text-lg font-bold text-surface-50 mb-6">Comments ({post.comments.length})</h3>
-              <div className="mb-6">
-                <CommentForm postId={post.id} />
-              </div>
-              <div className="space-y-6">
-                {post.comments.map((comment) => (
-                  <div key={comment.id} className="flex gap-3">
-                    <div className="h-8 w-8 flex-shrink-0 rounded-full bg-surface-700 flex items-center justify-center text-xs font-bold text-surface-50">
-                      {comment.author.name?.charAt(0) ?? "?"}
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-surface-50">{comment.author.name ?? "Anonymous"}</span>
-                        <span className="text-xs text-surface-500">@{comment.author.username}</span>
-                        <span className="text-xs text-surface-600">{timeAgo(comment.createdAt)}</span>
-                      </div>
-                      <p className="mt-1 text-sm text-surface-300">{comment.content}</p>
-                      <button className="mt-2 flex items-center gap-1 text-xs text-surface-500 hover:text-surface-50 transition-colors">
-                        <Heart className="h-3 w-3" />
-                      </button>
-                    </div>
-
-                    {/* Replies */}
-                    {comment.replies.length > 0 && (
-                      <div className="mt-4 ml-8 space-y-4 border-l border-surface-800 pl-4">
-                        {comment.replies.map((reply) => (
-                          <div key={reply.id} className="flex gap-3">
-                            <div className="h-6 w-6 flex-shrink-0 rounded-full bg-surface-700 flex items-center justify-center text-[10px] font-bold text-surface-50">
-                              {reply.author.name?.charAt(0) ?? "?"}
-                            </div>
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm font-medium text-surface-50">{reply.author.name ?? "Anonymous"}</span>
-                                <span className="text-xs text-surface-500">@{reply.author.username}</span>
-                                <span className="text-xs text-surface-600">{timeAgo(reply.createdAt)}</span>
-                              </div>
-                              <p className="mt-1 text-sm text-surface-300">{reply.content}</p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+            <div id="comments">
+              <CommentsSection postId={post.id} initialComments={post.comments} />
             </div>
           </article>
 
@@ -321,42 +250,5 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
         </div>
       </div>
     </div>
-  );
-}
-
-function CommentForm({ postId }: { postId: string }) {
-  return (
-    <form
-      action={async (formData: FormData) => {
-        "use server";
-        const content = formData.get("content") as string;
-        if (!content?.trim()) return;
-        const session = await auth();
-        if (!session?.user) return;
-        await prisma.comment.create({
-          data: {
-            content: content.trim(),
-            authorId: session.user.id,
-            postId,
-          },
-        });
-      }}
-    >
-      <textarea
-        name="content"
-        placeholder="Share your thoughts..."
-        className="w-full rounded-xl border border-surface-700 bg-surface-800/50 p-4 text-sm text-surface-50 placeholder-surface-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 resize-none"
-        rows={3}
-        required
-      />
-      <div className="mt-2 flex justify-end">
-        <button
-          type="submit"
-          className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 transition-colors"
-        >
-          Post Comment
-        </button>
-      </div>
-    </form>
   );
 }

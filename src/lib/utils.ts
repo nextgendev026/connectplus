@@ -40,12 +40,18 @@ export function truncate(str: string, length: number): string {
 
 export function estimateReadTime(content: string): number {
   const wordsPerMinute = 200;
-  const words = content.split(/\s+/).length;
+  const plain = content.replace(/<[^>]+>/g, " ").replace(/[#*_`~>]/g, "");
+  const words = plain.trim().split(/\s+/).filter(Boolean).length;
   return Math.max(1, Math.ceil(words / wordsPerMinute));
 }
 
 export function generateExcerpt(content: string, maxLength = 160): string {
-  const plain = content.replace(/<[^>]+>/g, "").replace(/[#*_~`]/g, "");
+  const plain = content
+    .replace(/<[^>]+>/g, " ")
+    .replace(/[#*_~`>]/g, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
   return truncate(plain, maxLength);
 }
 
