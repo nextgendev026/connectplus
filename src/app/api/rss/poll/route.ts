@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { inngest } from "@/lib/inngest";
+import { triggerRssPoll } from "@/lib/inngest-trigger";
 
 // Manual trigger endpoint for admin panel
 // Body: { trigger: "rss-poll" } or { trigger: "rss-poll-feed", feedId: "feed_123" }
@@ -10,27 +10,40 @@ export async function POST(request: NextRequest) {
     const { trigger, feedId } = body;
 
     if (trigger === "rss-poll") {
-      // Trigger Inngest RSS poll function
-      await inngest.send({
-        name: "rss-poll",
-      });
+      const result = await triggerRssPoll();
 
-      return NextResponse.json({ 
-        success: true, 
-        message: "RSS poll scheduled via Inngest - will run on next schedule"
+      if (result.mode === "direct") {
+        return NextResponse.json({
+          success: true,
+          mode: "direct",
+          message: `RSS poll completed: ${result.summary.newArticles} new articles from ${result.summary.feedsPolled} feeds`,
+          summary: result.summary,
+        });
+      }
+
+      return NextResponse.json({
+        success: true,
+        mode: "inngest",
+        message: "RSS poll scheduled via Inngest - will run on next schedule",
       });
     }
 
     if (trigger === "rss-poll-feed" && feedId) {
-      // Trigger specific feed poll, passing the feedId in the event payload
-      await inngest.send({
-        name: "rss-poll-feed",
-        data: { feedId },
-      });
+      const result = await triggerRssPoll(feedId);
 
-      return NextResponse.json({ 
-        success: true, 
-        message: `RSS feed ${feedId} poll scheduled via Inngest`
+      if (result.mode === "direct") {
+        return NextResponse.json({
+          success: true,
+          mode: "direct",
+          message: `RSS feed ${feedId} poll completed`,
+          summary: result.summary,
+        });
+      }
+
+      return NextResponse.json({
+        success: true,
+        mode: "inngest",
+        message: `RSS feed ${feedId} poll scheduled via Inngest`,
       });
     }
 
@@ -49,9 +62,10 @@ export async function POST(request: NextRequest) {
 
 // GET: Health check
 export async function GET(request: NextRequest) {
-  return NextResponse.json({ 
-    status: "ok", 
+  return NextResponse.json({
+    status: "ok",
     message: "RSS poll endpoint active",
-    note: "Use POST with { trigger: 'rss-poll' } to schedule via Inngest"
+    note: "Use POST with { trigger: 'rss-poll' } to run or schedule a poll",
+    inngest: Boolean(process.env.INNGEST_EVENT_KEY),
   });
 }

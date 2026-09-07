@@ -1,29 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
-import { inngest } from "@/lib/inngest";
+import { triggerRssPoll } from "@/lib/inngest-trigger";
 
-// This endpoint triggers Inngest functions instead of running directly
-// Vercel free tier limits: 1 cron minute, 10s function timeout
-// Inngest: Unlimited scheduling, no function timeout restrictions
+// Cron entrypoint. When Inngest Cloud is connected (INNGEST_EVENT_KEY set) it
+// routes into the Inngest queue; otherwise it polls inline so RSS automation
+// keeps working. Free Vercel scheduling is limited to 1 cron/day, so daily
+// granularity is the floor here and Inngest provides the finer cadence.
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const trigger = searchParams.get("trigger");
 
   if (trigger === "rss-poll") {
-    // Trigger the Inngest RSS poll function
-    await inngest.send({
-      name: "rss-poll",
-    });
+    const result = await triggerRssPoll();
 
-    return NextResponse.json({ 
-      success: true, 
-      message: "RSS poll triggered via Inngest"
+    if (result.mode === "direct") {
+      return NextResponse.json({
+        success: true,
+        mode: "direct",
+        summary: result.summary,
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      mode: "inngest",
+      message: "RSS poll scheduled via Inngest",
     });
   }
 
-  return NextResponse.json({ 
+  return NextResponse.json({
     availableTriggers: ["rss-poll"],
-    message: "Use ?trigger=rss-poll to start RSS polling"
+    message: "Use ?trigger=rss-poll to start RSS polling",
   });
 }
 
@@ -33,18 +40,18 @@ export async function POST(request: NextRequest) {
   const { trigger } = body;
 
   if (trigger === "rss-poll") {
-    await inngest.send({
-      name: "rss-poll",
-    });
+    const result = await triggerRssPoll();
 
-    return NextResponse.json({ 
-      success: true, 
-      message: "RSS poll triggered via Inngest POST"
+    if (result.mode === "direct") {
+      return NextResponse.json({ success: true, mode: "direct", summary: result.summary });
+    }
+
+    return NextResponse.json({
+      success: true,
+      mode: "inngest",
+      message: "RSS poll scheduled via Inngest",
     });
   }
 
-  return NextResponse.json(
-    { error: "Unknown trigger" },
-    { status: 400 }
-  );
+  return NextResponse.json({ error: "Unknown trigger" }, { status: 400 });
 }

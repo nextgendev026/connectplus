@@ -88,7 +88,8 @@ export const rssPoll = inngest.createFunction(
   {
     id: "rss-poll",
     name: "Poll RSS feeds",
-    triggers: [{ cron: "0 0 * * *" }, { event: "rss-poll" }],
+    // Re-poll on the hour; per-feed lastPolled intervals throttle actual fetches
+  triggers: [{ cron: "0 * * * *" }, { event: "rss-poll" }],
   },
   async ({ step }) => {
     const summary = await step.run("poll-feeds", async () => pollFeeds());
