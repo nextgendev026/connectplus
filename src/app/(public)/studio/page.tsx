@@ -78,7 +78,7 @@ export default function StudioPage() {
   const [copilotBusy, setCopilotBusy] = useState<string | null>(null);
   const [copilotPrompt, setCopilotPrompt] = useState("");
   const [copilotError, setCopilotError] = useState<string | null>(null);
-  const [copilotResult, setCopilotResult] = useState<{ action: "rewrite" | "continue" | "outline" | "summarize" | "headline" | "tags" | "curate" | "assist"; text: string; alternatives?: string[]; meta?: { notes?: string[]; score?: number; grade?: string; heading?: string; tags?: string[]; wordsBefore?: number; wordsAfter?: number } } | null>(null);
+  const [copilotResult, setCopilotResult] = useState<{ action: "rewrite" | "continue" | "outline" | "summarize" | "headline" | "tags" | "curate" | "assist" | "seo" | "plagiarism" | "optimize"; text: string; alternatives?: string[]; meta?: { notes?: string[]; score?: number; grade?: string; heading?: string; tags?: string[]; wordsBefore?: number; wordsAfter?: number } } | null>(null);
   const mountedRef = useRef(true);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   const wordCount = content.split(/\s+/).filter(Boolean).length;
@@ -169,7 +169,7 @@ export default function StudioPage() {
 
   const readSelection = useCallback((): string => { const ta = contentRef.current; if (ta && ta.selectionStart !== ta.selectionEnd) return ta.value.slice(ta.selectionStart, ta.selectionEnd).trim(); return ""; }, []);
 
-  const runCopilot = useCallback(async (action: "rewrite" | "continue" | "outline" | "summarize" | "headline" | "tags" | "curate" | "assist", usePrompt = false) => {
+  const runCopilot = useCallback(async (action: "rewrite" | "continue" | "outline" | "summarize" | "headline" | "tags" | "curate" | "assist" | "seo" | "plagiarism" | "optimize", usePrompt = false) => {
     const selection = readSelection(); const promptText = usePrompt ? copilotPrompt.trim() : "";
     if (action === "assist" && !promptText) { setCopilotError("Type a question first."); return; }
     setCopilotBusy(usePrompt ? action + ":prompt" : action); setCopilotError(null);
@@ -313,10 +313,10 @@ export default function StudioPage() {
                 </div>
                 <input type="text" placeholder="Your story title..." value={title} onChange={(e) => setTitle(e.target.value)} className="w-full bg-transparent text-2xl sm:text-3xl lg:text-4xl font-display font-extrabold text-editor placeholder-editor focus:outline-none tracking-tight border-b-2 border-transparent pb-3 focus:border-brand-500/30 transition-colors" />
                 <StudioToolbar onInsert={insertMarkdown} disabled={showPreview} />
-                <textarea ref={contentRef} placeholder="Start writing your story... Share your perspective on technology, culture, business, or life in East Africa." value={content} onChange={(e) => setContent(e.target.value)} rows={20} className="w-full min-h-[50vh] bg-gradient-to-b from-surface-900/60 to-surface-900/30 border border-surface-700/50 rounded-2xl px-4 sm:px-6 py-5 text-[15px] sm:text-base font-medium text-editor placeholder-editor placeholder:font-normal focus:outline-none focus:border-brand-500/40 focus:ring-1 focus:ring-brand-500/20 resize-none leading-[1.8] transition-all shadow-inner" />
+                <textarea ref={contentRef} placeholder="Start writing your story... Share your perspective on technology, culture, business, or life in East Africa." value={content} onChange={(e) => setContent(e.target.value)} rows={20} className="w-full min-h-[50vh] bg-surface-800/80 border border-surface-700/50 rounded-2xl px-4 sm:px-6 py-5 text-[15px] sm:text-base font-medium text-editor placeholder-editor placeholder:font-normal focus:outline-none focus:border-brand-500/40 focus:ring-1 focus:ring-brand-500/20 resize-none leading-[1.8] transition-all shadow-inner" />
                 <div className="space-y-2">
                   <label className="text-xs font-semibold text-surface-300 flex items-center gap-1.5"><AlignLeft className="w-3 h-3 text-accent-strong" />Excerpt</label>
-                  <textarea placeholder="A brief summary of your story (shown in feeds and search results)..." value={excerpt} onChange={(e) => setExcerpt(e.target.value)} rows={3} maxLength={300} className="w-full bg-gradient-to-b from-surface-900/60 to-surface-900/30 border border-surface-700/50 rounded-xl px-4 py-3 text-sm text-editor font-medium placeholder-editor placeholder:font-normal focus:outline-none focus:border-brand-500/40 focus:ring-1 focus:ring-brand-500/20 resize-none leading-relaxed transition-all" />
+                  <textarea placeholder="A brief summary of your story (shown in feeds and search results)..." value={excerpt} onChange={(e) => setExcerpt(e.target.value)} rows={3} maxLength={300} className="w-full bg-surface-800/80 border border-surface-700/50 rounded-xl px-4 py-3 text-sm text-editor font-medium placeholder-editor placeholder:font-normal focus:outline-none focus:border-brand-500/40 focus:ring-1 focus:ring-brand-500/20 resize-none leading-relaxed transition-all" />
                   <p className="type-caption text-surface-500 text-right">{excerpt.length}/300</p>
                 </div>
               </>

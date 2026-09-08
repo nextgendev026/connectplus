@@ -11,6 +11,9 @@ import { summarizeText, stripHtml, extractKeywords } from "@/lib/neural-text";
 import { neuralMind } from "@/lib/neural-mind";
 import { hiveBrain } from "@/lib/hive-brain";
 import { generateText, studioSystemPrompt } from "@/lib/ai-provider";
+import { analyzeSeo } from "@/lib/seo-analyzer";
+import { checkPlagiarism } from "@/lib/plagiarism-checker";
+import { optimizeContent } from "@/lib/content-optimizer";
 
 export type StudioAction =
   | "rewrite"
@@ -20,7 +23,10 @@ export type StudioAction =
   | "headline"
   | "tags"
   | "curate"
-  | "assist";
+  | "assist"
+  | "seo"
+  | "plagiarism"
+  | "optimize";
 
 export interface StudioRequest {
   action: StudioAction;
@@ -183,6 +189,75 @@ export async function runStudioBrain(req: StudioRequest): Promise<StudioResult> 
       if (llm) return { action, text: llm };
       const response = await neuralMind.processQuery(message);
       return { action, text: response.text };
+    }
+
+    case "seo": {
+      const analysis = analyzeSeo(title, content, prompt);
+      const lines: string[] = [`**SEO Analysis — Score: ${analysis.score}/100 (${analysis.grade})**`, ""];
+      if (analysis.keywordDensity.length > 0) {
+        lines.push("**Top Keywords:**");
+        analysis.keywordDensity.slice(0, 5).forEach(k => lines.push(`• ${k.keyword}: ${k.count} mentions (${k.density}%)`));
+        lines.push("");
+      }
+      lines.push(`**Readability:** ${analysis.readabilityGrade} (${analysis.readabilityScore}/100)`);
+      lines.push(`**Content:** ${analysis.contentLength.words} words · ${analysis.contentLength.sentences} sentences · ${analysis.contentLength.paragraphs} paragraphs`);
+      lines.push(`**Headings:** ${analysis.headingStructure.length}`);
+      lines.push(`**Images:** ${analysis.imageCount} (${analysis.imagesWithAlt} with alt text)`);
+      lines.push(`**Links:** ${analysis.internalLinks} internal · ${analysis.externalLinks} external`);
+      if (analysis.suggestions.length > 0) {
+        lines.push("", "**Suggestions:**");
+        analysis.suggestions.forEach(s => lines.push(`${s.priority === "high" ? "🔴" : s.priority === "medium" ? "🟡" : "🟢"} [${s.category}] ${s.message}`));
+      }
+      return { action, text: lines.join("\n"), meta: { score: analysis.score, grade: analysis.grade } };
+    }
+
+    case "plagiarism": {
+      const result = await checkPlagiarism(title, content);
+      const lines: string[] = [`**Plagiarism Check — ${result.overallScore}% similarity**`, ""];
+      if (result.isOriginal) {
+        lines.push("✅ Content appears original. No significant matches found.");
+      } else {
+        lines.push(`⚠️ Similarity detected (${result.overallScore}%). Review flagged content.`);
+      }
+      if (result.matchingArticles.length > 0) {
+        lines.push("", "**Matching Articles:**");
+        result.matchingArticles.slice(0, 3).forEach(a => lines.push(`• \"${a.title}\" — ${a.similarity}% similar (${a.matchedSentences.length} sentences matched)`));
+      }
+      if (result.sentenceAnalysis.length > 0) {
+        lines.push("", "**Flagged Sentences:**");
+        result.sentenceAnalysis.slice(0, 5).forEach(s => lines.push(`• \"${s.sentence.slice(0, 80)}...\" (${s.similarity}% match)`));
+      }
+      if (result.suggestions.length > 0) {
+        lines.push("", "**Recommendations:**");
+        result.suggestions.forEach(s => lines.push(`• ${s}`));
+      }
+      return { action, text: lines.join("\n"), meta: { score: result.overallScore } };
+    }
+
+    case "optimize": {
+      const result = await optimizeContent(title, content, prompt);
+      const lines: string[] = [`**Content Optimization Report — ${result.overallScore}/100 (${result.overallGrade})**`, ""];
+      lines.push(`**Summary:** ${result.summary}`);
+      lines.push("");
+      lines.push(`**SEO:** ${result.seo.score}/100 (${result.seo.grade})`);
+      lines.push(`**Quality:** ${result.contentQuality.score}/100 (${result.contentQuality.grade})`);
+      lines.push(`**Originality:** ${100 - result.plagiarism.overallScore}/100`);
+      lines.push("");
+      lines.push("**Quality Metrics:**");
+      lines.push(`• Sentence variety: ${result.contentQuality.metrics.sentenceVariety}/100`);
+      lines.push(`• Paragraph balance: ${result.contentQuality.metrics.paragraphBalance}/100`);
+      lines.push(`• Transition usage: ${result.contentQuality.metrics.transitionUsage}/100`);
+      lines.push(`• Active voice: ${result.contentQuality.metrics.activeVoice}%`);
+      lines.push(`• Factual density: ${result.contentQuality.metrics.factualDensity}/100`);
+      if (result.optimizationPlan.length > 0) {
+        lines.push("", "**Optimization Plan:**");
+        result.optimizationPlan.forEach(p => {
+          const icon = p.priority === "critical" ? "🔴" : p.priority === "important" ? "🟡" : "🟢";
+          lines.push(`${icon} [${p.category}] ${p.action}`);
+          lines.push(`   Impact: ${p.impact}`);
+        });
+      }
+      return { action, text: lines.join("\n"), meta: { score: result.overallScore, grade: result.overallGrade } };
     }
 
     default:

@@ -66,7 +66,7 @@ interface EnhancementResult {
 }
 
 interface CopilotResult {
-  action: "rewrite" | "continue" | "outline" | "summarize" | "headline" | "tags" | "curate" | "assist";
+  action: "rewrite" | "continue" | "outline" | "summarize" | "headline" | "tags" | "curate" | "assist" | "seo" | "plagiarism" | "optimize";
   text: string;
   alternatives?: string[];
   meta?: {
@@ -156,7 +156,7 @@ interface StudioSidebarProps {
   /* Copilot */
   copilotBusy: string | null;
   runCopilot: (
-    action: "rewrite" | "continue" | "outline" | "summarize" | "headline" | "tags" | "curate" | "assist",
+    action: "rewrite" | "continue" | "outline" | "summarize" | "headline" | "tags" | "curate" | "assist" | "seo" | "plagiarism" | "optimize",
     usePrompt?: boolean
   ) => void;
   copilotPrompt: string;
@@ -460,6 +460,30 @@ function SidebarContent(props: SidebarContentProps) {
               >
                 {copilotBusy === "curate" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
                 Curate — what to publish next
+              </button>
+              <button
+                onClick={() => runCopilot("seo")}
+                disabled={copilotBusy !== null || content.trim().length < 20}
+                className="flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-br from-emerald-500/15 to-brand-500/10 border border-emerald-500/25 px-2 py-2 type-caption text-emerald-300 hover:from-emerald-500/25 hover:to-brand-500/15 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                {copilotBusy === "seo" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Gauge className="h-3 w-3" />}
+                SEO
+              </button>
+              <button
+                onClick={() => runCopilot("plagiarism")}
+                disabled={copilotBusy !== null || content.trim().length < 20}
+                className="flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-br from-amber-500/15 to-brand-500/10 border border-amber-500/25 px-2 py-2 type-caption text-amber-300 hover:from-amber-500/25 hover:to-brand-500/15 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                {copilotBusy === "plagiarism" ? <Loader2 className="h-3 w-3 animate-spin" /> : <AlertCircle className="h-3 w-3" />}
+                Plagiarism
+              </button>
+              <button
+                onClick={() => runCopilot("optimize")}
+                disabled={copilotBusy !== null || content.trim().length < 40}
+                className="col-span-2 flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-br from-cyan-500/15 to-brand-500/10 border border-cyan-500/25 px-2 py-2 type-caption text-cyan-300 hover:from-cyan-500/25 hover:to-brand-500/15 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                {copilotBusy === "optimize" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
+                Full Optimize Report
               </button>
             </div>
 

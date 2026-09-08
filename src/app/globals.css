@@ -224,10 +224,8 @@ body {
      charcoal end of the scale regardless of mode (surface-50 in light,
      surface-950 in dark). Placeholders stay mid-tone in both themes. */
   .text-editor {
-    @apply text-surface-950;
-  }
-  html:not(.dark) .text-editor {
     @apply text-surface-50;
+    caret-color: #ff6b00;
   }
   .placeholder-editor::placeholder {
     @apply text-surface-500;

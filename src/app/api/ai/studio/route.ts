@@ -11,6 +11,9 @@ const ACTIONS: StudioAction[] = [
   "tags",
   "curate",
   "assist",
+  "seo",
+  "plagiarism",
+  "optimize",
 ];
 
 /**
