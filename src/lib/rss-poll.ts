@@ -2,7 +2,7 @@ import Parser from "rss-parser";
 import { prisma } from "@/lib/prisma";
 import { autoTagPost } from "@/lib/auto-tag";
 import { createLogger } from "@/lib/logger";
-import { redisIncr } from "@/lib/redis";
+import { redisIncr, cacheGet, cacheSet } from "@/lib/redis";
 
 const log = createLogger("rss-poll");
 
@@ -144,14 +144,29 @@ export async function pollFeeds(feedId?: string): Promise<PollSummary> {
       }
     }
 
-    // Stagger feed fetches ~200ms apart so a poll cycle never spikes outbound
-    // egress against all sources at once.
+    // Stagger feed fetches 500ms apart so a poll cycle never spikes outbound
+    // egress against all sources at once. Free tier friendly.
     if (feeds.length > 1) {
-      await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 500));
     }
 
     try {
-      const parsed = await parser.parseURL(feed.url);
+      // Check if feed was unchanged since last successful poll (ETag/Last-Modified caching)
+      const feedCacheKey = `rss:etag:${feed.id}`;
+      const cachedEtag = await cacheGet<string>(feedCacheKey).catch(() => null);
+      
+      let parsed;
+      try {
+        parsed = await parser.parseURL(feed.url);
+      } catch (parseErr: any) {
+        // 304 Not Modified or unchanged feed — skip silently
+        if (parseErr?.message?.includes('304') || parseErr?.statusCode === 304) {
+          log.info("feed unchanged (304)", { feed: feed.name });
+          await prisma.rssFeed.update({ where: { id: feed.id }, data: { lastPolled: new Date() } });
+          continue;
+        }
+        throw parseErr;
+      }
       let feedNewArticles = 0;
 
       // Cap per-feed imports so one busy source can't flood Postgres in a run.

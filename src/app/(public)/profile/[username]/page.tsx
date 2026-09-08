@@ -1,37 +1,51 @@
-import Link from "next/link";
-import Image from "next/image";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import {
-  MapPin,
-  Calendar,
-  Eye,
-  Settings,
-  ChevronRight,
-} from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { formatDate } from "@/lib/utils";
-import { FollowButton } from "@/components/ui/FollowButton";
-import { SignOutButton } from "@/components/ui/SignOutButton";
+import { cacheGet, cacheSet } from "@/lib/redis";
+import { ProfileHeader } from "@/components/profile/ProfileHeader";
 import { ProfileTabs } from "@/components/profile/ProfileTabs";
-import type { ProfileTabPost } from "@/components/profile/ProfileTabs";
 
-function serializePosts(
-  posts: {
-    id: string;
-    slug: string;
-    title: string;
-    excerpt: string | null;
-    content: string;
-    viewCount: number;
-    createdAt: Date;
-  }[]
-): ProfileTabPost[] {
-  return posts.map((p) => ({
-    ...p,
-    createdAt: p.createdAt.toISOString(),
-    excerpt: p.excerpt,
-  }));
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ username: string }>;
+}): Promise<Metadata> {
+  const { username } = await params;
+  const user = await prisma.user.findUnique({
+    where: { username },
+    select: {
+      name: true,
+      username: true,
+      avatar: true,
+      bio: true,
+      node: true,
+      isVerified: true,
+      _count: { select: { posts: true } },
+    },
+  });
+  if (!user) return {};
+  const displayName = user.name ?? user.username;
+  const description =
+    user.bio || `${displayName} is a writer on connectPlus — stories from East Africa.`;
+  return {
+    title: `${displayName} (@${user.username}) — connectPlus`,
+    description,
+    openGraph: {
+      title: `${displayName} on connectPlus`,
+      description,
+      url: `/profile/${user.username}`,
+      type: "profile",
+      ...(user.avatar ? { images: [{ url: user.avatar, width: 200, height: 200 }] } : {}),
+      siteName: "connectPlus",
+    },
+    twitter: {
+      card: "summary",
+      title: `${displayName} on connectPlus`,
+      description,
+      ...(user.avatar ? { images: [user.avatar] } : {}),
+    },
+  };
 }
 
 export default async function ProfilePage({
@@ -42,45 +56,50 @@ export default async function ProfilePage({
   const { username } = await params;
   const session = await auth();
 
-  const user = await prisma.user.findUnique({
-    where: { username },
-    include: {
-      _count: { select: { posts: true } },
-    },
-  });
+  // Cache profile metadata for 5 minutes to reduce DB hits
+  const profileCacheKey = `profile:${username}`;
+  const cachedProfile = await cacheGet<{
+    user: any;
+    totalViews: number;
+    totalLikes: number;
+  }>(profileCacheKey);
 
-  if (!user) notFound();
+  let user: any;
+  let totalViews: number;
+  let totalLikes: number;
 
-  const viewsAgg = await prisma.post.aggregate({
-    where: { authorId: user.id, status: "PUBLISHED" },
-    _sum: { viewCount: true },
-  });
-
-  const totalViews = viewsAgg._sum.viewCount ?? 0;
-
-  const likesAgg = await prisma.like.aggregate({
-    where: { post: { authorId: user.id, status: "PUBLISHED" } },
-    _count: true,
-  });
-
-  const totalLikes = likesAgg._count;
-
-  const [posts, viewerFollow, bookmarkedPosts] = await Promise.all([
-    prisma.post.findMany({
-      where: { authorId: user.id, status: "PUBLISHED" },
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        slug: true,
-        title: true,
-        excerpt: true,
-        content: true,
-        viewCount: true,
-        createdAt: true,
+  if (cachedProfile) {
+    user = cachedProfile.user;
+    totalViews = cachedProfile.totalViews;
+    totalLikes = cachedProfile.totalLikes;
+  } else {
+    user = await prisma.user.findUnique({
+      where: { username },
+      include: {
+        _count: { select: { posts: true } },
       },
-    }),
+    });
+
+    if (!user) notFound();
+
+    const viewsAgg = await prisma.post.aggregate({
+      where: { authorId: user.id, status: "PUBLISHED" },
+      _sum: { viewCount: true },
+    });
+    totalViews = viewsAgg._sum.viewCount ?? 0;
+
+    const likesAgg = await prisma.like.aggregate({
+      where: { post: { authorId: user.id, status: "PUBLISHED" } },
+      _count: true,
+    });
+    totalLikes = likesAgg._count;
+
+    await cacheSet(profileCacheKey, { user, totalViews, totalLikes }, 300);
+  }
+
+  const viewerFollow =
     session?.user?.id && session.user.id !== user.id
-      ? prisma.follow
+      ? await prisma.follow
           .findUnique({
             where: {
               followerId_followingId: {
@@ -91,176 +110,28 @@ export default async function ProfilePage({
             select: { id: true },
           })
           .then(Boolean)
-      : Promise.resolve(false),
-    session?.user?.id === user.id
-      ? prisma.bookmark.findMany({
-          where: { userId: user.id },
-          orderBy: { createdAt: "desc" },
-          include: {
-            post: {
-              select: {
-                id: true,
-                slug: true,
-                title: true,
-                excerpt: true,
-                content: true,
-                viewCount: true,
-                createdAt: true,
-                author: { select: { name: true, username: true } },
-              },
-            },
-          },
-        })
-      : Promise.resolve([]),
-  ]);
+      : false;
 
-  const savedPosts: ProfileTabPost[] = bookmarkedPosts.map((b) => ({
-    id: b.post.id,
-    slug: b.post.slug,
-    title: b.post.title,
-    excerpt: b.post.excerpt,
-    content: b.post.content,
-    viewCount: b.post.viewCount,
-    createdAt: b.post.createdAt.toISOString(),
-    authorName: b.post.author.name ?? `@${b.post.author.username}`,
-  }));
+  const isOwn = session?.user?.id === user.id;
 
   return (
     <div className="min-h-screen bg-surface-950">
-      {/* Cover */}
-      <div className="relative h-48 overflow-hidden sm:h-64">
-        {user.coverImage ? (
-          <Image
-            src={user.coverImage}
-            alt=""
-            fill
-            className="h-full w-full object-cover"
-            style={{ transition: "opacity 0.3s ease" }}
-          />
-        ) : (
-          <div
-            className="h-full w-full bg-gradient-to-r from-brand-900/30 via-surface-800/50 to-surface-900/50"
-          />
-        )}
-        <div
-          className="absolute inset-0 bg-gradient-to-t from-surface-800/40 via-transparent to-transparent"
-        />
-        <div className="relative mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
-          <div className="flex h-full items-end pb-4">
-            <Link
-              href="/"
-              className="flex items-center gap-1 text-xs text-surface-400 hover:text-surface-50 transition-colors"
-            >
-              <ChevronRight className="h-3 w-3 rotate-180" /> Back to Feed
-            </Link>
-          </div>
-        </div>
-      </div>
+      <ProfileHeader
+        user={user}
+        totalViews={totalViews}
+        totalLikes={totalLikes}
+        viewerFollow={viewerFollow}
+        isOwn={isOwn}
+      />
 
-      {/* Profile Header */}
-      <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 pb-24 md:pb-10">
-        <div className="mt-6 flex flex-col sm:flex-row sm:items-end sm:gap-6">
-{user.avatar ? (
-              <Image
-                src={user.avatar}
-                alt={user.name ?? user.username}
-                width={128}
-                height={128}
-                className="h-32 w-32 rounded-2xl border-4 border-surface-800/60 object-cover shadow-sm"
-              />
-            ) : (
-              <div
-                className="h-32 w-32 rounded-2xl bg-surface-800/60 border-4 border-surface-700/50 flex items-center justify-center text-4xl font-bold text-surface-400 shadow-inner"
-              >
-                {(user.name ?? user.username).charAt(0).toUpperCase()}
-              </div>
-            )}
-          <div className="mt-4 flex-1 sm:mt-0 sm:pb-2">
-            <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold text-surface-50">
-                {user.name ?? user.username}
-              </h1>
-              {user.isVerified && (
-                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-500 text-[10px] text-white">
-                  ✓
-                </span>
-              )}
-            </div>
-            <p className="text-surface-400">@{user.username}</p>
-          </div>
-          <div className="mt-4 flex gap-2 sm:mt-0 sm:pb-2">
-            <FollowButton
-              targetId={user.id}
-              initialFollowing={viewerFollow}
-              followersCount={user.followersCount}
-            />
-            {session?.user?.id === user.id && (
-              <>
-                <Link
-                  href="/settings"
-                  className="rounded-lg border border-surface-700 bg-surface-800 px-4 py-2 text-sm text-surface-300 hover:text-surface-50 transition-colors flex items-center justify-center gap-2"
-                  aria-label="Settings"
-                >
-                  <Settings className="h-4 w-4" />
-                </Link>
-                <SignOutButton />
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Bio & Stats */}
-        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_300px]">
-          <div>
-            {user.bio && (
-              <p className="text-surface-300 leading-relaxed">{user.bio}</p>
-            )}
-            <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-surface-500">
-              {user.node && (
-                <span className="flex items-center gap-1">
-                  <MapPin className="h-3.5 w-3.5" />
-                  {user.node}
-                </span>
-              )}
-              <span className="flex items-center gap-1">
-                <Calendar className="h-3.5 w-3.5" />
-                Joined {formatDate(user.createdAt)}
-              </span>
-              <span className="flex items-center gap-1">
-                <Eye className="h-3.5 w-3.5" />
-                {totalViews.toLocaleString()} total views
-              </span>
-            </div>
-          </div>
-
-          <div className="flex gap-6 text-center">
-            <div>
-              <p className="text-xl font-bold text-surface-50">
-                {user.followersCount.toLocaleString()}
-              </p>
-              <p className="text-xs text-surface-500">Followers</p>
-            </div>
-            <div>
-              <p className="text-xl font-bold text-surface-50">
-                {user.followingCount.toLocaleString()}
-              </p>
-              <p className="text-xs text-surface-500">Following</p>
-            </div>
-            <div>
-              <p className="text-xl font-bold text-surface-50">
-                {user._count.posts}
-              </p>
-              <p className="text-xs text-surface-500">Posts</p>
-            </div>
-          </div>
-        </div>
-
+      {/* ── Content ─────────────────────────────────────────────────── */}
+      <div className="relative mx-auto max-w-5xl px-4 sm:px-6 pb-20 pt-4 sm:pb-10 sm:pt-5">
         <ProfileTabs
-          posts={serializePosts(posts)}
-          savedPosts={savedPosts}
-          ownProfile={session?.user?.id === user.id}
+          username={username}
+          ownProfile={isOwn}
           stats={{ totalViews, totalLikes }}
           about={user.bio}
+          displayName={user.name ?? user.username}
         />
       </div>
     </div>

@@ -59,17 +59,18 @@ export function FollowButton({
   };
 
   return (
-    <span className={cn("inline-flex items-center gap-1", showCount && "gap-2", className)}>
+    <span className="inline-flex items-center gap-2">
       <button
         onClick={handleClick}
         disabled={loading}
+        aria-pressed={following}
         className={cn(
-          "flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all duration-300",
+          "inline-flex h-9 items-center justify-center gap-1.5 rounded-full px-4 text-xs font-semibold transition-all duration-300 active:scale-[0.97] sm:h-10 sm:gap-2 sm:px-5 sm:text-sm",
           following
-            ? "border border-surface-700 bg-surface-800 text-surface-300 hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-400"
-            : "bg-brand-500 text-white shadow-glow hover:bg-brand-600",
-          loading && "opacity-70",
-          className?.includes("w-full") ? "justify-center" : ""
+            ? "border border-surface-700 bg-surface-800/80 text-surface-200 hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-400"
+            : "bg-gradient-to-r from-brand-500 to-brand-600 text-white shadow-glow hover:from-brand-400 hover:to-brand-500 hover:shadow-glow-lg",
+          loading && "cursor-wait opacity-70",
+          className
         )}
       >
         {loading ? (
@@ -82,7 +83,7 @@ export function FollowButton({
         {following ? "Following" : "Follow"}
       </button>
       {showCount && count > 0 && (
-        <span className="text-sm text-surface-400">
+        <span className="text-sm font-medium text-surface-400">
           {count.toLocaleString()}
         </span>
       )}

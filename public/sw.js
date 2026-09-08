@@ -161,6 +161,8 @@ self.addEventListener("push", (event) => {
     data: { url: payload.url || "/" },
     tag: payload.tag || `connectplus-${Date.now()}`,
     renotify: true,
+    requireInteraction: payload.important === true,
+    actions: payload.actions || [],
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });

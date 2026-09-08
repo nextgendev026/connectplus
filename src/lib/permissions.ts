@@ -158,17 +158,93 @@ export function playNotificationSound() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Service worker registration                                        */
+/* Service worker + push subscription                                 */
 /* ------------------------------------------------------------------ */
 
 export function registerServiceWorker() {
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
-  // Only register in production or when a dev SW exists to avoid stale caches.
-  if (process.env.NODE_ENV === "production") {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("/sw.js").catch(() => {
-        /* offline features are progressive enhancement */
-      });
+  // Register in both production and development for push notifications
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      /* offline features are progressive enhancement */
     });
+  });
+}
+
+/**
+ * Subscribe to push notifications via the service worker.
+ * Returns the subscription object or null on failure.
+ */
+export async function subscribeToPush(): Promise<PushSubscription | null> {
+  if (typeof window === "undefined" || !("serviceWorker" in navigator) || !("PushManager" in window)) {
+    return null;
   }
+
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    // Check for existing subscription
+    let sub = await reg.pushManager.getSubscription();
+    if (sub) return sub;
+
+    // Create new subscription with VAPID key (from env or fallback)
+    const vapidKey = process.env.NEXT_PUBLIC_VAPID_KEY ?? "";
+    if (!vapidKey) {
+      console.warn("No VAPID key configured for push notifications");
+      return null;
+    }
+
+    const rawKey = urlBase6ToUint8Array(vapidKey);
+    sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: rawKey as BufferSource,
+    });
+
+    // Send subscription to server
+    await fetch("/api/notifications/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        endpoint: sub.endpoint,
+        keys: {
+          p256dh: btoa(String.fromCharCode(...new Uint8Array(sub.getKey("p256dh")!))),
+          auth: btoa(String.fromCharCode(...new Uint8Array(sub.getKey("auth")!))),
+        },
+      }),
+    });
+
+    return sub;
+  } catch (err) {
+    console.error("Push subscription failed:", err);
+    return null;
+  }
+}
+
+/**
+ * Unsubscribe from push notifications.
+ */
+export async function unsubscribeFromPush(): Promise<boolean> {
+  if (typeof window === "undefined" || !("serviceWorker" in navigator)) return false;
+
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (!sub) return true;
+
+    await sub.unsubscribe();
+    await fetch("/api/notifications/push", { method: "DELETE" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function urlBase6ToUint8Array(base64String: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
 }

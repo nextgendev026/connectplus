@@ -24,6 +24,9 @@ interface DailyWeather {
 interface OpenMeteoResponse {
   current?: CurrentWeather;
   daily?: DailyWeather;
+  coords?: { lat: number; lon: number };
+  place?: string | null;
+  cached?: boolean;
 }
 
 function describeWeather(code: number): { label: string; icon: typeof Sun } {
@@ -66,18 +69,30 @@ export function WeatherWidget({ compact = false }: { compact?: boolean }) {
     setLoading(true);
     setError(null);
     try {
-      // Same-origin proxy avoids CORS/mixed-content issues and lets the server
-      // resolve IP location when no coords are passed.
+      // Always go through the server proxy (Redis-cached, no CORS issues)
       const query = geo.source === "default" ? "" : `?lat=${geo.lat.toFixed(4)}&lon=${geo.lon.toFixed(4)}`;
-      const res = await fetch(`/api/weather${query}`, { signal: AbortSignal.timeout(10_000) });
+      const res = await fetch(`/api/weather${query}`, {
+        signal: AbortSignal.timeout(10_000),
+        headers: { "Cache-Control": "max-age=600" },
+      });
       if (!res.ok) throw new Error("Weather service unavailable");
       const data = (await res.json()) as OpenMeteoResponse;
       setWeather(data);
       setCoords(geo);
       setLocState(geo.source === "gps" ? "granted" : "fallback");
+      // Only reverse geocode for GPS (server already resolved place for IP/default)
       if (geo.source === "gps") {
-        const name = await reverseGeocode(geo.lat, geo.lon);
-        setPlace(name);
+        // Cache reverse geocode in localStorage too
+        const cached = localStorage.getItem("weather-place");
+        if (cached) {
+          setPlace(cached);
+        } else {
+          const name = await reverseGeocode(geo.lat, geo.lon);
+          if (name) {
+            setPlace(name);
+            try { localStorage.setItem("weather-place", name); } catch {}
+          }
+        }
       } else {
         setPlace(null);
       }
@@ -92,37 +107,71 @@ export function WeatherWidget({ compact = false }: { compact?: boolean }) {
     setLocState("prompting");
     const res = await requestGeolocation();
     if (res.status === "granted" && res.coords) {
+      // Persist GPS to localStorage so we never prompt again
+      try {
+        localStorage.setItem("weather-gps", JSON.stringify({
+          lat: res.coords.lat,
+          lon: res.coords.lon,
+          ts: Date.now(),
+        }));
+      } catch { /* ignore */ }
       await loadWeather({ lat: res.coords.lat, lon: res.coords.lon, source: "gps", accuracy: res.coords.accuracy });
       return;
     }
-    // Fall back to IP location, then to the regional default.
+    // Fall back to server-side IP resolution (no client-side IP API call)
     setLocState("fallback");
-    const ip = await fetchIpLocation();
-    await loadWeather(ip ?? DEFAULT_LOCATION);
+    setLoading(true);
+    try {
+      const apiRes = await fetch("/api/weather", { signal: AbortSignal.timeout(10_000) });
+      if (!apiRes.ok) throw new Error("Weather service unavailable");
+      const data = (await apiRes.json()) as OpenMeteoResponse;
+      setWeather(data);
+      if (data.coords) {
+        setCoords({ lat: data.coords.lat, lon: data.coords.lon, source: "ip" });
+      } else {
+        setCoords(DEFAULT_LOCATION);
+      }
+    } catch {
+      setError("Couldn't load weather right now. Try again in a moment.");
+    } finally {
+      setLoading(false);
+    }
   }, [loadWeather]);
 
   useEffect(() => {
-    // Start with IP/default weather instantly (resolved server-side); GPS is
-    // opt-in via the button so we never surprise the user with a prompt.
+    // 1. If user previously granted GPS, restore from localStorage (no prompt)
+    // 2. Otherwise fall back to server-side IP resolution (one fetch)
     (async () => {
-      const ip = await fetchIpLocation();
-      if (ip) {
-        await loadWeather(ip);
-      } else {
-        // No coords -> the API resolves IP (or defaults to Nairobi) itself.
-        setLoading(true);
-        try {
-          const res = await fetch("/api/weather", { signal: AbortSignal.timeout(10_000) });
-          if (!res.ok) throw new Error("Weather service unavailable");
-          const data = (await res.json()) as OpenMeteoResponse;
-          setWeather(data);
-          setCoords(DEFAULT_LOCATION);
-          setLocState("fallback");
-        } catch {
-          setError("Couldn't load weather right now. Try again in a moment.");
-        } finally {
-          setLoading(false);
+      try {
+        const saved = localStorage.getItem("weather-gps");
+        if (saved) {
+          const parsed = JSON.parse(saved) as { lat: number; lon: number; ts: number };
+          // Re-use saved GPS if < 30 min old, otherwise let server resolve IP
+          if (Date.now() - parsed.ts < 30 * 60_000) {
+            await loadWeather({ lat: parsed.lat, lon: parsed.lon, source: "gps" });
+            return;
+          }
         }
+      } catch {
+        // ignore parse errors
+      }
+      // Server-side IP resolution — one fetch, no client-side IP API call
+      setLoading(true);
+      try {
+        const res = await fetch("/api/weather", { signal: AbortSignal.timeout(10_000) });
+        if (!res.ok) throw new Error("Weather service unavailable");
+        const data = (await res.json()) as OpenMeteoResponse;
+        setWeather(data);
+        if (data.coords) {
+          setCoords({ lat: data.coords.lat, lon: data.coords.lon, source: "ip" });
+        } else {
+          setCoords(DEFAULT_LOCATION);
+        }
+        setLocState("fallback");
+      } catch {
+        setError("Couldn't load weather right now. Try again in a moment.");
+      } finally {
+        setLoading(false);
       }
     })();
   }, [loadWeather]);
