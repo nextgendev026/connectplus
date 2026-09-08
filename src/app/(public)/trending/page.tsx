@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { cn, estimateReadTime, timeAgo } from "@/lib/utils";
+import { coverSrc } from "@/lib/thumb";
 import { BentoGrid } from "@/components/blog/BentoGrid";
 import type { PostWithAuthor } from "@/types";
 
@@ -111,14 +112,16 @@ export default async function TrendingPage() {
                     i === 0 && "md:col-span-3"
                   )}
                 >
-                  {post.coverImage ? (
-                    <Image
-                      src={post.coverImage}
-                      alt={post.title}
-                      fill
-                      className="object-cover opacity-30 transition-transform duration-700 group-hover:scale-105"
-                    />
-                  ) : null}
+                  <Image
+                    src={coverSrc(post.coverImage, {
+                      title: post.title,
+                      category: post.category?.name,
+                      seed: post.slug,
+                    })}
+                    alt={post.title}
+                    fill
+                    className="object-cover opacity-30 transition-transform duration-700 group-hover:scale-105"
+                  />
                   <div
                     className={cn(
                       "absolute inset-0 bg-gradient-to-br opacity-70",

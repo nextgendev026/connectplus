@@ -16,25 +16,35 @@ const EMBLEM_LEFT = 185;
 const EMBLEM_TOP = 40;
 const EMBLEM_SIZE = 350;
 
+// dibelsity at which the SVG is rasterized. The crop coordinates below live in
+// SVG user units, so they must be multiplied by density/96 to land on the
+// raster canvas — otherwise the crop cuts an empty corner and every icon comes
+// out fully transparent (which is exactly what shipping broke before).
+const DENSITY = 300;
+const RASTER_SCALE = DENSITY / 96;
+
 // Extra border margin (fraction of canvas) used for maskable PWA icon so the
 // roundel doesn't get clipped by the adaptive-icon safe zone.
 const MASKABLE_MARGIN = 0.08;
 
+// Brand dark surface — matches manifest background_color for the maskable plate.
+const PLATE_BG = { r: 10, g: 10, b: 13, alpha: 1 };
+
 mkdirSync(OUT, { recursive: true });
 
 async function renderEmblem(size, { maskable = false } = {}) {
-  const left = EMBLEM_LEFT;
-  const top = EMBLEM_TOP;
   const size0 = EMBLEM_SIZE;
   // To keep the emblem radius constant relative to the plate, expand the crop
   // by the same fraction for maskable so the roundel stays inside safe zone.
-  const cropSize = Math.round(size0 * (1 + (maskable ? MASKABLE_MARGIN * 2 : 0)));
-  const cx0 = left + size0 / 2;
-  const cy0 = top + size0 / 2;
-  const cropLeft = Math.round(cx0 - cropSize / 2);
-  const cropTop = Math.round(cy0 - cropSize / 2);
+  const cropSize0 = size0 * (1 + (maskable ? MASKABLE_MARGIN * 2 : 0));
+  const cx0 = EMBLEM_LEFT + size0 / 2;
+  const cy0 = EMBLEM_TOP + size0 / 2;
+  // User-unit crop → raster pixels at the chosen density.
+  const cropLeft = Math.round((cx0 - cropSize0 / 2) * RASTER_SCALE);
+  const cropTop = Math.round((cy0 - cropSize0 / 2) * RASTER_SCALE);
+  const cropSize = Math.round(cropSize0 * RASTER_SCALE);
 
-  let chip = sharp(SRC, { density: 300 });
+  let chip = sharp(SRC, { density: DENSITY });
   chip = chip.extract({
     left: cropLeft,
     top: cropTop,
@@ -46,13 +56,13 @@ async function renderEmblem(size, { maskable = false } = {}) {
 
   if (maskable) {
     // Emit a solid-color plate with the emblem centered, plus head room.
-    // Use a cream plate to match the logo background.
+    // The dark plate matches the app chrome (manifest background_color).
     const plate = await sharp({
       create: {
         width: size,
         height: size,
         channels: 4,
-        background: { r: 245, g: 240, b: 230, alpha: 1 },
+        background: PLATE_BG,
       },
     })
       .composite([{ input: buf, gravity: "center" }])

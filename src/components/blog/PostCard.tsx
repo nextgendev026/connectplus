@@ -12,26 +12,20 @@ import { cn, estimateReadTime, truncate } from "@/lib/utils";
 import type { PostWithAuthor } from "@/types";
 import { TagBadge } from "./TagBadge";
 import { BookmarkButton } from "@/components/ui/BookmarkButton";
+import { coverSrc } from "@/lib/thumb";
 
 interface PostCardProps {
   post: PostWithAuthor;
   variant?: "default" | "featured" | "compact" | "wide";
 }
 
-const GRADIENT_PLACEHOLDERS = [
-  "from-brand-600/40 via-brand-700/30 to-surface-900",
-  "from-brand-500/30 via-accent-cyan/20 to-surface-900",
-  "from-accent-violet/30 via-brand-700/20 to-surface-900",
-  "from-brand-400/25 via-brand-600/20 to-surface-900",
-  "from-accent-amber/20 via-brand-600/25 to-surface-900",
-];
-
-function getPlaceholderGradient(slug: string): string {
-  let hash = 0;
-  for (let i = 0; i < slug.length; i++) {
-    hash = slug.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return GRADIENT_PLACEHOLDERS[Math.abs(hash) % GRADIENT_PLACEHOLDERS.length] ?? "";
+function postCover(post: PostWithAuthor): string {
+  return coverSrc(post.coverImage, {
+    title: post.title,
+    category: post.category?.name,
+    author: post.author.name ?? post.author.username,
+    seed: post.slug,
+  });
 }
 
 function SourceBadge({ post }: { post: PostWithAuthor }) {
@@ -75,21 +69,12 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
           )}
         >
           <div className="relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-lg">
-            {post.coverImage ? (
-              <Image
-                src={post.coverImage}
-                alt={post.title}
-                fill
-                className="object-cover transition-transform duration-500 group-hover:scale-110"
-              />
-            ) : (
-              <div
-                className={cn(
-                  "h-full w-full bg-gradient-to-br",
-                  getPlaceholderGradient(post.slug)
-                )}
-              />
-            )}
+            <Image
+              src={postCover(post)}
+              alt={post.title}
+              fill
+              className="object-cover transition-transform duration-500 group-hover:scale-110"
+            />
           </div>
           <div className="flex flex-1 flex-col justify-center gap-1 min-w-0">
             <h3 className="font-display text-sm font-semibold text-surface-50 leading-snug line-clamp-2 transition-colors group-hover:text-brand-400">
@@ -121,21 +106,12 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
           )}
         >
           <div className="relative h-64 w-2/5 flex-shrink-0 overflow-hidden">
-            {post.coverImage ? (
-              <Image
-                src={post.coverImage}
-                alt={post.title}
-                fill
-                className="object-cover transition-transform duration-700 group-hover:scale-105"
-              />
-            ) : (
-              <div
-                className={cn(
-                  "h-full w-full bg-gradient-to-br",
-                  getPlaceholderGradient(post.slug)
-                )}
-              />
-            )}
+            <Image
+              src={postCover(post)}
+              alt={post.title}
+              fill
+              className="object-cover transition-transform duration-700 group-hover:scale-105"
+            />
             <div className="absolute inset-0 bg-gradient-to-r from-transparent to-surface-900/80" />
           </div>
           <div className="flex flex-1 flex-col justify-between p-6">
@@ -204,23 +180,14 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
             "transition-all duration-500 hover:border-brand-500/40 hover:shadow-glow-lg"
           )}
         >
-          <div className="absolute inset-0">
-            {post.coverImage ? (
-              <Image
-                src={post.coverImage}
-                alt={post.title}
-                fill
-                className="object-cover transition-transform duration-700 group-hover:scale-105"
-                priority
-              />
-            ) : (
-              <div
-                className={cn(
-                  "h-full w-full bg-gradient-to-br",
-                  getPlaceholderGradient(post.slug)
-                )}
-              />
-            )}
+<div className="absolute inset-0">
+            <Image
+              src={postCover(post)}
+              alt={post.title}
+              fill
+              priority
+              className="object-cover transition-transform duration-700 group-hover:scale-105"
+            />
             <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent" />
             <div className="absolute inset-0 bg-gradient-to-r from-black/40 to-transparent" />
           </div>
@@ -313,21 +280,12 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
         )}
       >
         <div className="relative aspect-[16/10] overflow-hidden">
-          {post.coverImage ? (
-            <Image
-              src={post.coverImage}
-              alt={post.title}
-              fill
-              className="object-cover transition-transform duration-700 group-hover:scale-110"
-            />
-          ) : (
-            <div
-              className={cn(
-                "h-full w-full bg-gradient-to-br",
-                getPlaceholderGradient(post.slug)
-              )}
-            />
-          )}
+          <Image
+            src={postCover(post)}
+            alt={post.title}
+            fill
+            className="object-cover transition-transform duration-700 group-hover:scale-110"
+          />
           <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
 
           {post.category && (

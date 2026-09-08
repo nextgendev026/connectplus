@@ -6,6 +6,7 @@ import { Clock, Eye, MessageCircle, ChevronRight, ExternalLink, Newspaper } from
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { formatDate, estimateReadTime } from "@/lib/utils";
+import { coverSrc } from "@/lib/thumb";
 import { getSiteConfig } from "@/lib/settings";
 import { BookmarkButton } from "@/components/ui/BookmarkButton";
 import { FollowButton } from "@/components/ui/FollowButton";
@@ -216,17 +217,18 @@ export default async function ArticlePage({ params }: ArticleParams) {
 
       {/* Hero */}
       <div className="relative h-[46vh] min-h-[360px] overflow-hidden">
-        {post.coverImage ? (
-          <Image
-            src={post.coverImage}
-            alt={post.title}
-            fill
-            className="object-cover"
-            priority
-          />
-        ) : (
-          <div className="absolute inset-0 bg-mesh-gradient" />
-        )}
+        <Image
+          src={coverSrc(post.coverImage, {
+            title: post.title,
+            category: post.category?.name,
+            author: post.author.name ?? post.author.username,
+            seed: post.slug,
+          })}
+          alt={post.title}
+          fill
+          className="object-cover"
+          priority
+        />
         <div className="absolute inset-0 bg-gradient-to-br from-brand-900/50 via-black/80 to-black" />
         <div className="absolute inset-0 bg-mesh-gradient opacity-40" />
         <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-black to-transparent" />

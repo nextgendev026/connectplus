@@ -47,7 +47,7 @@ export function CookieConsent() {
   if (!visible) return null;
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-[70] p-3 sm:p-4">
+    <div className="fixed inset-x-0 bottom-0 z-[70] p-3 sm:p-4 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] animate-slide-up">
       <div className="mx-auto max-w-2xl rounded-2xl border border-surface-700 bg-surface-900/95 backdrop-blur-xl shadow-glow-lg p-4 sm:p-5">
         <div className="flex items-start gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-500/15 border border-brand-500/25">
@@ -73,7 +73,8 @@ export function CookieConsent() {
           <button
             onClick={() => save(false)}
             className="shrink-0 rounded-lg p-1.5 text-surface-500 hover:text-surface-200 transition-colors"
-            aria-label="Dismiss without saving"
+            aria-label="Dismiss — essential cookies only"
+            title="Dismiss — essential cookies only"
           >
             <X className="h-4 w-4" />
           </button>

@@ -4,12 +4,8 @@ import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { cn, timeAgo } from "@/lib/utils";
-import {
-  ChevronLeft,
-  ChevronRight,
-  ArrowRight,
-  Eye,
-} from "lucide-react";
+import { ChevronLeft, ChevronRight, ArrowRight, Eye } from "lucide-react";
+import { coverSrc } from "@/lib/thumb";
 
 export interface HeroSlide {
   id: string;
@@ -38,7 +34,9 @@ export function HeroSlideshow({ slides, stats }: HeroSlideshowProps) {
   const [active, setActive] = useState(0);
   const [paused, setPaused] = useState(false);
 
-  const usable = slides.filter((s) => s.coverImage);
+  // Every published story can headline the hero — generated thumbnails cover
+  // the no-cover-image case, so we never drop slides.
+  const usable = slides;
   const count = usable.length;
 
   const go = useCallback(
@@ -127,7 +125,7 @@ export function HeroSlideshow({ slides, stats }: HeroSlideshowProps) {
           )}
         >
           <Image
-            src={s.coverImage ?? ""}
+            src={s.coverImage ?? coverSrc(null, { title: s.title, category: s.category?.name, seed: s.slug })}
             alt=""
             fill
             sizes="100vw"

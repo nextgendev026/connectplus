@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronRight, Loader2, Newspaper, Infinity as InfinityIcon } from "lucide-react";
 import { cn, estimateReadTime } from "@/lib/utils";
+import { coverSrc } from "@/lib/thumb";
 
 interface LoadedPost {
   id: string;
@@ -97,14 +98,12 @@ export function LoadMoreFeed({
               className="group relative rounded-2xl bg-surface-900/60 border border-surface-800/50 overflow-hidden transition-all duration-300 hover:border-brand-500/30 hover:shadow-glow block"
             >
               <div className="relative h-40 md:h-48 bg-gradient-to-br from-surface-800 to-surface-900 overflow-hidden">
-                {post.coverImage ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={post.coverImage}
-                    alt={post.title}
-                    className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                  />
-                ) : null}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={post.coverImage ?? coverSrc(null, { title: post.title, category: post.category?.name, seed: post.slug })}
+                  alt={post.title}
+                  className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
                 <div className="absolute top-4 left-4">
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-500/20 px-3 py-1 text-xs font-medium text-brand-400 border border-brand-500/20 backdrop-blur-sm">

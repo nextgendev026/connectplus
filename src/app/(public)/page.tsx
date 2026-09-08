@@ -3,6 +3,7 @@ import Image from "next/image";
 import Script from "next/script";
 import { prisma } from "@/lib/prisma";
 import { cn, estimateReadTime, timeAgo } from "@/lib/utils";
+import { coverSrc } from "@/lib/thumb";
 import { auth } from "@/lib/auth";
 import { rankFeed } from "@/lib/feed-ranker";
 import { FeedLiveRefresh } from "@/components/feed/FeedLiveRefresh";
@@ -107,14 +108,16 @@ function PostCard({
             featured ? "h-56 md:h-72" : "h-40 md:h-48"
           )}
         >
-          {post.coverImage ? (
-            <Image
-              src={post.coverImage}
-              alt={post.title}
-              fill
-              className="object-cover transition-transform duration-700 group-hover:scale-105"
-            />
-          ) : null}
+          <Image
+            src={coverSrc(post.coverImage, {
+              title: post.title,
+              category: post.category?.name,
+              seed: post.slug,
+            })}
+            alt={post.title}
+            fill
+            className="object-cover transition-transform duration-700 group-hover:scale-105"
+          />
           <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
           <div className="absolute top-4 left-4">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-500/20 px-3 py-1 text-xs font-medium text-brand-400 border border-brand-500/20 backdrop-blur-sm">
@@ -262,15 +265,17 @@ function FeaturedStoryBanner({ post }: { post: PostData }) {
         className="group relative block rounded-2xl overflow-hidden bg-gradient-to-br from-brand-500/10 via-surface-900 to-accent-cyan/5 border border-surface-800/50 hover:border-brand-500/30 transition-all duration-500 hover:shadow-glow-lg"
       >
         <div className="relative h-64 sm:h-80 md:h-96 overflow-hidden">
-          {post.coverImage ? (
-            <Image
-              src={post.coverImage}
-              alt={post.title}
-              fill
-              className="object-cover transition-transform duration-700 group-hover:scale-105"
-              priority
-            />
-          ) : null}
+          <Image
+            src={coverSrc(post.coverImage, {
+              title: post.title,
+              category: post.category?.name,
+              seed: post.slug,
+            })}
+            alt={post.title}
+            fill
+            className="object-cover transition-transform duration-700 group-hover:scale-105"
+            priority
+          />
           {/* Gradient overlay */}
           <div className="absolute inset-0 bg-gradient-to-br from-brand-500/20 via-transparent to-accent-cyan/10" />
           <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent" />

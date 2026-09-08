@@ -4,8 +4,9 @@ import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Home, Radio, PenLine, LayoutGrid, UserRound } from "lucide-react";
+import { Download, Home, Radio, PenLine, LayoutGrid, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { promptInstall, useInstallPrompt } from "@/lib/installPrompt";
 
 const ITEMS = [
   { href: "/", label: "Home", icon: Home },
@@ -30,6 +31,7 @@ function isTabActive(pathname: string, href: string): boolean {
 export default function BottomNav() {
   const pathname = usePathname();
   const { data: session } = useSession();
+  const { available } = useInstallPrompt();
 
   const items = ITEMS.map((item) =>
     item.href === "/auth/signin" && session?.user?.username
@@ -43,6 +45,20 @@ export default function BottomNav() {
       aria-label="Mobile navigation"
     >
       <div className="mx-auto flex max-w-lg items-stretch justify-around px-2 pt-1.5">
+        {available && (
+          <button
+            onClick={() => promptInstall()}
+            className="relative flex flex-1 flex-col items-center justify-end gap-0.5 rounded-xl px-1 pb-1 text-[10px] font-medium text-brand-400 transition-colors hover:text-brand-300"
+            aria-label="Install app"
+            title="Install the connectPlus app"
+          >
+            <span className="flex h-6 items-center justify-center rounded-full px-3">
+              <Download className="h-5 w-5" />
+            </span>
+            Install
+            <span className="absolute top-0.5 h-1 w-1 rounded-full bg-brand-400" />
+          </button>
+        )}
         {items.map(({ href, label, icon: Icon, writing }) => {
           const active = isTabActive(pathname, href);
           return (
