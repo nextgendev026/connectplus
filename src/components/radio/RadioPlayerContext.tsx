@@ -137,7 +137,17 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
     const last = safeGetStorage("radio-station");
     if (last) {
       const st = getStationById(last);
-      if (st) setStation(st);
+      if (st) {
+        setStation(st);
+        // Preload the source WITHOUT playing (autoplay is blocked by
+        // browsers). Without this the play button ran audio.play() on an
+        // empty element → instant error → endless "reconnecting" loop.
+        const audio = audioRef.current;
+        if (audio && !audio.src) {
+          audio.src = `/api/radio/stream?stationId=${encodeURIComponent(st.id)}`;
+          audio.volume = volumeRef.current / 100;
+        }
+      }
     }
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
@@ -163,6 +173,9 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
     setStation(null);
     setIsPlaying(false);
     setStreamState("idle");
+    // Mark as user-paused so the async error event from clearing the src
+    // doesn't flip us into the "reconnecting" state.
+    pausedByUser.current = true;
     if (retryTimer.current) clearTimeout(retryTimer.current);
     retryCount.current = 0;
     streamFailed.current = false;
@@ -219,7 +232,15 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;
-    if (!audio || !stationRef.current) return;
+    const current = stationRef.current;
+    if (!audio || !current) return;
+    // Make sure the element actually carries the current station's source
+    // (covers restore-from-localStorage and any cleared src).
+    const expectedPath = `/api/radio/stream?stationId=${encodeURIComponent(current.id)}`;
+    if (!audio.src || !audio.src.endsWith(expectedPath)) {
+      audio.src = expectedPath;
+      audio.volume = volumeRef.current / 100;
+    }
     // While the stream is still connecting/buffering the element is paused,
     // so treat that as live too — tapping should pause, not re-play.
     const live = !audio.paused || streamState === "connecting";
@@ -345,6 +366,10 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
           if (!pausedByUser.current && !streamFailed.current) setStreamState("connecting");
         }}
         onError={() => {
+          // Ignore errors while stopped/paused (clearing src fires one) or
+          // when a reconnect is already scheduled — otherwise the UI shows
+          // a fake "Stream reconnecting…" forever.
+          if (pausedByUser.current) return;
           setStreamState("error");
           setIsPlaying(false);
           streamFailed.current = true;

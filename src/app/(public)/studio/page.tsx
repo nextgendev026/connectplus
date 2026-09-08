@@ -43,7 +43,8 @@ export default function StudioPage() {
   const router = useRouter();
   const contentRef = useRef<HTMLTextAreaElement>(null);
   const { data: session } = useSession();
-  const emailVerified = !!session?.user?.emailVerified;
+  // Publishing no longer requires email verification — accounts are trusted
+  // as verified (sign-up emails on this deployment are not live inboxes).
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [excerpt, setExcerpt] = useState("");
@@ -298,7 +299,7 @@ export default function StudioPage() {
       </div>
 
       {error && (<div className="max-w-7xl mx-auto px-3 sm:px-6 pt-4"><div className="flex items-center gap-2 rounded-xl bg-red-500/10 border border-red-500/20 px-4 py-3 text-sm text-red-400"><AlertCircle className="w-4 h-4 shrink-0" /><span className="flex-1">{error}</span><button onClick={() => setError(null)} className="text-red-400 hover:text-red-300"><X className="w-4 h-4" /></button></div></div>)}
-      {session?.user && !emailVerified && (<div className="max-w-7xl mx-auto px-3 sm:px-6 pt-4"><div className="flex items-center gap-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 px-4 py-3 text-sm text-amber-200"><AlertCircle className="w-4 h-4 shrink-0 text-amber-400" /><span className="flex-1">Verify your email to publish. <Link href="/auth/verify-email" className="text-amber-300 underline underline-offset-2 hover:text-amber-200">Open it or resend</Link>.</span><button onClick={() => router.push("/auth/verify-email?sent=0")} className="rounded-lg bg-amber-400/15 border border-amber-400/30 px-3 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-400/25 transition-colors shrink-0">Verify</button></div></div>)}
+
       {reviewNotice && (<div className="max-w-7xl mx-auto px-3 sm:px-6 pt-4"><div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/25 px-4 py-3 text-sm text-emerald-300"><span className="shrink-0">✨</span><span className="flex-1">{reviewNotice}</span><button onClick={() => setReviewNotice(null)} className="text-emerald-400 hover:text-emerald-300"><X className="w-4 h-4" /></button></div></div>)}
 
       <div className="max-w-7xl mx-auto px-3 sm:px-6 pt-4 sm:pt-6 lg:pt-8 pb-28 md:pb-10">

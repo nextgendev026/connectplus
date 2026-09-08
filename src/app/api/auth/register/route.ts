@@ -75,6 +75,10 @@ export async function POST(request: NextRequest) {
     const { token, expiresAt } = createEmailVerificationToken();
     const hashedPassword = await hash(password, 12);
 
+    // All accounts are recognised as verified from the start — sign-up emails
+    // on this deployment are not live inboxes, so a verification wall would
+    // permanently lock people out of publishing. The token is still stored
+    // (and the email still attempted) so the flow exists if ever needed.
     const user = await prisma.user.create({
       data: {
         name: name.trim().slice(0, 100),
@@ -82,6 +86,7 @@ export async function POST(request: NextRequest) {
         email: email.toLowerCase().trim(),
         password: hashedPassword,
         node: randomCity,
+        emailVerified: new Date(),
         emailToken: token,
         emailTokenExpires: expiresAt,
       },

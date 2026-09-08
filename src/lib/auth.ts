@@ -53,6 +53,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           throw new Error("Invalid credentials");
         }
 
+        // All accounts are recognised as verified: sign-up emails on this
+        // deployment are not live inboxes, so a verification wall would lock
+        // people out of publishing. Self-heal any legacy null on sign-in.
+        let emailVerified = user.emailVerified;
+        if (emailVerified == null) {
+          emailVerified = new Date();
+          prisma.user
+            .update({ where: { id: user.id }, data: { emailVerified } })
+            .catch(() => {});
+        }
+
         return {
           id: user.id,
           email: user.email,
@@ -61,7 +72,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           role: user.role,
           username: user.username,
           avatar: user.avatar,
-          emailVerified: user.emailVerified,
+          emailVerified,
         };
       },
     }),
@@ -96,6 +107,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               token.avatar = fresh.avatar ?? token.avatar;
               token.emailVerified = fresh.emailVerified ?? null;
               token.roleFetchedAt = Date.now();
+              // All accounts are treated as verified: sign-up emails on this
+              // deployment are not live inboxes, so any legacy null is
+              // self-healed to now on the session refresh that already hits
+              // the DB. No user ever sees a verification wall.
+              if (fresh.emailVerified == null) {
+                const verifiedAt = new Date();
+                prisma.user
+                  .update({ where: { id: token.id as string }, data: { emailVerified: verifiedAt } })
+                  .catch(() => {});
+                token.emailVerified = verifiedAt;
+              }
             }
           } catch {
             // DB hiccup — keep the cached token values.
