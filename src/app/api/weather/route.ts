@@ -30,10 +30,39 @@ const CACHE_TTL_SECONDS = 900; // 15 minutes — weather doesn't change fast
  * 2. IP geolocation (rate-limited to once per 30 min)
  * 3. Regional default (Nairobi)
  */
+// Server-side cache of last IP location (with place label) — avoids a fresh
+// ip-api.com call on every request.
+const IP_CACHE_KEY = "weather:iploc";
+
+async function resolveIpLocation(request: NextRequest): Promise<{ lat: number; lon: number; place: string | null }> {
+  const cachedLoc = await cacheGet<{ lat: number; lon: number; place: string | null }>(IP_CACHE_KEY);
+  if (cachedLoc) return cachedLoc;
+  try {
+    const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || request.headers.get("x-real-ip");
+    if (ip && ip !== "::1" && ip !== "127.0.0.1" && !ip.startsWith("::ffff:")) {
+      const geoRes = await fetch(`http://ip-api.com/json/${ip}?fields=lat,lon,city,country,status`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      const geo = (await geoRes.json()) as { status?: string; lat?: number; lon?: number; city?: string; country?: string };
+      if (geo.status === "success" && typeof geo.lat === "number" && typeof geo.lon === "number") {
+        const place = [geo.city, geo.country].filter(Boolean).join(", ") || null;
+        const result = { lat: geo.lat, lon: geo.lon, place };
+        // Cache IP location for 30 minutes
+        await cacheSet(IP_CACHE_KEY, result, 1800).catch(() => {});
+        return result;
+      }
+    }
+  } catch {
+    /* fall through to default */
+  }
+  return { lat: NAIROBI.lat, lon: NAIROBI.lon, place: "Nairobi" };
+}
+
 export async function GET(request: NextRequest) {
   const latParam = request.nextUrl.searchParams.get("lat");
   const lonParam = request.nextUrl.searchParams.get("lon");
   const cityParam = request.nextUrl.searchParams.get("city")?.toLowerCase();
+  const metaOnly = request.nextUrl.searchParams.get("meta") === "1";
 
   let lat: number;
   let lon: number;
@@ -53,38 +82,15 @@ export async function GET(request: NextRequest) {
     lon = region.lon;
     placeLabel = region.label;
   } else {
-    // Try cached IP location first
-    const cachedLoc = await cacheGet<{ lat: number; lon: number }>("weather:iploc");
-    if (cachedLoc) {
-      lat = cachedLoc.lat;
-      lon = cachedLoc.lon;
-    } else {
-      // IP geolocation fallback
-      try {
-        const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || request.headers.get("x-real-ip");
-        if (ip && ip !== "::1" && ip !== "127.0.0.1") {
-          const geoRes = await fetch(`http://ip-api.com/json/${ip}?fields=lat,lon,status`, {
-            signal: AbortSignal.timeout(5000),
-          });
-          const geo = (await geoRes.json()) as { status?: string; lat?: number; lon?: number };
-          if (geo.status === "success" && typeof geo.lat === "number" && typeof geo.lon === "number") {
-            lat = geo.lat;
-            lon = geo.lon;
-            // Cache IP location for 30 minutes
-            await cacheSet("weather:iploc", { lat, lon }, 1800).catch(() => {});
-          } else {
-            lat = NAIROBI.lat;
-            lon = NAIROBI.lon;
-          }
-        } else {
-          lat = NAIROBI.lat;
-          lon = NAIROBI.lon;
-        }
-      } catch {
-        lat = NAIROBI.lat;
-        lon = NAIROBI.lon;
-      }
-    }
+    const ipLoc = await resolveIpLocation(request);
+    lat = ipLoc.lat;
+    lon = ipLoc.lon;
+    placeLabel = ipLoc.place;
+  }
+
+  // meta=1: lightweight location-only response (no Open-Meteo call).
+  if (metaOnly) {
+    return NextResponse.json({ coords: { lat, lon }, place: placeLabel });
   }
 
   // Round to 2 decimal places for cache key efficiency (still ~1km accuracy)
@@ -104,7 +110,7 @@ export async function GET(request: NextRequest) {
       daily: "weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max,uv_index_max",
       hourly: "temperature_2m,weather_code,precipitation_probability,wind_speed_10m",
       timezone: "auto",
-      forecast_days: "7",
+      forecast_days: "14",
     });
     const res = await fetch(`https://api.open-meteo.com/v1/forecast?${params.toString()}`, {
       signal: AbortSignal.timeout(10_000),

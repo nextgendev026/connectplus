@@ -3,6 +3,7 @@ import Link from "next/link";
 import { LayoutGrid, BookOpen, Eye, ArrowRight } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { cn } from "@/lib/utils";
+import { RealtimeRefresh } from "@/components/feed/RealtimeRefresh";
 
 export const metadata: Metadata = {
   title: "Categories | connectPlus",
@@ -110,6 +111,8 @@ export default async function CategoriesPage() {
           </p>
         </div>
       </div>
+
+      <RealtimeRefresh />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-20">
         {sorted.length === 0 ? (

@@ -7,18 +7,18 @@ import { coverSrc } from "@/lib/thumb";
 import { auth } from "@/lib/auth";
 import { rankFeed } from "@/lib/feed-ranker";
 import { FeedLiveRefresh } from "@/components/feed/FeedLiveRefresh";
+import { TrendingTopics } from "@/components/feed/TrendingTopics";
+import { ListeningLocation } from "@/components/feed/ListeningLocation";
 import { FeedFeedbackTracker } from "@/components/feed/FeedFeedbackTracker";
 import { LoadMoreFeed } from "@/components/feed/LoadMoreFeed";
 import { HeroSlideshow } from "@/components/feed/HeroSlideshow";
 import {
-  TrendingUp,
   Eye,
   Heart,
   MessageCircle,
   ArrowRight,
   Bookmark,
   Users,
-  ChevronRight,
   SearchX,
   Pen,
   Sparkles,
@@ -398,53 +398,15 @@ function EmptyState({ categoryFilter }: { categoryFilter?: string }) {
 }
 
 function TrendingSidebar({
-  trendingTags,
   popularCreators,
 }: {
-  trendingTags: TagData[];
   popularCreators: CreatorData[];
 }) {
   return (
     <aside className="hidden lg:block">
       <div className="sticky top-24 space-y-5">
-        {/* Trending Topics */}
-        <div className="rounded-2xl bg-surface-900/60 border border-surface-800/50 p-5 hover:border-surface-700/50 transition-colors">
-          <div className="flex items-center gap-2 mb-4">
-            <TrendingUp className="w-4 h-4 text-brand-400" />
-            <h3 className="text-sm font-semibold text-surface-50">
-              Trending Topics
-            </h3>
-          </div>
-          {trendingTags.length > 0 ? (
-            <div className="space-y-3">
-              {trendingTags.map((topic, i) => (
-                <a
-                  key={topic.id}
-                  href={`/tag/${topic.slug}`}
-                  className="flex items-center justify-between group"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs font-bold text-surface-600 w-5">
-                      {String(i + 1).padStart(2, "0")}
-                    </span>
-                    <div>
-                      <p className="text-sm font-medium text-surface-300 group-hover:text-brand-400 transition-colors">
-                        #{topic.name}
-                      </p>
-                      <p className="text-[10px] text-surface-500">
-                        {formatViews(topic._count.posts)}{" "}
-                        {topic._count.posts === 1 ? "post" : "posts"}
-                      </p>
-                    </div>
-                  </div>
-                  <ChevronRight className="w-3 h-3 text-surface-600 group-hover:text-brand-400 group-hover:translate-x-0.5 transition-all" />
-                </a>
-              ))}
-            </div>
-          ) : (
-            <p className="text-xs text-surface-500">No trending topics yet.</p>
-          )}
-        </div>
+        {/* Trending Topics — realtime, with thumbnails + refresh */}
+        <TrendingTopics />
 
         {/* Popular Writers */}
         <div className="rounded-2xl bg-surface-900/60 border border-surface-800/50 p-5 hover:border-surface-700/50 transition-colors">
@@ -643,6 +605,10 @@ export default async function HomeFeedPage({
 
   return (
     <div className="min-h-screen bg-surface-950 scroll-smooth">
+      <div className="relative z-20 -mt-14 mb-2 flex justify-center px-4">
+        <ListeningLocation />
+      </div>
+
       <HeroSlideshow
         slides={heroPostRows}
         stats={{
@@ -698,10 +664,7 @@ export default async function HomeFeedPage({
             )}
           </div>
 
-          <TrendingSidebar
-            trendingTags={trendingTags}
-            popularCreators={popularCreators}
-          />
+          <TrendingSidebar popularCreators={popularCreators} />
         </div>
       </div>
 

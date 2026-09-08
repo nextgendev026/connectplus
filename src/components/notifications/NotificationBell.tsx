@@ -11,6 +11,7 @@ import {
   requestNotificationPermission,
   showSystemNotification,
 } from "@/lib/permissions";
+import { getCookieConsent } from "@/components/pwa/CookieConsent";
 
 interface Actor {
   id: string;
@@ -52,7 +53,19 @@ export function NotificationBell() {
   const rootRef = useRef<HTMLDivElement>(null);
   const prevIdsRef = useRef<Set<string>>(new Set());
   const [enableMsg, setEnableMsg] = useState<string | null>(null);
+  const [cookieConsent, setCookieConsent] = useState<boolean>(false);
   const permState = notificationPermissionState();
+  // Once the user has made a cookie/privacy choice, stop nagging for
+  // notification permission — they've already opted in/out of tracking.
+  const canSuggest = !cookieConsent && permState !== "granted" && permState !== "unsupported";
+
+  useEffect(() => {
+    // Reflect consent as soon as it's stored (cookie banner accept/dismiss).
+    const sync = () => setCookieConsent(!!getCookieConsent());
+    sync();
+    window.addEventListener("storage", sync);
+    return () => window.removeEventListener("storage", sync);
+  }, []);
 
   const load = useCallback(async () => {
     if (!session?.user) return;
@@ -179,7 +192,7 @@ export function NotificationBell() {
               )}
             </div>
 
-            {permState !== "granted" && permState !== "unsupported" && (
+            {canSuggest && (
               <div className="border-b border-surface-800 bg-surface-800/30 px-4 py-2.5">
                 <p className="text-[11px] leading-relaxed text-surface-400">
                   Enable browser notifications to get pings — with sound — when someone

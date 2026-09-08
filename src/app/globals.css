@@ -15,29 +15,53 @@
  */
 
 :root {
-  /* Dark mode (default) — the palette as originally designed. Text tones are
-     pushed slightly brighter so body copy reads with real weight on cards. */
-  --surface-50: 252 252 253;
-  --surface-100: 246 246 248;
-  --surface-200: 232 232 236;
-  --surface-300: 219 219 224;
-  --surface-400: 174 174 184;
-  --surface-500: 124 124 134;
-  --surface-600: 90 90 100;
-  --surface-700: 68 68 76;
-  --surface-800: 42 42 46;
-  --surface-850: 32 32 36;
-  --surface-900: 26 26 30;
-  --surface-950: 10 10 13;
-  --foreground: 252 252 253;
-  --background: 10 10 13;
-  --scrollbar-thumb: 63 63 70;
-  --scrollbar-hover: 82 82 91;
-  --glass-bg: 24 24 27;
-  --glass-border: 63 63 70;
-  --card-bg: 24 24 27;
-  --card-border: 39 39 42;
-  --muted: 161 161 170;
+  /* ===== DARK MODE (default) =====
+     Deep charcoal backgrounds — never pure black.
+     Text is bright enough for WCAG AA (4.5:1+) against all bg surfaces.
+     Brand orange is brightened slightly for dark backgrounds. */
+  --surface-50: 249 250 251;    /* #F9FAFB — lightest text (headings) */
+  --surface-100: 238 240 243;   /* #EEF0F3 */
+  --surface-200: 224 226 231;   /* #E0E2E7 */
+  --surface-300: 196 200 208;   /* #C4C8D0 */
+  --surface-400: 154 160 172;   /* #9AA0AC — icons */
+  --surface-500: 114 120 132;   /* #727884 — secondary text */
+  --surface-600: 76 82 92;      /* #4C525C */
+  --surface-700: 48 52 58;      /* #30343A — borders */
+  --surface-800: 32 36 40;      /* #202428 — cards, inputs */
+  --surface-850: 26 30 34;      /* #1A1E22 — elevated panels */
+  --surface-900: 20 23 27;      /* #14171B — main bg */
+  --surface-950: 14 17 20;      /* #0E1114 — darkest bg */
+  --foreground: 249 250 251;
+  --background: 14 17 20;
+  --scrollbar-thumb: 48 52 58;
+  --scrollbar-hover: 76 82 92;
+  --glass-bg: 26 30 34;
+  --glass-border: 48 52 58;
+  --card-bg: 26 30 34;
+  --card-border: 40 44 48;
+  --muted: 154 160 172;
+  /* Brand colors — brightened for dark backgrounds */
+  --brand-primary: #ff6b00;
+  --brand-primary-light: #ff8f3a;
+  --brand-primary-dark: #e05600;
+  --brand-on-primary: #ffffff;
+  --accent-coral: #ff6b6b;
+  --accent-amber: #ffb36b;
+  --accent-cyan: #22d3ee;
+  --accent-violet: #a78bfa;
+  --border-subtle: rgb(48 52 58 / 0.6);
+  --border-default: rgb(48 52 58);
+  --shadow-color: 0 0 0;
+  /* Success/Error/Warning semantic tokens */
+  --success-bg: rgb(6 78 59 / 0.15);
+  --success-text: #34d399;
+  --success-border: rgb(16 185 129 / 0.3);
+  --warning-bg: rgb(146 64 14 / 0.15);
+  --warning-text: #fbbf24;
+  --warning-border: rgb(245 158 11 / 0.3);
+  --error-bg: rgb(153 27 27 / 0.15);
+  --error-text: #f87171;
+  --error-border: rgb(239 68 68 / 0.3);
 }
 
 .dark {
@@ -45,38 +69,54 @@
 }
 
 html:not(.dark) {
-  /* Light mode — FLIP the entire palette: surface-950 becomes the lightest
-     background and surface-50 the darkest text, so every existing
-     bg-surface-950 text-surface-50 pattern becomes a proper light theme.
-
-     Perfect Light Mode palette:
-     • Bright orange #FF6B00 is the sole accent — reserved for CTAs, active
-       states and notifications (see brand-500).
-     • Light slate grey #F4F6F8 is the canvas — cool, glare-free.
-     • Deep charcoal #1A202C is the text — never pure black.
-     • Muted blue-grey #94A3B8 / #64748B carries icons, placeholders and
-       secondary text; hairline slate borders tie the layout together. */
-  --surface-50: 26 32 44;      /* #1A202C — deep charcoal (headings/body) */
-  --surface-100: 45 55 72;     /* #2D3748 — secondary charcoal */
-  --surface-200: 51 65 85;     /* #334155 — slate-700 */
-  --surface-300: 63 76 96;     /* #3F4C60 — slate-650 */
-  --surface-400: 71 85 105;    /* #475569 — slate-600 */
-  --surface-500: 100 116 139;  /* #64748B — muted blue-grey (secondary text) */
-  --surface-600: 148 163 184;  /* #94A3B8 — muted blue-grey (icons/placeholders) */
-  --surface-700: 203 213 225;  /* #CBD5E1 — slate-300 (soft borders) */
-  --surface-800: 226 232 240;  /* #E2E8F0 — slate-200 (hairlines, inputs) */
-  --surface-850: 233 237 242;  /* #E9EDF2 — elevated panels */
-  --surface-900: 240 243 247;  /* #F0F3F7 — cards (just under canvas) */
-  --surface-950: 244 246 248;  /* #F4F6F8 — the light slate canvas */
-  --foreground: 26 32 44;
-  --background: 244 246 248;
-  --scrollbar-thumb: 203 213 225;
-  --scrollbar-hover: 148 163 184;
-  --glass-bg: 255 255 255;
-  --glass-border: 226 232 240;
-  --card-bg: 255 255 255;
-  --card-border: 226 232 240;
-  --muted: 100 116 139;
+  /* ===== LIGHT MODE =====
+     Canvas: #96AEC3 — soft sky-blue, glare-free and easy on the eyes.
+     Text: deep slate-navy, never pure black (WCAG AA on the canvas).
+     Cards: warm off-white so surfaces lift off the sky canvas.
+     Brand: darker orange for light bg (#E0562E). */
+  --surface-50: 15 26 40;      /* #0F1A28 — headings/body (darkest text) */
+  --surface-100: 30 46 66;     /* #1E2E42 — secondary text */
+  --surface-200: 49 67 89;     /* #314359 — muted text */
+  --surface-300: 66 86 110;    /* #42566E — icons */
+  --surface-400: 82 103 128;   /* #526780 — placeholders, secondary */
+  --surface-500: 106 128 152;  /* #6A8098 — borders, subtle text */
+  --surface-600: 133 154 176;  /* #859AB0 — light borders */
+  --surface-700: 165 185 205;  /* #A5B9CD — input borders */
+  --surface-800: 193 209 224;  /* #C1D1E0 — elevated bg (on sky canvas) */
+  --surface-850: 216 228 238;  /* #D8E4EE — cards */
+  --surface-900: 228 237 245;  /* #E4EDF5 — main bg */
+  --surface-950: 150 174 195;  /* #96AEC3 — canvas (sky blue) */
+  --foreground: 15 26 40;
+  --background: 150 174 195;
+  --scrollbar-thumb: 165 185 205;
+  --scrollbar-hover: 133 154 176;
+  --glass-bg: 228 237 245;
+  --glass-border: 193 209 224;
+  --card-bg: 240 246 251;
+  --card-border: 193 209 224;
+  --muted: 82 103 128;
+  /* Brand colors — darker for light backgrounds */
+  --brand-primary: #e05600;
+  --brand-primary-light: #ff6b00;
+  --brand-primary-dark: #b84e00;
+  --brand-on-primary: #ffffff;
+  --accent-coral: #dc4545;
+  --accent-amber: #d97706;
+  --accent-cyan: #0891b2;
+  --accent-violet: #7c3aed;
+  --border-subtle: rgb(203 213 225 / 0.5);
+  --border-default: rgb(203 213 225);
+  --shadow-color: 0 0 0;
+  /* Success/Error/Warning semantic tokens */
+  --success-bg: rgb(4 120 87 / 0.08);
+  --success-text: #047857;
+  --success-border: rgb(4 120 87 / 0.2);
+  --warning-bg: rgb(180 83 9 / 0.08);
+  --warning-text: #b45309;
+  --warning-border: rgb(180 83 9 / 0.2);
+  --error-bg: rgb(185 28 28 / 0.08);
+  --error-text: #b91c1c;
+  --error-border: rgb(185 28 28 / 0.2);
 }
 
 body {
@@ -87,6 +127,12 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Smooth theme transition on all surfaces */
+html, body, div, span, nav, header, main, footer, aside, section, article {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
 }
 
 /* Scrollbar */
@@ -150,82 +196,49 @@ body {
 }
 
   .text-gradient-brand {
-    background: linear-gradient(120deg, #ffb36b 0%, #ff6b00 55%, #ff5500 100%);
+    background: linear-gradient(120deg, var(--accent-amber) 0%, var(--brand-primary) 55%, var(--brand-primary-dark) 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
 
   .btn-gradient {
-    background-image: linear-gradient(120deg, #ff8a33 0%, #ff6b00 55%, #ff5500 120%);
+    background: linear-gradient(120deg, var(--brand-primary-light), var(--brand-primary) 55%, var(--brand-primary-dark));
+    color: var(--brand-on-primary);
     transition: filter 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
   }
 
   .btn-gradient:hover {
-    filter: brightness(1.08);
+    filter: brightness(1.1);
     transform: translateY(-1px);
-    box-shadow: 0 8px 24px rgba(255, 107, 0, 0.35), 0 0 0 1px rgba(255, 138, 51, 0.15);
+    box-shadow: 0 8px 24px rgba(255, 107, 0, 0.3), 0 0 0 1px rgba(255, 138, 51, 0.15);
   }
 
   .btn-gradient:active {
     transform: translateY(0) scale(0.99);
   }
 
-  /* Theme-aware accent text — AA on light canvas, bright on dark.
-     Semantic chips (badges, pills, links) should use these instead of a
-     fixed 400/600 shade so contrast holds in both themes. */
-  .text-accent-strong {
-    @apply text-brand-800;
-  }
-  .text-warning-strong {
-    @apply text-amber-800;
-  }
-  .text-positive-strong {
-    @apply text-emerald-800;
-  }
-  .text-info-strong {
-    @apply text-cyan-800;
-  }
-  .text-danger-strong {
-    @apply text-red-800;
-  }
-  html:not(.dark) .text-accent-strong {
-    @apply text-brand-800;
-  }
-  html:not(.dark) .text-warning-strong {
-    @apply text-amber-800;
-  }
-  html:not(.dark) .text-positive-strong {
-    @apply text-emerald-800;
-  }
-  html:not(.dark) .text-info-strong {
-    @apply text-cyan-800;
-  }
-  html:not(.dark) .text-danger-strong {
-    @apply text-red-800;
-  }
-  .dark .text-accent-strong {
-    @apply text-brand-300;
-  }
-  .dark .text-warning-strong {
-    @apply text-amber-300;
-  }
-  .dark .text-positive-strong {
-    @apply text-emerald-300;
-  }
-  .dark .text-info-strong {
-    @apply text-cyan-300;
-  }
-  .dark .text-danger-strong {
-    @apply text-red-300;
-  }
+  /* Theme-aware accent text — WCAG AA (4.5:1) in both themes.
+     Light mode: use -700/-800 shades (dark enough on light canvas).
+     Dark mode: use -300/-400 shades (bright enough on dark bg). */
+  .dark .text-accent-strong, html.dark .text-accent-strong { color: #ff8f3a; }
+  .dark .text-warning-strong, html.dark .text-warning-strong { color: #fbbf24; }
+  .dark .text-positive-strong, html.dark .text-positive-strong { color: #34d399; }
+  .dark .text-info-strong, html.dark .text-info-strong { color: #22d3ee; }
+  .dark .text-danger-strong, html.dark .text-danger-strong { color: #f87171; }
+
+  html:not(.dark) .text-accent-strong { color: #b84e00; }
+  html:not(.dark) .text-warning-strong { color: #92400e; }
+  html:not(.dark) .text-positive-strong { color: #047857; }
+  html:not(.dark) .text-info-strong { color: #0e7490; }
+  html:not(.dark) .text-danger-strong { color: #991b1b; }
 
   /* Composer surface is white in BOTH themes, so text must be the dark
      charcoal end of the scale regardless of mode (surface-50 in light,
      surface-950 in dark). Placeholders stay mid-tone in both themes. */
   .text-editor {
-    @apply text-surface-50;
-    caret-color: #ff6b00;
+    color: rgb(var(--foreground));
+    caret-color: var(--brand-primary);
   }
   .placeholder-editor::placeholder {
     @apply text-surface-500;

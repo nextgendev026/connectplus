@@ -1,606 +1,370 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import {
-  Users,
-  Eye,
-  FileText,
-  BarChart3,
-  BrainCircuit,
-  ArrowUpRight,
-  ArrowDownRight,
-  Globe,
-  Zap,
-  Download,
-  RefreshCw,
-  AlertTriangle,
-  Loader2,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
-import {
-  AreaChart,
-  Area,
   BarChart,
   Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  LineChart,
+  Line,
   PieChart,
   Pie,
   Cell,
-  ResponsiveContainer,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
+  Area,
+  AreaChart,
 } from "recharts";
+import {
+  TrendingUp,
+  Eye,
+  MessageSquare,
+  Heart,
+  FileText,
+  Users,
+  BarChart3,
+  Activity,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 
-interface StatsData {
-  totalUsers: number;
-  totalPosts: number;
-  totalComments: number;
-  totalViews: number;
-  pendingModeration: number;
-  usersThisWeek: number;
-  postsThisWeek: number;
-  regionalBreakdown: Record<string, { users: number; posts: number }>;
+interface AnalyticsData {
+  summary: {
+    totalPosts: number;
+    totalViews: number;
+    totalComments: number;
+    totalLikes: number;
+    avgViewsPerPost: number;
+    lastWeekPosts: number;
+    lastWeekViews: number;
+    viewsTrend: number;
+  };
+  dailyData: {
+    date: string;
+    posts: number;
+    views: number;
+    comments: number;
+    likes: number;
+  }[];
+  categories: { name: string; posts: number; views: number; comments: number }[];
+  topPosts: {
+    title: string;
+    slug: string;
+    views: number;
+    comments: number;
+    likes: number;
+    author: string;
+    category: string;
+    publishedAt?: string;
+  }[];
+  authors: { name: string; posts: number; views: number; comments: number }[];
 }
 
-const trafficData = [
-  { day: "Mon", views: 12400, users: 3200 },
-  { day: "Tue", views: 15800, users: 4100 },
-  { day: "Wed", views: 14200, users: 3800 },
-  { day: "Thu", views: 18600, users: 5200 },
-  { day: "Fri", views: 21300, users: 6100 },
-  { day: "Sat", views: 19800, users: 5600 },
-  { day: "Sun", views: 16400, users: 4400 },
-];
+const PIE_COLORS = ["#ff6b00", "#22d3ee", "#a78bfa", "#34d399", "#fbbf24", "#f87171", "#ec4899", "#8b5cf6"];
 
-const userGrowthData = [
-  { month: "Apr", newUsers: 1820, retained: 1640 },
-  { month: "May", newUsers: 2140, retained: 1920 },
-  { month: "Jun", newUsers: 2560, retained: 2310 },
-  { month: "Jul", newUsers: 2890, retained: 2580 },
-  { month: "Aug", newUsers: 3210, retained: 2940 },
-  { month: "Sep", newUsers: 3680, retained: 3320 },
-];
-
-const PIE_COLORS = ["#22c55e", "#22d3ee", "#a78bfa", "#f59e0b", "#f43f5e", "#3b82f6", "#ec4899", "#14b8a6", "#f97316", "#8b5cf6"];
-
-const predictiveModels = [
-  {
-    model: "User Growth Forecast",
-    prediction: "22,400",
-    confidence: 94,
-    period: "Q4 2026",
-    trend: "up" as const,
-    change: "+38%",
-  },
-  {
-    model: "Content Engagement",
-    prediction: "8.7%",
-    confidence: 87,
-    period: "Next 30 days",
-    trend: "up" as const,
-    change: "+1.2%",
-  },
-  {
-    model: "Churn Risk Assessment",
-    prediction: "3.2%",
-    confidence: 91,
-    period: "Next 60 days",
-    trend: "down" as const,
-    change: "-0.8%",
-  },
-  {
-    model: "Peak Traffic Window",
-    prediction: "Fri 6-9PM",
-    confidence: 89,
-    period: "Weekly",
-    trend: "stable" as const,
-    change: "Stable",
-  },
-];
-
-function formatNumber(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
-  return n.toLocaleString();
-}
-
-const CustomTooltip = ({
-  active,
-  payload,
+function StatCard({
+  icon: Icon,
   label,
+  value,
+  trend,
+  color,
 }: {
-  active?: boolean;
-  payload?: Array<{ name: string; value: number; color: string }>;
-  label?: string;
-}) => {
-  if (active && payload && payload.length) {
+  icon: typeof Eye;
+  label: string;
+  value: string | number;
+  trend?: string;
+  color: string;
+}) {
+  return (
+    <div className="rounded-xl border border-surface-700/50 bg-surface-800/50 dark:bg-surface-800/50 p-4">
+      <div className="flex items-center gap-3">
+        <div className={cn("flex h-10 w-10 items-center justify-center rounded-xl", color)}>
+          <Icon className="h-5 w-5 text-white" />
+        </div>
+        <div>
+          <p className="text-2xl font-bold text-surface-50">{typeof value === "number" ? value.toLocaleString() : value}</p>
+          <p className="text-xs text-surface-400">{label}</p>
+        </div>
+      </div>
+      {trend && <p className="mt-2 text-xs text-emerald-400">{trend}</p>}
+    </div>
+  );
+}
+
+export default function AnalyticsPage() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
+  const [data, setData] = useState<AnalyticsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [timeRange, setTimeRange] = useState<"7d" | "30d">("30d");
+
+  useEffect(() => {
+    if (status === "unauthenticated") {
+      router.push("/auth/signin");
+      return;
+    }
+    if (session?.user?.role !== "ADMIN" && session?.user?.role !== "SUPER_ADMIN") {
+      return;
+    }
+
+    const fetchData = async () => {
+      try {
+        const res = await fetch("/api/admin/analytics");
+        if (res.ok) {
+          const json = await res.json();
+          setData(json);
+        }
+      } catch {
+        // ignore
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, [session, status, router]);
+
+  if (status === "loading" || loading) {
     return (
-      <div className="rounded-lg bg-surface-800 border border-surface-700 px-3 py-2 shadow-xl">
-        <p className="text-xs font-medium text-surface-50 mb-1">{label}</p>
-        {payload.map((entry, i) => (
-          <p key={i} className="text-xs text-surface-300">
-            <span
-              className="mr-1.5 inline-block h-2 w-2 rounded-full"
-              style={{ backgroundColor: entry.color }}
-            />
-            {entry.name}: {entry.value.toLocaleString()}
-          </p>
-        ))}
+      <div className="flex min-h-screen items-center justify-center bg-surface-950">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand-500/30 border-t-brand-500" />
       </div>
     );
   }
-  return null;
-};
 
-export default function AnalyticsPage() {
-  const [stats, setStats] = useState<StatsData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetchStats();
-  }, []);
-
-  async function fetchStats() {
-    try {
-      setLoading(true);
-      setError(null);
-      const res = await fetch("/api/admin/stats", { credentials: "include" });
-      if (!res.ok) throw new Error(`Failed to fetch stats (${res.status})`);
-      const data = await res.json();
-      setStats(data.stats);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load analytics");
-    } finally {
-      setLoading(false);
-    }
+  if (!data) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-surface-950">
+        <p className="text-surface-400">No analytics data available</p>
+      </div>
+    );
   }
 
-  const regionData = stats
-    ? Object.entries(stats.regionalBreakdown)
-        .map(([name, data], i) => ({
-          name,
-          value: data.users,
-          color: PIE_COLORS[i % PIE_COLORS.length],
-        }))
-        .sort((a, b) => b.value - a.value)
-    : [];
-
-  const overviewStats = stats
-    ? [
-        {
-          label: "Page Views",
-          value: formatNumber(stats.totalViews),
-          change: `+${stats.postsThisWeek} posts this week`,
-          up: true,
-          icon: Eye,
-          color: "text-accent-strong",
-          bg: "bg-brand-500/10",
-        },
-        {
-          label: "Total Users",
-          value: formatNumber(stats.totalUsers),
-          change: `+${stats.usersThisWeek} this week`,
-          up: true,
-          icon: Users,
-          color: "text-info-strong",
-          bg: "bg-cyan-400/10",
-        },
-        {
-          label: "Total Posts",
-          value: formatNumber(stats.totalPosts),
-          change: `${stats.totalComments.toLocaleString()} comments`,
-          up: true,
-          icon: FileText,
-          color: "text-purple-400",
-          bg: "bg-purple-400/10",
-        },
-        {
-          label: "Pending Review",
-          value: formatNumber(stats.pendingModeration),
-          change: "Needs attention",
-          up: false,
-          icon: AlertTriangle,
-          color: "text-warning-strong",
-          bg: "bg-amber-400/10",
-        },
-      ]
-    : [];
+  const displayData = timeRange === "7d" ? data.dailyData.slice(-7) : data.dailyData;
 
   return (
-    <div className="min-h-screen">
-      <div className="mx-auto max-w-[1600px] space-y-6">
+    <div className="min-h-screen bg-surface-950">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
         {/* Header */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-cyan-400/10 border border-cyan-400/20">
-              <BarChart3 className="h-6 w-6 text-info-strong" />
+        <div className="mb-8 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-500/15 border border-brand-500/25">
+              <BarChart3 className="h-5 w-5 text-accent-strong" />
             </div>
             <div>
-              <h1 className="type-display text-surface-50">
-                Analytics &amp; Trend Radar
-              </h1>
-              <p className="text-sm font-medium text-surface-300">
-                Platform intelligence, growth metrics &amp; predictive models
-              </p>
+              <h1 className="text-2xl font-bold text-surface-50">Analytics</h1>
+              <p className="text-xs text-surface-400">Article performance and engagement</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button className="flex items-center gap-2 rounded-lg bg-surface-900 border border-surface-800 px-3 py-2 text-xs text-surface-300 transition-colors hover:bg-surface-800 hover:text-surface-50">
-              <Download className="h-3.5 w-3.5" />
-              Export
-            </button>
-            <button
-              onClick={fetchStats}
-              disabled={loading}
-              className="flex items-center gap-2 rounded-lg bg-surface-900 border border-surface-800 px-3 py-2 text-xs text-surface-300 transition-colors hover:bg-surface-800 hover:text-surface-50"
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-              Refresh
-            </button>
+          <div className="flex gap-2">
+            {(["7d", "30d"] as const).map((range) => (
+              <button
+                key={range}
+                onClick={() => setTimeRange(range)}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-xs font-medium transition-all border",
+                  timeRange === range
+                    ? "border-brand-500 bg-brand-500/10 text-accent-strong"
+                    : "border-surface-700 bg-surface-900/50 text-surface-400 hover:text-surface-200"
+                )}
+              >
+                {range === "7d" ? "7 Days" : "30 Days"}
+              </button>
+            ))}
           </div>
         </div>
 
-        {/* Loading */}
-        {loading && (
-          <div className="flex items-center justify-center py-20">
-            <Loader2 className="h-8 w-8 animate-spin text-accent-strong" />
-            <span className="ml-3 text-sm font-medium text-surface-300">Loading analytics...</span>
-          </div>
-        )}
+        {/* Summary Cards */}
+        <div className="mb-8 grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard icon={FileText} label="Published Posts" value={data.summary.totalPosts} color="bg-brand-500" />
+          <StatCard icon={Eye} label="Total Views" value={data.summary.totalViews} trend={`${data.summary.viewsTrend}% this week`} color="bg-cyan-500" />
+          <StatCard icon={MessageSquare} label="Comments" value={data.summary.totalComments} color="bg-violet-500" />
+          <StatCard icon={Heart} label="Likes" value={data.summary.totalLikes} color="bg-rose-500" />
+        </div>
 
-        {/* Error */}
-        {error && !loading && (
-          <div className="flex flex-col items-center justify-center rounded-xl border border-red-500/20 bg-red-500/5 py-12">
-            <AlertTriangle className="mb-3 h-8 w-8 text-danger-strong" />
-            <p className="text-sm font-medium text-danger-strong">{error}</p>
-            <button
-              onClick={fetchStats}
-              className="mt-4 rounded-lg bg-surface-800 border border-surface-700 px-4 py-2 text-xs text-surface-300 transition-colors hover:text-surface-50"
-            >
-              Retry
-            </button>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+          {/* Views Over Time */}
+          <div className="lg:col-span-2 rounded-2xl border border-surface-700/50 bg-surface-900/50 p-5">
+            <h3 className="text-sm font-semibold text-surface-300 mb-4 flex items-center gap-2">
+              <Activity className="h-4 w-4 text-accent-strong" />
+              Views & Engagement
+            </h3>
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={displayData}>                    <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--surface-700) / 0.5)" />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fill: "rgb(var(--surface-400))", fontSize: 10 }}
+                    tickFormatter={(v) => v.slice(5)}
+                    stroke="rgb(var(--surface-700) / 0.5)"
+                  />
+                  <YAxis tick={{ fill: "rgb(var(--surface-400))", fontSize: 10 }} stroke="rgb(var(--surface-700) / 0.5)" />
+                  <Tooltip
+                    contentStyle={{
+                      background: "rgb(var(--surface-800))",
+                      border: "1px solid rgb(var(--surface-700))",
+                      borderRadius: "8px",
+                      fontSize: "12px",
+                      color: "rgb(var(--foreground))",
+                    }}
+                  />
+                  <Area type="monotone" dataKey="views" stroke="#ff6b00" fill="rgba(255,107,0,0.15)" strokeWidth={2} />
+                  <Area type="monotone" dataKey="comments" stroke="#a78bfa" fill="rgba(167,139,250,0.1)" strokeWidth={1.5} />
+                  <Area type="monotone" dataKey="likes" stroke="#34d399" fill="rgba(52,211,153,0.1)" strokeWidth={1.5} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
           </div>
-        )}
 
-        {!loading && !error && stats && (
-          <>
-            {/* Overview Stats */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {overviewStats.map((stat) => (
-                <div
-                  key={stat.label}
-                  className="group relative overflow-hidden rounded-xl bg-surface-900/50 border border-surface-800 p-5 transition-all duration-300 hover:border-surface-700 hover:bg-surface-900/80"
-                >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-surface-300">{stat.label}</p>
-                      <p className="mt-1 text-3xl font-bold text-surface-50">
-                        {stat.value}
-                      </p>
-                    </div>
-                    <div
-                      className={cn(
-                        "flex h-10 w-10 items-center justify-center rounded-lg",
-                        stat.bg
-                      )}
-                    >
-                      <stat.icon className={cn("h-5 w-5", stat.color)} />
-                    </div>
+          {/* Category Breakdown */}
+          <div className="rounded-2xl border border-surface-700/50 bg-surface-900/50 p-5">
+            <h3 className="text-sm font-semibold text-surface-300 mb-4 flex items-center gap-2">
+              <Users className="h-4 w-4 text-accent-strong" />
+              By Category
+            </h3>
+            <div className="h-60">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={data.categories}
+                    dataKey="views"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={80}
+                    innerRadius={40}
+                    paddingAngle={2}
+                  >
+                    {data.categories.map((_, i) => (
+                      <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{
+                      background: "rgb(var(--surface-800))",
+                      border: "1px solid rgb(var(--surface-700))",
+                      borderRadius: "8px",
+                      fontSize: "12px",
+                      color: "rgb(var(--foreground))",
+                    }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="space-y-2 mt-2">
+              {data.categories.slice(0, 5).map((cat, i) => (
+                <div key={cat.name} className="flex items-center justify-between text-xs">
+                  <span className="flex items-center gap-2 text-surface-300">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
+                    {cat.name}
+                  </span>
+                  <span className="text-surface-400">{cat.views.toLocaleString()} views</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Top Posts + Author Performance */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          {/* Top Posts */}
+          <div className="rounded-2xl border border-surface-700/50 bg-surface-900/50 p-5">
+            <h3 className="text-sm font-semibold text-surface-300 mb-4 flex items-center gap-2">
+              <TrendingUp className="h-4 w-4 text-accent-strong" />
+              Top Performing Posts
+            </h3>
+            <div className="space-y-3">
+              {data.topPosts.slice(0, 8).map((post, i) => (
+                <div key={post.slug} className="flex items-start gap-3 rounded-lg bg-surface-800/40 px-3 py-2.5">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-500/15 text-[10px] font-bold text-accent-strong shrink-0">
+                    {i + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-medium text-surface-200">{post.title}</p>
+                    <p className="text-[10px] text-surface-500 mt-0.5">
+                      {post.author} · {post.category}
+                    </p>
                   </div>
-                  <div className="mt-3 flex items-center gap-1 text-xs">
-                    {stat.up ? (
-                      <ArrowUpRight className="h-3.5 w-3.5 text-accent-strong" />
-                    ) : (
-                      <ArrowDownRight className="h-3.5 w-3.5 text-accent-strong" />
-                    )}
-                    <span className="text-accent-strong font-medium">
-                      {stat.change}
-                    </span>
+                  <div className="flex items-center gap-3 text-[10px] text-surface-400 shrink-0">
+                    <span className="flex items-center gap-1"><Eye className="h-3 w-3" />{post.views}</span>
+                    <span className="flex items-center gap-1"><MessageSquare className="h-3 w-3" />{post.comments}</span>
+                    <span className="flex items-center gap-1"><Heart className="h-3 w-3" />{post.likes}</span>
                   </div>
                 </div>
               ))}
             </div>
+          </div>
 
-            {/* Traffic & User Growth Charts */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Traffic Area Chart */}
-              <div className="rounded-xl bg-surface-900/50 border border-surface-800 p-6">
-                <div className="mb-5 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Eye className="h-5 w-5 text-accent-strong" />
-                    <h2 className="type-h2 text-surface-50">
-                      Traffic Overview
-                    </h2>
-                  </div>
-                  <span className="text-xs text-surface-500">Last 7 days</span>
-                </div>
-                <div className="h-[280px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={trafficData}>
-                      <defs>
-                        <linearGradient id="viewsGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#22c55e" stopOpacity={0.3} />
-                          <stop offset="100%" stopColor="#22c55e" stopOpacity={0} />
-                        </linearGradient>
-                        <linearGradient id="usersGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#22d3ee" stopOpacity={0.3} />
-                          <stop offset="100%" stopColor="#22d3ee" stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                      <XAxis
-                        dataKey="day"
-                        tick={{ fontSize: 11, fill: "#64748b" }}
-                        axisLine={{ stroke: "#1e293b" }}
-                        tickLine={false}
-                      />
-                      <YAxis
-                        tick={{ fontSize: 11, fill: "#64748b" }}
-                        axisLine={false}
-                        tickLine={false}
-                        tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`}
-                      />
-                      <Tooltip content={<CustomTooltip />} />
-                      <Area
-                        type="monotone"
-                        dataKey="views"
-                        stroke="#22c55e"
-                        strokeWidth={2}
-                        fill="url(#viewsGrad)"
-                        name="Views"
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="users"
-                        stroke="#22d3ee"
-                        strokeWidth={2}
-                        fill="url(#usersGrad)"
-                        name="Users"
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              {/* User Growth Bar Chart */}
-              <div className="rounded-xl bg-surface-900/50 border border-surface-800 p-6">
-                <div className="mb-5 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Users className="h-5 w-5 text-info-strong" />
-                    <h2 className="type-h2 text-surface-50">
-                      User Growth
-                    </h2>
-                  </div>
-                  <span className="text-xs text-surface-500">Last 6 months</span>
-                </div>
-                <div className="h-[280px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={userGrowthData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                      <XAxis
-                        dataKey="month"
-                        tick={{ fontSize: 11, fill: "#64748b" }}
-                        axisLine={{ stroke: "#1e293b" }}
-                        tickLine={false}
-                      />
-                      <YAxis
-                        tick={{ fontSize: 11, fill: "#64748b" }}
-                        axisLine={false}
-                        tickLine={false}
-                        tickFormatter={(v) => `${(v / 1000).toFixed(1)}k`}
-                      />
-                      <Tooltip content={<CustomTooltip />} />
-                      <Bar
-                        dataKey="newUsers"
-                        fill="#22c55e"
-                        radius={[4, 4, 0, 0]}
-                        name="New Users"
-                      />
-                      <Bar
-                        dataKey="retained"
-                        fill="#22d3ee"
-                        radius={[4, 4, 0, 0]}
-                        name="Retained"
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
+          {/* Author Performance */}
+          <div className="rounded-2xl border border-surface-700/50 bg-surface-900/50 p-5">
+            <h3 className="text-sm font-semibold text-surface-300 mb-4 flex items-center gap-2">
+              <Users className="h-4 w-4 text-accent-strong" />
+              Author Performance
+            </h3>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={data.authors.slice(0, 6)} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--surface-700)/0.5)" />
+                  <XAxis type="number" tick={{ fill: "rgb(var(--surface-400))", fontSize: 10 }} stroke="rgb(var(--surface-700)/0.5)" />
+                  <YAxis type="category" dataKey="name" tick={{ fill: "rgb(var(--surface-400))", fontSize: 10 }} width={80} stroke="rgb(var(--surface-700)/0.5)" />
+                  <Tooltip
+                    contentStyle={{
+                      background: "rgb(var(--surface-800))",
+                      border: "1px solid rgb(var(--surface-700))",
+                      borderRadius: "8px",
+                      fontSize: "12px",
+                      color: "rgb(var(--foreground))",
+                    }}
+                  />
+                  <Bar dataKey="views" fill="#ff6b00" radius={[0, 4, 4, 0]} />
+                  <Bar dataKey="comments" fill="#a78bfa" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
-
-            {/* Regional Breakdown & Top Posts */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Regional Pie Chart */}
-              <div className="rounded-xl bg-surface-900/50 border border-surface-800 p-6">
-                <div className="mb-5 flex items-center gap-2">
-                  <Globe className="h-5 w-5 text-purple-400" />
-                  <h2 className="type-h2 text-surface-50">
-                    Regional Breakdown
-                  </h2>
-                </div>
-                <div className="h-[240px] flex items-center justify-center">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={regionData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={95}
-                        paddingAngle={4}
-                        dataKey="value"
-                        stroke="none"
-                      >
-                        {regionData.map((entry, i) => (
-                          <Cell key={i} fill={entry.color} />
-                        ))}
-                      </Pie>
-                      <Tooltip
-                        content={({ active, payload }) => {
-                          if (active && payload && payload.length) {
-                            const first = payload[0];
-                            if (!first) return null;
-                            const data = first.payload as (typeof regionData)[0];
-                            return (
-                              <div className="rounded-lg bg-surface-800 border border-surface-700 px-3 py-2 shadow-xl">
-                                <p className="text-xs font-medium text-surface-50">
-                                  {data.name}
-                                </p>
-                                <p className="text-xs text-surface-300">
-                                  {data.value.toLocaleString()} users
-                                </p>
-                              </div>
-                            );
-                          }
-                          return null;
-                        }}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="space-y-2 mt-2">
-                  {regionData.map((region) => (
-                    <div
-                      key={region.name}
-                      className="flex items-center justify-between text-xs"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="h-2.5 w-2.5 rounded-full"
-                          style={{ backgroundColor: region.color }}
-                        />
-                        <span className="text-surface-300">{region.name}</span>
-                      </div>
-                      <span className="font-medium text-surface-50 tabular-nums">
-                        {region.value.toLocaleString()}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Top Performing Content */}
-              <div className="lg:col-span-2 rounded-xl bg-surface-900/50 border border-surface-800 p-6">
-                <div className="mb-5 flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-warning-strong" />
-                  <h2 className="type-h2 text-surface-50">
-                    Platform Content Summary
-                  </h2>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div className="rounded-lg border border-surface-700 bg-surface-800/30 p-4">
-                    <p className="text-xs text-surface-500">Total Posts</p>
-                    <p className="mt-1 text-2xl font-bold text-surface-50">{formatNumber(stats.totalPosts)}</p>
-                    <p className="mt-1 text-xs text-accent-strong">+{stats.postsThisWeek} this week</p>
-                  </div>
-                  <div className="rounded-lg border border-surface-700 bg-surface-800/30 p-4">
-                    <p className="text-xs text-surface-500">Total Comments</p>
-                    <p className="mt-1 text-2xl font-bold text-surface-50">{formatNumber(stats.totalComments)}</p>
-                    <p className="mt-1 text-xs text-surface-400">
-                      {(stats.totalComments / Math.max(stats.totalPosts, 1)).toFixed(1)} per post avg
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-surface-700 bg-surface-800/30 p-4">
-                    <p className="text-xs text-surface-500">Active Regions</p>
-                    <p className="mt-1 text-2xl font-bold text-surface-50">{Object.keys(stats.regionalBreakdown).length}</p>
-                    <p className="mt-1 text-xs text-surface-400">Regional nodes</p>
-                  </div>
-                </div>
-                <div className="mt-4 rounded-lg border border-surface-700 bg-surface-800/30 p-4">
-                  <p className="text-xs text-surface-500 mb-3">Top Regions by Users</p>
-                  <div className="space-y-2">
-                    {regionData.slice(0, 5).map((region) => {
-                      const maxVal = regionData[0]?.value ?? 1;
-                      return (
-                        <div key={region.name} className="flex items-center gap-3">
-                          <span className="w-28 text-xs text-surface-300 truncate">{region.name}</span>
-                          <div className="flex-1 h-1.5 rounded-full bg-surface-700 overflow-hidden">
-                            <div
-                              className="h-full rounded-full transition-all duration-500"
-                              style={{
-                                width: `${(region.value / maxVal) * 100}%`,
-                                backgroundColor: region.color,
-                              }}
-                            />
-                          </div>
-                          <span className="text-xs font-medium text-surface-50 tabular-nums w-16 text-right">
-                            {region.value.toLocaleString()}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
+            <div className="flex items-center gap-4 mt-2 justify-center">
+              <span className="flex items-center gap-1.5 text-[10px] text-surface-400">
+                <span className="h-2 w-2 rounded-full bg-brand-500" /> Views
+              </span>
+              <span className="flex items-center gap-1.5 text-[10px] text-surface-400">
+                <span className="h-2 w-2 rounded-full bg-violet-500" /> Comments
+              </span>
             </div>
+          </div>
+        </div>
 
-            {/* Predictive Models */}
-            <div className="rounded-xl bg-surface-900/50 border border-surface-800 p-6">
-              <div className="mb-5 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <BrainCircuit className="h-5 w-5 text-accent-strong" />
-                  <h2 className="type-h2 text-surface-50">
-                    Predictive Trend Models
-                  </h2>
-                </div>
-                <span className="rounded-full bg-brand-500/10 border border-brand-500/20 px-3 py-1 text-xs font-medium text-accent-strong">
-                  <Zap className="mr-1 inline-block h-3 w-3" />
-                  Neural Engine Powered
-                </span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {predictiveModels.map((model) => (
-                  <div
-                    key={model.model}
-                    className="rounded-lg border border-surface-700 bg-surface-800/30 p-4 transition-all duration-200 hover:border-surface-600 hover:bg-surface-800/60"
-                  >
-                    <p className="text-xs text-surface-500">{model.model}</p>
-                    <p className="mt-2 text-2xl font-bold text-surface-50">
-                      {model.prediction}
-                    </p>
-                    <div className="mt-3 flex items-center justify-between">
-                      <span className="text-xs text-surface-400">{model.period}</span>
-                      <div className="flex items-center gap-1">
-                        {model.trend === "up" && (
-                          <ArrowUpRight className="h-3 w-3 text-accent-strong" />
-                        )}
-                        {model.trend === "down" && (
-                          <ArrowDownRight className="h-3 w-3 text-accent-strong" />
-                        )}
-                        <span
-                          className={cn(
-                            "text-xs font-medium",
-                            model.trend === "up" || model.trend === "down"
-                              ? "text-accent-strong"
-                              : "text-surface-400"
-                          )}
-                        >
-                          {model.change}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="mt-3">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="type-caption text-surface-500">Confidence</span>
-                        <span className="type-caption font-bold text-accent-strong tabular-nums">
-                          {model.confidence}%
-                        </span>
-                      </div>
-                      <div className="h-1 w-full rounded-full bg-surface-700 overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-brand-500 transition-all duration-500"
-                          style={{ width: `${model.confidence}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
+        {/* Daily Posts Bar Chart */}
+        <div className="rounded-2xl border border-surface-700/50 bg-surface-900/50 p-5 mb-8">
+          <h3 className="text-sm font-semibold text-surface-300 mb-4 flex items-center gap-2">
+            <FileText className="h-4 w-4 text-accent-strong" />
+            Daily Publishing Volume
+          </h3>
+          <div className="h-48">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={displayData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--surface-700)/0.5)" />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fill: "rgb(var(--surface-400))", fontSize: 10 }}
+                  tickFormatter={(v) => v.slice(5)}
+                  stroke="rgb(var(--surface-700)/0.5)"
+                />
+                <YAxis tick={{ fill: "rgb(var(--surface-400))", fontSize: 10 }} stroke="rgb(var(--surface-700)/0.5)" />
+                <Tooltip
+                  contentStyle={{
+                    background: "rgb(var(--surface-800))",
+                    border: "1px solid rgb(var(--surface-700))",
+                    borderRadius: "8px",
+                    fontSize: "12px",
+                    color: "rgb(var(--foreground))",
+                  }}
+                />
+                <Bar dataKey="posts" fill="#ff6b00" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       </div>
     </div>
   );

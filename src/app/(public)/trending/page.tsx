@@ -14,6 +14,7 @@ import { prisma } from "@/lib/prisma";
 import { cn, estimateReadTime, timeAgo } from "@/lib/utils";
 import { coverSrc } from "@/lib/thumb";
 import { BentoGrid } from "@/components/blog/BentoGrid";
+import { RealtimeRefresh } from "@/components/feed/RealtimeRefresh";
 import type { PostWithAuthor } from "@/types";
 
 export const metadata: Metadata = {
@@ -79,6 +80,8 @@ export default async function TrendingPage() {
           </p>
         </div>
       </div>
+
+      <RealtimeRefresh />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-20">
         {ranked.length === 0 ? (
