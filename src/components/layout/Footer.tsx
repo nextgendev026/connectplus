@@ -23,6 +23,7 @@ const FOOTER_LINKS = {
     { label: "About", href: "/about" },
     { label: "Contact", href: "/contact" },
     { label: "Help Center", href: "/help" },
+    { label: "System Status", href: "/status" },
   ],
   creators: [
     { label: "Write", href: "/studio" },
