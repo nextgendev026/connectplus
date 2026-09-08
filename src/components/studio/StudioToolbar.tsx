@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   Bold,
@@ -20,6 +20,7 @@ import {
   Table2,
   Undo2,
   Redo2,
+  Loader2,
   type LucideIcon,
 } from "lucide-react";
 
@@ -33,6 +34,7 @@ interface ToolbarAction {
 
 interface StudioToolbarProps {
   onInsert: (before: string, after: string, hint: string) => void;
+  onImageUpload?: (markdown: string) => void;
   onUndo?: () => void;
   onRedo?: () => void;
   disabled?: boolean;
@@ -41,12 +43,15 @@ interface StudioToolbarProps {
 
 export function StudioToolbar({
   onInsert,
+  onImageUpload,
   onUndo,
   onRedo,
   disabled = false,
   className,
 }: StudioToolbarProps) {
   const toolbarRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
 
   const insertMarkdown = useCallback(
     (before: string, after: string, hint: string) => {
@@ -55,6 +60,28 @@ export function StudioToolbar({
     },
     [onInsert, disabled]
   );
+
+  const handleImageSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("kind", "post");
+      const res = await fetch("/api/upload", { method: "POST", body: formData });
+      if (!res.ok) throw new Error("Upload failed");
+      const data = await res.json();
+      const markdown = `![${file.name}](${data.url})`;
+      onImageUpload?.(markdown);
+      onInsert("![" + file.name + "](" + data.url + ")", "", "");
+    } catch {
+      // silently fail — user can retry
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }, [onInsert, onImageUpload]);
 
   const actions: ToolbarAction[] = [
     {
@@ -146,9 +173,9 @@ export function StudioToolbar({
       action: () => insertMarkdown("[", "](https://)", "link text"),
     },
     {
-      icon: ImageIcon,
-      label: "Image",
-      action: () => insertMarkdown("![", "](https://)", "alt text"),
+      icon: uploading ? Loader2 : ImageIcon,
+      label: uploading ? "Uploading..." : "Image",
+      action: () => !uploading && fileInputRef.current?.click(),
     },
     {
       icon: Minus,
@@ -267,6 +294,13 @@ export function StudioToolbar({
           )}
         </span>
       ))}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/gif"
+        onChange={handleImageSelect}
+        className="hidden"
+      />
       <div className="ml-auto hidden sm:flex items-center gap-1 text-[10px] text-surface-600 select-none">
         <kbd className="px-1 py-0.5 rounded bg-surface-800/80 border border-surface-700/40 font-mono">Ctrl</kbd>
         <span>+</span>
