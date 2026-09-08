@@ -25,6 +25,7 @@ import { useRadioPlayer } from "@/components/radio/RadioPlayerContext";
 import { RadioPlayerBar } from "@/components/radio/RadioPlayerBar";
 import { StationThumb } from "@/components/radio/StationThumb";
 import { WeatherWidget } from "@/components/weather/WeatherWidget";
+import { RadioHeroInsights } from "@/components/radio/RadioHeroInsights";
 
 function EqualizerBars({ isPlaying }: { isPlaying: boolean }) {
   return (
@@ -66,14 +67,16 @@ function StationCard({
   isActive: boolean;
   owner?: { nowPlaying: { song: string | null; meta: boolean; listeners: number | null }; streamState: string };
 }) {
-  const { playStation, toggleFavorite, favorites } = useRadioPlayer();
+  const { playStation, toggleFavorite, favorites, streamState } = useRadioPlayer();
   const isFavorite = favorites.includes(station.id);
+  // Live = actually playing or still connecting → show Pause (never stuck Play).
+  const live = isPlaying || (isActive && streamState === "connecting");
 
   return (
     <div
       className={cn(
         "group relative rounded-2xl border backdrop-blur-xl transition-all duration-300 overflow-hidden",
-        isPlaying
+        live
           ? "border-brand-500/50 bg-surface-900/80 shadow-glow"
           : "border-surface-800/50 bg-surface-900/50 hover:border-surface-700 hover:shadow-card-hover"
       )}
@@ -111,7 +114,7 @@ function StationCard({
         </div>
 
         <div className="mt-3 flex items-center gap-2">
-          {isPlaying ? (
+          {live ? (
             <EqualizerBars isPlaying={true} />
           ) : (
             <Music className="h-4 w-4 text-surface-500" />
@@ -123,7 +126,7 @@ function StationCard({
               <p className="truncate text-xs text-surface-300">{station.tagline}</p>
             )}
           </div>
-          {isPlaying && (
+          {live && (
             <span className="shrink-0">
               <LiveBadge />
             </span>
@@ -154,12 +157,12 @@ function StationCard({
           onClick={() => playStation(station.id)}
           className={cn(
             "mt-3 flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-medium transition-all duration-200",
-            isPlaying
+            live
               ? "bg-brand-500 text-white shadow-glow"
               : "bg-surface-800 text-surface-200 hover:bg-brand-500/15 hover:text-accent-strong hover:border hover:border-brand-500/30"
           )}
         >
-          {isPlaying ? (
+          {live ? (
             <>
               <Pause className="h-4 w-4" />
               Pause
@@ -221,6 +224,7 @@ export default function RadioPage() {
 
   const featured = (favoriteStations[0] ?? STATIONS[0])!;
   const featuredActive = currentStation?.id === featured.id;
+  const featuredLive = featuredActive && (player.isPlaying || player.streamState === "connecting");
   const genresCount = useMemo(() => new Set(STATIONS.map((s) => s.genre)).size, []);
 
   return (
@@ -298,12 +302,12 @@ export default function RadioPage() {
                 onClick={() => player.playStation(featured.id)}
                 className={cn(
                   "flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold transition-all",
-                  featuredActive && player.isPlaying
+                  featuredLive
                     ? "bg-surface-800 text-surface-100 hover:bg-surface-700"
                     : "btn-gradient text-white shadow-glow"
                 )}
               >
-                {featuredActive && player.isPlaying ? (
+                {featuredLive ? (
                   <>
                     <Pause className="h-4 w-4" /> Pause
                   </>
@@ -336,6 +340,9 @@ export default function RadioPage() {
                 </span>
               ))}
             </div>
+
+            {/* Latest stories + live forex under the featured station (desktop) */}
+            <RadioHeroInsights />
           </div>
 
           <WeatherWidget />

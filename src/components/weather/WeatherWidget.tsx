@@ -99,29 +99,34 @@ function uvLevel(uv: number): { label: string; color: string } {
   return { label: "Extreme", color: "text-purple-400" };
 }
 
-/** Meteored-style scene gradient for the card background. */
+/**
+ * Meteored-style scene gradient for the card background, tuned to the build's
+ * dark charcoal palette (surface-950 → surface-850) so the widget reads as
+ * part of the design system in both themes, with a subtle brand-orange glow
+ * on clear days. Text stays white because the scene is always dark.
+ */
 function sceneGradient(animation: string, isDay: boolean): string {
-  if (animation === "weather-storm") return "bg-gradient-to-br from-slate-800 via-slate-900 to-indigo-950";
+  if (animation === "weather-storm") return "bg-gradient-to-br from-[#1c2230] via-[#171b21] to-[#10141a]";
   if (animation === "weather-rain" || animation === "weather-drizzle") {
     return isDay
-      ? "bg-gradient-to-br from-slate-600 via-slate-700 to-slate-800"
-      : "bg-gradient-to-br from-slate-800 via-slate-900 to-slate-950";
+      ? "bg-gradient-to-br from-[#222a35] via-[#181d24] to-[#12161c]"
+      : "bg-gradient-to-br from-[#1a1f28] via-[#151920] to-[#0e1217]";
   }
   if (animation === "weather-snow") {
     return isDay
-      ? "bg-gradient-to-br from-sky-200 via-slate-300 to-slate-400"
-      : "bg-gradient-to-br from-slate-800 via-slate-900 to-indigo-950";
+      ? "bg-gradient-to-br from-[#2a3340] via-[#1c222b] to-[#14181f]"
+      : "bg-gradient-to-br from-[#1b2130] via-[#151a22] to-[#0f1319]";
   }
-  if (animation === "weather-fog") return "bg-gradient-to-br from-slate-500 via-slate-600 to-slate-700";
+  if (animation === "weather-fog") return "bg-gradient-to-br from-[#232b35] via-[#1a1f26] to-[#13171d]";
   if (animation === "weather-cloudy") {
     return isDay
-      ? "bg-gradient-to-br from-sky-500/90 via-sky-600/90 to-indigo-700/90"
-      : "bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950";
+      ? "bg-gradient-to-br from-[#25303e] via-[#1b2129] to-[#14181e]"
+      : "bg-gradient-to-br from-[#1c2330] via-[#171c24] to-[#10141a]";
   }
-  // sunny / clear
+  // sunny / clear — warm charcoal with a hint of brand glow
   return isDay
-    ? "bg-gradient-to-br from-sky-400 via-sky-500 to-indigo-600"
-    : "bg-gradient-to-br from-indigo-950 via-slate-900 to-slate-950";
+    ? "bg-gradient-to-br from-[#2a1f12] via-[#1d1a16] to-[#12151a]"
+    : "bg-gradient-to-br from-[#1a1f2e] via-[#161a24] to-[#0f1319]";
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -450,13 +455,13 @@ export function WeatherWidget({ compact = false }: { compact?: boolean }) {
   const windDir = current ? windDirection(current.wind_direction_10m ?? 0) : "";
 
   return (
-    <div className={cn("rounded-2xl border overflow-hidden relative text-white", isDay ? "border-white/20" : "border-white/10")}>
-      {/* Meteored-style scene gradient */}
-      <div className={cn("absolute inset-0 transition-colors duration-700", cond ? sceneGradient(cond.animation, isDay) : "bg-surface-900")} />
+    <div className={cn("relative overflow-hidden rounded-2xl border text-white shadow-card", isDay ? "border-white/15" : "border-white/10")}>
+      {/* Meteored-style scene gradient (dark charcoal, matches build palette) */}
+      <div className={cn("absolute inset-0 transition-colors duration-700", cond ? sceneGradient(cond.animation, isDay) : "bg-[#14171b]")} />
       {/* Weather animation layer (sun rays, drifting clouds, rain, lightning…) */}
       {cond && <WeatherAnimation animation={cond.animation} isDay={isDay} />}
       {/* Frosted content layer so text stays readable over the scene */}
-      <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-black/10 to-black/25" />
+      <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-black/5 to-black/20" />
 
       {/* Header */}
       <div className="relative flex items-start justify-between gap-3 px-4 pt-3.5 pb-1">

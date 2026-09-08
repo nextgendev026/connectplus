@@ -183,7 +183,9 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
 
       pausedByUser.current = false;
 
-      if (stationRef.current?.id === stationId && isPlaying) {
+      // Same station already live (playing or still connecting/buffering) →
+      // treat the tap as pause so the button never gets stuck on Play.
+      if (stationRef.current?.id === stationId && (isPlaying || streamState === "connecting")) {
         audio.pause();
         setIsPlaying(false);
         setStreamState("idle");
@@ -212,13 +214,22 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
         scheduleReconnect();
       });
     },
-    [isPlaying, recentlyPlayed, scheduleReconnect]
+    [isPlaying, streamState, recentlyPlayed, scheduleReconnect]
   );
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;
     if (!audio || !stationRef.current) return;
-    if (audio.paused) {
+    // While the stream is still connecting/buffering the element is paused,
+    // so treat that as live too — tapping should pause, not re-play.
+    const live = !audio.paused || streamState === "connecting";
+    if (live) {
+      pausedByUser.current = true;
+      if (retryTimer.current) clearTimeout(retryTimer.current);
+      audio.pause();
+      setStreamState("idle");
+      setIsPlaying(false);
+    } else {
       pausedByUser.current = false;
       retryCount.current = 0;
       streamFailed.current = false;
@@ -229,13 +240,8 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
         streamFailed.current = true;
         scheduleReconnect();
       });
-    } else {
-      pausedByUser.current = true;
-      if (retryTimer.current) clearTimeout(retryTimer.current);
-      audio.pause();
-      setStreamState("idle");
     }
-  }, [scheduleReconnect]);
+  }, [scheduleReconnect, streamState]);
 
   const setVolume = useCallback((v: number) => {
     setVolumeState(v);

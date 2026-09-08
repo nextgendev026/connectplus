@@ -35,6 +35,7 @@ export function MiniRadioPlayer() {
 
   const label = nowPlaying.meta && nowPlaying.song ? nowPlaying.song : `${station.name} — ${station.tagline}`;
   const busy = streamState === "connecting";
+  const live = isPlaying || streamState === "connecting";
 
   return (
     <div className="fixed z-[60] bottom-20 md:bottom-5 right-3 md:right-6 animate-slide-up">
@@ -74,14 +75,14 @@ export function MiniRadioPlayer() {
           </div>
         </button>
 
-        <MiniEqualizer playing={isPlaying} />
+        <MiniEqualizer playing={live} />
 
         <button
           onClick={togglePlay}
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-500 text-white hover:bg-brand-600 transition-all active:scale-95"
-          aria-label={isPlaying ? "Pause" : "Play"}
+          aria-label={live ? "Pause" : "Play"}
         >
-          {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 ml-0.5" />}
+          {live ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 ml-0.5" />}
         </button>
 
         <button

@@ -21,6 +21,8 @@ export function RadioPlayerBar() {
 
   const songLine = nowPlaying.meta && nowPlaying.song ? nowPlaying.song : station.tagline;
   const busy = streamState === "connecting";
+  // Live = actually playing or still connecting/buffering → show Pause.
+  const live = isPlaying || streamState === "connecting";
 
   return (
     <div className="fixed bottom-[64px] left-0 right-0 z-50 border-t border-surface-800/50 bg-surface-950/95 backdrop-blur-xl safe-area-pb md:bottom-0">
@@ -63,9 +65,9 @@ export function RadioPlayerBar() {
               <button
                 onClick={togglePlay}
                 className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-black hover:scale-105 transition-transform"
-                aria-label={isPlaying ? "Pause" : "Play"}
+                aria-label={live ? "Pause" : "Play"}
               >
-                {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 ml-0.5" />}
+                {live ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 ml-0.5" />}
               </button>
               <button
                 onClick={() => skip(1)}
@@ -125,9 +127,9 @@ export function RadioPlayerBar() {
             <button
               onClick={togglePlay}
               className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-black"
-              aria-label={isPlaying ? "Pause" : "Play"}
+              aria-label={live ? "Pause" : "Play"}
             >
-              {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 ml-0.5" />}
+              {live ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 ml-0.5" />}
             </button>
             <button
               onClick={stop}

@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,100..900&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -95,10 +95,11 @@ html:not(.dark) {
   --card-bg: 240 246 251;
   --card-border: 193 209 224;
   --muted: 82 103 128;
-  /* Brand colors — darker for light backgrounds */
-  --brand-primary: #e05600;
-  --brand-primary-light: #ff6b00;
-  --brand-primary-dark: #b84e00;
+  /* Brand colors — darker for light backgrounds so orange stays legible
+     on the sky-blue canvas instead of clashing */
+  --brand-primary: #b84e00;
+  --brand-primary-light: #d05a00;
+  --brand-primary-dark: #8f3d00;
   --brand-on-primary: #ffffff;
   --accent-coral: #dc4545;
   --accent-amber: #d97706;
@@ -128,6 +129,28 @@ body {
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
   transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Light mode: ~5% heavier type so text stays crisp and visible on the
+   brighter sky-blue canvas (Inter variable font renders fractional weights). */
+html:not(.dark) body,
+html:not(.dark) .font-normal {
+  font-weight: 420;
+}
+html:not(.dark) .font-medium {
+  font-weight: 525;
+}
+html:not(.dark) .font-semibold {
+  font-weight: 630;
+}
+html:not(.dark) .font-bold {
+  font-weight: 735;
+}
+html:not(.dark) .font-extrabold {
+  font-weight: 840;
+}
+html:not(.dark) .font-black {
+  font-weight: 900;
 }
 
 /* Smooth theme transition on all surfaces */

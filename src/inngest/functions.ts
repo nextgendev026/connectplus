@@ -217,6 +217,30 @@ export const embedPosts = inngest.createFunction(
 );
 
 /**
+ * Radio metadata sweep: refreshes now-playing/listeners for every station
+ * into the Redis cache every 15 minutes, so the status API serves warm
+ * cache instead of hitting 35 upstream stream servers per request.
+ */
+export const radioStatusSweep = inngest.createFunction(
+  {
+    id: "radio-status-sweep",
+    name: "Refresh radio station metadata",
+    // Every 15 min — plenty for song/listener metadata; a single sweep hits
+    // each upstream once with a timeout, keeping free-tier egress flat.
+    triggers: [{ cron: "*/15 * * * *" }, { event: "radio-status-sweep" }],
+    concurrency: 1,
+    retries: 2,
+  },
+  async ({ step }) => {
+    const summary = await step.run("sweep-statuses", async () => {
+      const { sweepAllStationStatuses } = await import("@/lib/radio-status-fetch");
+      return sweepAllStationStatuses();
+    });
+    return summary;
+  }
+);
+
+/**
  * Manual deep-learning trigger exposed to admins.
  */
 export const neuralLearn = inngest.createFunction(
@@ -245,4 +269,5 @@ export const functions = [
   hiveSweep,
   embedPosts,
   neuralLearn,
+  radioStatusSweep,
 ];
