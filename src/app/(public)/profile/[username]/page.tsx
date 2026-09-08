@@ -12,6 +12,7 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { formatDate } from "@/lib/utils";
 import { FollowButton } from "@/components/ui/FollowButton";
+import { SignOutButton } from "@/components/ui/SignOutButton";
 import { ProfileTabs } from "@/components/profile/ProfileTabs";
 import type { ProfileTabPost } from "@/components/profile/ProfileTabs";
 
@@ -157,7 +158,7 @@ export default async function ProfilePage({
       </div>
 
       {/* Profile Header */}
-      <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 pb-24 md:pb-10">
         <div className="mt-6 flex flex-col sm:flex-row sm:items-end sm:gap-6">
 {user.avatar ? (
               <Image
@@ -194,13 +195,16 @@ export default async function ProfilePage({
               followersCount={user.followersCount}
             />
             {session?.user?.id === user.id && (
-              <Link
-                href="/settings"
-                className="rounded-lg border border-surface-700 bg-surface-800 px-4 py-2 text-sm text-surface-300 hover:text-surface-50 transition-colors flex items-center justify-center gap-2"
-                aria-label="Settings"
-              >
-                <Settings className="h-4 w-4" />
-              </Link>
+              <>
+                <Link
+                  href="/settings"
+                  className="rounded-lg border border-surface-700 bg-surface-800 px-4 py-2 text-sm text-surface-300 hover:text-surface-50 transition-colors flex items-center justify-center gap-2"
+                  aria-label="Settings"
+                >
+                  <Settings className="h-4 w-4" />
+                </Link>
+                <SignOutButton />
+              </>
             )}
           </div>
         </div>

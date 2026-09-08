@@ -5,6 +5,7 @@ import { slugify } from "@/lib/utils";
 import { moderateContent } from "@/lib/moderation";
 import { embedPost, findDuplicate } from "@/lib/neural-vector";
 import { autoTagPost } from "@/lib/auto-tag";
+import { redisIncr } from "@/lib/redis";
 
 export async function GET(
   request: NextRequest,
@@ -70,7 +71,6 @@ export async function PUT(
     }
 
     const userId = session.user.id;
-    const userRole = session.user.role;
     const { id } = await params;
 
     const existingPost = await prisma.post.findUnique({
@@ -82,6 +82,14 @@ export async function PUT(
     if (!existingPost) {
       return NextResponse.json({ error: "Post not found" }, { status: 404 });
     }
+
+    // Authoritative role/verification (the JWT role can lag up to 60s).
+    const author = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true, emailVerified: true },
+    });
+    const userRole = author?.role ?? session.user.role ?? "USER";
+    const emailVerified = author?.emailVerified ?? null;
 
     if (existingPost.authorId !== userId && userRole !== "ADMIN" && userRole !== "SUPER_ADMIN") {
       return NextResponse.json({ error: "You do not have permission to edit this post" }, { status: 403 });
@@ -125,9 +133,22 @@ export async function PUT(
 
     // Phase 2: re-scan through moderation whenever content changes and the
     // author is (re)publishing. Keeps the AI gate consistent with POST /api/posts.
+    const trusted =
+      userRole === "CREATOR" || userRole === "ADMIN" || userRole === "SUPER_ADMIN";
     let finalModerationStatus: string | null = null;
     let aiFlags: string[] = [];
     if (parsedScheduledAt) {
+      // Scheduling is publishing intent — requires a confirmed email.
+      if (!emailVerified) {
+        return NextResponse.json(
+          {
+            error: "Your email isn't verified yet.",
+            code: "EMAIL_NOT_VERIFIED",
+            message: "Confirm your email to schedule stories.",
+          },
+          { status: 403 }
+        );
+      }
       updateData.status = "DRAFT";
       updateData.publishedAt = null;
       updateData.moderationStatus = "PENDING";
@@ -135,16 +156,36 @@ export async function PUT(
     } else if (status !== undefined) {
       updateData.status = String(status);
       if (status === "PUBLISHED") {
+        // Publishing requires a confirmed email.
+        if (!emailVerified) {
+          return NextResponse.json(
+            {
+              error: "Your email isn't verified yet.",
+              code: "EMAIL_NOT_VERIFIED",
+              message: "Confirm your email to publish stories.",
+            },
+            { status: 403 }
+          );
+        }
         updateData.publishedAt = new Date();
         const bodyText = String(content ?? existingPostContent ?? "");
         const risk = moderateContent(String(title ?? ""), bodyText);
         aiFlags = [...risk.flags];
-        let moderationStatus =
+        const scan =
           risk.suggested === "REJECTED"
             ? "REJECTED"
             : risk.suggested === "FLAGGED"
               ? "FLAGGED"
-              : "APPROVED";
+              : "CLEAN";
+        // Trusted writers publish straight through; others queue for review.
+        let moderationStatus =
+          scan === "REJECTED"
+            ? "REJECTED"
+            : scan === "FLAGGED"
+              ? "FLAGGED"
+              : trusted
+                ? "APPROVED"
+                : "PENDING";
         if (moderationStatus === "APPROVED") {
           const dup = await findDuplicate({
             id,
@@ -182,8 +223,8 @@ export async function PUT(
       });
     }
 
-    const { title: _t, content: _c, excerpt: _e, coverImage: _ci, categoryId: _cat, featured: _f, status: _s, publishedAt: _pa, scheduledAt: _sa } = updateData;
-    const dataWithoutTags = { title: _t, content: _c, excerpt: _e, coverImage: _ci, categoryId: _cat, featured: _f, status: _s, publishedAt: _pa, scheduledAt: _sa };
+    const { title: _t, content: _c, excerpt: _e, coverImage: _ci, categoryId: _cat, featured: _f, status: _s, publishedAt: _pa, scheduledAt: _sa, moderationStatus: _ms, aiScore: _as, aiFlags: _af } = updateData;
+    const dataWithoutTags = { title: _t, content: _c, excerpt: _e, coverImage: _ci, categoryId: _cat, featured: _f, status: _s, publishedAt: _pa, scheduledAt: _sa, moderationStatus: _ms, aiScore: _as, aiFlags: _af };
 
     const post = await prisma.post.update({
       where: { id },
@@ -200,6 +241,12 @@ export async function PUT(
     if (post.status === "PUBLISHED" && post.moderationStatus === "APPROVED") {
       embedPost(post).catch(() => {});
       autoTagPost(post.id, `${post.title} ${post.excerpt ?? ""}`).catch(() => {});
+    }
+
+    // A (re)publish or moderation change alters the feed — invalidate the
+    // cache namespace with one cheap INCR instead of a scan/delete.
+    if (post.status === "PUBLISHED") {
+      redisIncr("feed:version").catch(() => {});
     }
 
     return NextResponse.json({
@@ -242,6 +289,7 @@ export async function DELETE(
     }
 
     await prisma.post.delete({ where: { id } });
+    redisIncr("feed:version").catch(() => {});
     return NextResponse.json({ message: "Post deleted successfully" });
   } catch (error) {
     console.error("Error deleting post:", error);

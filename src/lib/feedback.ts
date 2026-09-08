@@ -5,9 +5,13 @@
  * A stable per-browser session id lets anonymous users contribute impression /
  * click data, while signed-in events are attributed to the user server-side so
  * their preference vector can be updated.
+ *
+ * Events are buffered and flushed in batches (every 30s or on unload) so a busy
+ * feed visit collapses ~20 per-event HTTP writes into one.
  */
 
 const SESSION_KEY = "connectplus:session";
+const FLUSH_INTERVAL_MS = 30_000;
 
 export type FeedbackType =
   | "impression"
@@ -17,6 +21,14 @@ export type FeedbackType =
   | "share"
   | "time_spent"
   | "comment";
+
+interface FeedbackEvent {
+  type: FeedbackType;
+  postId?: string | null;
+  value?: number | null;
+  variant?: string | null;
+  sessionId: string;
+}
 
 /** Stable per-browser session id (persisted in localStorage). */
 export function getSessionId(): string {
@@ -33,28 +45,10 @@ export function getSessionId(): string {
   }
 }
 
-interface FeedbackPayload {
-  postId?: string | null;
-  value?: number;
-  variant?: string | null;
-}
+const buffer: FeedbackEvent[] = [];
+let flushInterval: number | null = null;
 
-/**
- * Send a feedback event. Uses keepalive so events fired on page unload are not
- * dropped. Never throws.
- */
-export function sendFeedback(
-  type: FeedbackType,
-  payload: FeedbackPayload = {}
-): void {
-  if (typeof window === "undefined") return;
-  const body = JSON.stringify({
-    type,
-    postId: payload.postId ?? null,
-    value: payload.value ?? null,
-    variant: payload.variant ?? null,
-    sessionId: getSessionId(),
-  });
+function sendNow(body: string): void {
   try {
     navigator.sendBeacon?.("/api/feedback", body);
   } catch {
@@ -70,4 +64,53 @@ export function sendFeedback(
       keepalive: true,
     }).catch(() => {});
   }
+}
+
+/**
+ * Flush any buffered events. Batched events ride together in one beacon;
+ * a lone event keeps the original single-event shape. Never throws.
+ */
+export function flushFeedback(): void {
+  if (buffer.length === 0) return;
+  const events = buffer.splice(0, buffer.length);
+  const body =
+    events.length === 1
+      ? JSON.stringify(events[0])
+      : JSON.stringify({ events });
+  sendNow(body);
+}
+
+function scheduleFlush(): void {
+  if (flushInterval !== null) return;
+  flushInterval = window.setInterval(flushFeedback, FLUSH_INTERVAL_MS);
+}
+
+/**
+ * Send a feedback event. Buffered and flushed in batches on an interval (or on
+ * tab hide/unload) so telemetry stays cheap. Never throws.
+ */
+export function sendFeedback(
+  type: FeedbackType,
+  payload: { postId?: string | null; value?: number; variant?: string | null } = {}
+): void {
+  if (typeof window === "undefined") return;
+  buffer.push({
+    type,
+    postId: payload.postId ?? null,
+    value: payload.value ?? null,
+    variant: payload.variant ?? null,
+    sessionId: getSessionId(),
+  });
+  try {
+    scheduleFlush();
+  } catch {
+    /* ignore */
+  }
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", flushFeedback);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushFeedback();
+  });
 }

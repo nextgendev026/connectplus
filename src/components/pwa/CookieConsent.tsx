@@ -46,8 +46,10 @@ export function CookieConsent() {
 
   if (!visible) return null;
 
+  // On mobile the bottom tab bar is height ~50-64px; dock the consent card just
+  // above it so Home/Radio/Write/Browse/Profile stay tappable while it's shown.
   return (
-    <div className="fixed inset-x-0 bottom-0 z-[70] p-3 sm:p-4 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] animate-slide-up">
+    <div className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom,0px))] z-[70] p-3 md:bottom-4 md:pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] animate-slide-up">
       <div className="mx-auto max-w-2xl rounded-2xl border border-surface-700 bg-surface-900/95 backdrop-blur-xl shadow-glow-lg p-4 sm:p-5">
         <div className="flex items-start gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-500/15 border border-brand-500/25">

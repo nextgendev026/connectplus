@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
+import { cache } from "react";
+import type { Prisma } from "@prisma/client";
 
 import { Clock, Eye, MessageCircle, ChevronRight, ExternalLink, Newspaper } from "lucide-react";
 import { prisma } from "@/lib/prisma";
@@ -19,6 +21,43 @@ interface ArticleParams {
   params: Promise<{ slug: string }>;
 }
 
+const ARTICLE_INCLUDE = {
+  author: {
+    select: {
+      id: true,
+      name: true,
+      username: true,
+      avatar: true,
+      bio: true,
+      followersCount: true,
+      _count: { select: { posts: true } },
+    },
+  },
+  category: { select: { id: true, name: true, slug: true } },
+  tags: { select: { id: true, name: true, slug: true } },
+  _count: { select: { comments: true, likes: true } },
+  comments: {
+    where: { parentId: null },
+    include: {
+      author: { select: { id: true, name: true, username: true } },
+      replies: {
+        include: { author: { select: { id: true, name: true, username: true } } },
+        orderBy: { createdAt: "asc" },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  },
+} satisfies Prisma.PostInclude;
+
+// React cache() dedupes the post lookup across generateMetadata and the page
+// render, so a single article view pays one DB query for it instead of two.
+const getPost = cache((slug: string) =>
+  prisma.post.findUnique({
+    where: { slug },
+    include: ARTICLE_INCLUDE,
+  })
+);
+
 function stripText(content: string): string {
   return content
     .replace(/<[^>]+>/g, " ")
@@ -29,21 +68,7 @@ function stripText(content: string): string {
 
 export async function generateMetadata({ params }: ArticleParams): Promise<Metadata> {
   const { slug } = await params;
-  const post = await prisma.post.findUnique({
-    where: { slug },
-    select: {
-      title: true,
-      excerpt: true,
-      coverImage: true,
-      slug: true,
-      publishedAt: true,
-      source: true,
-      sourceUrl: true,
-      author: { select: { name: true, username: true } },
-      category: { select: { name: true } },
-      tags: { select: { name: true } },
-    },
-  });
+  const post = await getPost(slug);
 
   if (!post) {
     return { title: "Post not found" };
@@ -95,36 +120,7 @@ export default async function ArticlePage({ params }: ArticleParams) {
   const session = await auth();
   const [siteConfig, post] = await Promise.all([
     getSiteConfig().catch(() => null),
-    prisma.post.findUnique({
-      where: { slug },
-      include: {
-        author: {
-          select: {
-            id: true,
-            name: true,
-            username: true,
-            avatar: true,
-            bio: true,
-            followersCount: true,
-            _count: { select: { posts: true } },
-          },
-        },
-        category: { select: { id: true, name: true, slug: true } },
-        tags: { select: { id: true, name: true, slug: true } },
-        _count: { select: { comments: true, likes: true } },
-        comments: {
-          where: { parentId: null },
-          include: {
-            author: { select: { id: true, name: true, username: true } },
-            replies: {
-              include: { author: { select: { id: true, name: true, username: true } } },
-              orderBy: { createdAt: "asc" },
-            },
-          },
-          orderBy: { createdAt: "desc" },
-        },
-      },
-    }),
+    getPost(slug),
   ]);
 
   if (!post) {

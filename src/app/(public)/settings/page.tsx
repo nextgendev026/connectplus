@@ -6,6 +6,7 @@ import {
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { SettingsForm } from "@/components/settings/SettingsForm";
+import { VerifiedWriterCard } from "@/components/settings/VerifiedWriterCard";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,7 @@ export default async function SettingsPage() {
       node: true,
       role: true,
       isVerified: true,
+      emailVerified: true,
       createdAt: true,
       _count: { select: { posts: true, followersLinks: true, followingLinks: true } },
     },
@@ -37,7 +39,7 @@ export default async function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-surface-950">
-      <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6">
+      <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 pb-28 md:pb-10">
         <nav className="flex items-center gap-1.5 text-xs text-surface-400 mb-8">
           <Link href="/" className="hover:text-surface-200 transition-colors">
             Home
@@ -54,6 +56,15 @@ export default async function SettingsPage() {
             Manage your profile, appearance, and security.
           </p>
         </div>
+
+        <VerifiedWriterCard
+          email={user.email}
+          role={user.role}
+          isVerified={user.isVerified}
+          emailVerified={user.emailVerified?.toISOString() ?? null}
+        />
+
+        <div className="h-6" />
 
         <SettingsForm
           user={{

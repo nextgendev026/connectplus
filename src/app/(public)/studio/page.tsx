@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useSession } from "next-auth/react";
 import { extractKeywords } from "@/lib/neural-text";
 import Image from "next/image";
 import Link from "next/link";
@@ -77,6 +78,8 @@ interface MyPost {
   slug: string;
   updatedAt: string;
   scheduledAt?: string | null;
+  moderationStatus?: string | null;
+  publishedAt?: string | null;
 }
 
 const inputCls =
@@ -104,6 +107,8 @@ function dateToLocalInput(value: string | null | undefined): string {
 export default function StudioPage() {
   const router = useRouter();
   const contentRef = useRef<HTMLTextAreaElement>(null);
+  const { data: session } = useSession();
+  const emailVerified = !!session?.user?.emailVerified;
 
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -206,13 +211,15 @@ export default function StudioPage() {
       const data = await res.json();
       if (!data?.posts) return;
       setMyStories(
-        data.posts.map((p: { id: string; title: string; status: string; slug: string; updatedAt: string; scheduledAt?: string | null }) => ({
+        data.posts.map((p: { id: string; title: string; status: string; slug: string; updatedAt: string; scheduledAt?: string | null; moderationStatus?: string | null; publishedAt?: string | null }) => ({
           id: p.id,
           title: p.title,
           status: p.status,
           slug: p.slug,
           updatedAt: p.updatedAt,
           scheduledAt: p.scheduledAt ?? null,
+          moderationStatus: p.moderationStatus ?? null,
+          publishedAt: p.publishedAt ?? null,
         }))
       );
       setStoriesUnauth(false);
@@ -821,6 +828,11 @@ export default function StudioPage() {
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Publish failed" }));
+        if (err.code === "EMAIL_NOT_VERIFIED") {
+          setError("Your email isn't verified yet.");
+          router.push("/auth/verify-email?sent=0");
+          return;
+        }
         throw new Error(err.error || "Failed to publish");
       }
 
@@ -832,6 +844,16 @@ export default function StudioPage() {
 
       if (isScheduled) {
         setError("Story scheduled — it will be published at the chosen time.");
+        loadMyStories();
+        return;
+      }
+
+      // Untrusted writers go through review: post is live on their list but
+      // won't surface in the public feed until an admin approves it.
+      if (finalStatus === "PUBLISHED" && data?.moderationStatus === "PENDING") {
+        setReviewNotice(
+          "Your story is under review. It will go live in the feed once a moderator approves it."
+        );
         loadMyStories();
         return;
       }
@@ -1052,6 +1074,28 @@ export default function StudioPage() {
         </div>
       )}
 
+      {/* Unverified email gate */}
+      {session?.user && !emailVerified && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-4">
+          <div className="flex items-center gap-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 px-4 py-3 text-sm text-amber-200">
+            <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
+            <span className="flex-1">
+              Verify your email to publish and schedule stories. We already sent a confirmation link —{" "}
+              <Link href="/auth/verify-email" className="text-amber-300 underline underline-offset-2 hover:text-amber-200">
+                open it or resend
+              </Link>
+              .
+            </span>
+            <button
+              onClick={() => router.push("/auth/verify-email?sent=0")}
+              className="rounded-lg bg-amber-400/15 border border-amber-400/30 px-3 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-400/25 transition-colors shrink-0"
+            >
+              Verify now
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Brain review notice */}
       {reviewNotice && (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-4">
@@ -1066,7 +1110,7 @@ export default function StudioPage() {
       )}
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 sm:pt-8 pb-28 md:pb-10">
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px] gap-6 lg:gap-8">
           {/* Editor */}
           <div className="space-y-6">
@@ -1291,6 +1335,13 @@ export default function StudioPage() {
                               ? new Date(post.scheduledAt).toLocaleDateString()
                               : timeAgo(post.updatedAt)}
                           </p>
+                          {post.status === "PUBLISHED" &&
+                            post.moderationStatus === "PENDING" && (
+                              <p className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-amber-400/10 border border-amber-400/25 px-2 py-0.5 type-caption text-amber-300">
+                                <Clock className="h-2.5 w-2.5" />
+                                In review
+                              </p>
+                            )}
                         </button>
                         <button
                           onClick={() => openStory(post.id)}

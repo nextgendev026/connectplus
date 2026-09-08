@@ -201,6 +201,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Content is required" }, { status: 400 });
     }
 
+    const author = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true, emailVerified: true },
+    });
+    if (!author) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
     let slug = slugify(title);
     const existingSlug = await prisma.post.findUnique({ where: { slug } });
     if (existingSlug) {
@@ -216,18 +224,38 @@ export async function POST(request: NextRequest) {
     }
 
     const wantsPublish = status === "PUBLISHED" && !scheduleDate;
+
+    // Publishing (live or scheduled) requires a confirmed email.
+    if (wantsPublish && !author.emailVerified) {
+      return NextResponse.json(
+        {
+          error: "Your email isn't verified yet.",
+          code: "EMAIL_NOT_VERIFIED",
+          message: "Confirm your email to publish stories.",
+        },
+        { status: 403 }
+      );
+    }
+
     const postStatus = wantsPublish ? "PUBLISHED" : "DRAFT";
 
     // Phase 2: run the self-contained moderation scanner.
     const risk = moderateContent(title.trim(), content);
+    const scan = risk.suggested === "REJECTED" ? "REJECTED" : risk.suggested === "FLAGGED" ? "FLAGGED" : "CLEAN";
+    const trusted = author.role === "CREATOR" || author.role === "ADMIN" || author.role === "SUPER_ADMIN";
+
+    // Trusted writers publish straight through; regular users land in the
+    // moderation queue until an admin approves (or the scanner objects).
     let moderationStatus =
       postStatus === "DRAFT"
-        ? (risk.suggested === "REJECTED" ? "REJECTED" : risk.suggested === "FLAGGED" ? "FLAGGED" : "PENDING")
-        : risk.suggested === "REJECTED"
+        ? (scan === "REJECTED" ? "REJECTED" : scan === "FLAGGED" ? "FLAGGED" : "PENDING")
+        : scan === "REJECTED"
           ? "REJECTED"
-          : risk.suggested === "FLAGGED"
+          : scan === "FLAGGED"
             ? "FLAGGED"
-            : "APPROVED";
+            : trusted
+              ? "APPROVED"
+              : "PENDING";
 
     // Phase 2: near-duplicate detection against existing published content.
     let duplicate: { postId: string; score: number } | null = null;

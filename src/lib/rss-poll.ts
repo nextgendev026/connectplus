@@ -2,6 +2,7 @@ import Parser from "rss-parser";
 import { prisma } from "@/lib/prisma";
 import { autoTagPost } from "@/lib/auto-tag";
 import { createLogger } from "@/lib/logger";
+import { redisIncr } from "@/lib/redis";
 
 const log = createLogger("rss-poll");
 
@@ -156,14 +157,24 @@ export async function pollFeeds(feedId?: string): Promise<PollSummary> {
       // Cap per-feed imports so one busy source can't flood Postgres in a run.
       const items = (parsed.items || []).slice(0, 25);
 
+      // One batched lookup instead of a findUnique-per-item (keeps this loop
+      // at O(1) queries instead of O(items) against Supabase).
+      const urls = items
+        .map((item) => item.link || item.guid)
+        .filter((url): url is string => Boolean(url));
+      const seen = new Set(
+        (
+          await prisma.rssArticle.findMany({
+            where: { url: { in: urls } },
+            select: { url: true },
+          })
+        ).map((a) => a.url)
+      );
+
       for (const item of items) {
         const articleUrl = item.link || item.guid;
         if (!articleUrl) continue;
-
-        const existing = await prisma.rssArticle.findUnique({
-          where: { url: articleUrl },
-        });
-        if (existing) continue;
+        if (seen.has(articleUrl)) continue;
 
         const content = item["content:encoded"] || item.content || item.contentSnippet || "";
         const summary = item.contentSnippet || item.summary || stripHtml(content).slice(0, 500);
@@ -240,6 +251,8 @@ await prisma.rssArticle.create({
   });
 
   if (totalNewArticles > 0) {
+    // Invalidate the post-list cache so freshly syndicated stories surface.
+    redisIncr("feed:version").catch(() => {});
     import("@/lib/neural-mind").then(({ neuralMind }) => {
       neuralMind.learnFromRssArticles().catch((err: unknown) =>
         log.error("neural auto-learn failed", { error: err })

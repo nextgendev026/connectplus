@@ -1,6 +1,8 @@
-// connectPlus brand asset generator using sharp (rasterizes the official emblem).
-// Crops the circular emblem from logo_connected_branches.svg and emits PNG icons
-// plus a UTF-8-safe favicon.ico (PNG-embedded). Run: node scripts/generate-assets.mjs
+// connectPlus brand asset generator using sharp.
+// Renders the official connectPlus mark (the amber→rose gradient squircle with
+// the rounded "network plus" — same art as components/ui/ConnectPlusMark.tsx)
+// and emits every PNG icon plus favicon.svg and a PNG-embedded favicon.ico.
+// Run: node scripts/generate-assets.mjs
 import sharp from "sharp";
 import { deflateSync } from "node:zlib";
 import { writeFileSync, mkdirSync } from "node:fs";
@@ -9,72 +11,53 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = join(ROOT, "public");
-const SRC = join(OUT, "logo_connected_branches.svg");
 
-// The emblem is a 175r circle centered at (360,215) → square crop (185,40) 350x350.
-const EMBLEM_LEFT = 185;
-const EMBLEM_TOP = 40;
-const EMBLEM_SIZE = 350;
-
-// dibelsity at which the SVG is rasterized. The crop coordinates below live in
-// SVG user units, so they must be multiplied by density/96 to land on the
-// raster canvas — otherwise the crop cuts an empty corner and every icon comes
-// out fully transparent (which is exactly what shipping broke before).
-const DENSITY = 300;
-const RASTER_SCALE = DENSITY / 96;
-
-// Extra border margin (fraction of canvas) used for maskable PWA icon so the
-// roundel doesn't get clipped by the adaptive-icon safe zone.
-const MASKABLE_MARGIN = 0.08;
+// ── Official mark (viewBox 0 0 120 120) ─────────────────────────────────────
+const MARK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <defs>
+    <linearGradient id="cp-g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FFD75E"/>
+      <stop offset="35%" stop-color="#FBBF24"/>
+      <stop offset="70%" stop-color="#F97316"/>
+      <stop offset="100%" stop-color="#F43F5E"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="112" height="112" rx="30" fill="url(#cp-g)"/>
+  <circle cx="38" cy="32" r="46" fill="#ffffff" opacity="0.12"/>
+  <rect x="9" y="9" width="102" height="102" rx="26" fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="1.5"/>
+  <rect x="52" y="30" width="16" height="60" rx="8" fill="#ffffff"/>
+  <rect x="30" y="52" width="60" height="16" rx="8" fill="#ffffff"/>
+  <circle cx="60" cy="24" r="4.2" fill="#ffffff"/>
+  <circle cx="60" cy="96" r="4.2" fill="#ffffff"/>
+  <circle cx="24" cy="60" r="4.2" fill="#ffffff"/>
+  <circle cx="96" cy="60" r="4.2" fill="#ffffff"/>
+  <path d="M88 28 l2.3 5.4 5.4 2.3 -5.4 2.3 -2.3 5.4 -2.3 -5.4 -5.4 -2.3 5.4 -2.3 Z" fill="#ffffff" opacity="0.92"/>
+</svg>`;
 
 // Brand dark surface — matches manifest background_color for the maskable plate.
 const PLATE_BG = { r: 10, g: 10, b: 13, alpha: 1 };
 
+// Maskable safety: Android scoots the icon into an inner 80% circle, so render
+// the mark at 70% and center it on the dark chrome plate.
+const MASKABLE_SCALE = 0.7;
+
 mkdirSync(OUT, { recursive: true });
 
-async function renderEmblem(size, { maskable = false } = {}) {
-  const size0 = EMBLEM_SIZE;
-  // To keep the emblem radius constant relative to the plate, expand the crop
-  // by the same fraction for maskable so the roundel stays inside safe zone.
-  const cropSize0 = size0 * (1 + (maskable ? MASKABLE_MARGIN * 2 : 0));
-  const cx0 = EMBLEM_LEFT + size0 / 2;
-  const cy0 = EMBLEM_TOP + size0 / 2;
-  // User-unit crop → raster pixels at the chosen density.
-  const cropLeft = Math.round((cx0 - cropSize0 / 2) * RASTER_SCALE);
-  const cropTop = Math.round((cy0 - cropSize0 / 2) * RASTER_SCALE);
-  const cropSize = Math.round(cropSize0 * RASTER_SCALE);
-
-  let chip = sharp(SRC, { density: DENSITY });
-  chip = chip.extract({
-    left: cropLeft,
-    top: cropTop,
-    width: cropSize,
-    height: cropSize,
-  });
-  // Decode at the requested output size.
-  const buf = await chip.resize(size, size, { fit: "fill" }).png().toBuffer();
-
+async function renderMark(size, { maskable = false } = {}) {
   if (maskable) {
-    // Emit a solid-color plate with the emblem centered, plus head room.
-    // The dark plate matches the app chrome (manifest background_color).
-    const plate = await sharp({
-      create: {
-        width: size,
-        height: size,
-        channels: 4,
-        background: PLATE_BG,
-      },
-    })
-      .composite([{ input: buf, gravity: "center" }])
+    const markSize = Math.round(size * MASKABLE_SCALE);
+    const chip = await sharp(Buffer.from(MARK_SVG))
+      .resize(markSize, markSize)
       .png()
       .toBuffer();
-    return plate;
+    return sharp({
+      create: { width: size, height: size, channels: 4, background: PLATE_BG },
+    })
+      .composite([{ input: chip, gravity: "center" }])
+      .png()
+      .toBuffer();
   }
-  return buf;
-}
-
-async function toPng(size, opts = {}) {
-  return renderEmblem(size, opts);
+  return sharp(Buffer.from(MARK_SVG)).resize(size, size).png().toBuffer();
 }
 
 const SIZES = {
@@ -87,12 +70,20 @@ const SIZES = {
 };
 
 for (const [file, size] of Object.entries(SIZES)) {
-  writeFileSync(join(OUT, file), await toPng(size));
+  writeFileSync(join(OUT, file), await renderMark(size));
   console.log("wrote", file);
 }
 
-writeFileSync(join(OUT, "pwa-512-maskable.png"), await toPng(512, { maskable: true }));
+writeFileSync(join(OUT, "pwa-512-maskable.png"), await renderMark(512, { maskable: true }));
 console.log("wrote pwa-512-maskable.png");
+
+// Apple touch icon (180px, no transparency) — same mark.
+writeFileSync(join(OUT, "apple-touch-icon.png"), await renderMark(180));
+console.log("wrote apple-touch-icon.png");
+
+// Vector favicon — crisp at any size, used by modern browsers.
+writeFileSync(join(OUT, "favicon.svg"), MARK_SVG);
+console.log("wrote favicon.svg");
 
 // ── favicon.ico (PNG-embedded) ───────────────────────────────────────────────
 const CRC_TABLE = (() => {
@@ -165,8 +156,7 @@ function encodeICO(pngs) {
 
 const icoPngs = [];
 for (const sz of [16, 32, 48]) {
-  // Decode sharp PNG buffer -> raw RGBA for the ICO encoder.
-  const png = await toPng(sz);
+  const png = await renderMark(sz);
   const { data } = await sharp(png).raw().toBuffer({ resolveWithObject: true });
   icoPngs.push({ size: sz, png: rgbaToPng(sz, data) });
 }

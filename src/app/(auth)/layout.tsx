@@ -1,3 +1,5 @@
+import { SessionProvider } from "next-auth/react";
+
 export default function AuthGroupLayout({
   children,
 }: {
@@ -5,7 +7,7 @@ export default function AuthGroupLayout({
 }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-surface-950 bg-mesh-gradient p-4">
-      {children}
+      <SessionProvider>{children}</SessionProvider>
     </div>
   );
 }

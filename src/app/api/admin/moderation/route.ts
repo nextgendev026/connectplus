@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { redisIncr } from "@/lib/redis";
 
 export async function GET(request: NextRequest) {
   try {
@@ -104,6 +105,8 @@ export async function PUT(request: NextRequest) {
         where: { id: postId },
         data: { status: "PUBLISHED", publishedAt: post.publishedAt ?? new Date() },
       }).catch(() => {});
+      // Approved posts enter the public feed — invalidate the read cache.
+      redisIncr("feed:version").catch(() => {});
       await import("@/lib/notifications").then(({ createApprovalNotification }) =>
         createApprovalNotification({
           recipientId: post.authorId,

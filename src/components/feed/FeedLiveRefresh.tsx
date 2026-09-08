@@ -7,7 +7,7 @@ interface FeedLiveRefreshProps {
   intervalMs?: number;
 }
 
-export function FeedLiveRefresh({ intervalMs = 60000 }: FeedLiveRefreshProps) {
+export function FeedLiveRefresh({ intervalMs = 120000 }: FeedLiveRefreshProps) {
   const router = useRouter();
 
   useEffect(() => {

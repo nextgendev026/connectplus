@@ -420,6 +420,9 @@ async function main() {
         node: user.node,
         avatar: user.avatar,
         password: user.role === "ADMIN" ? adminPassword : defaultPassword,
+        // Seeded accounts skip onboarding — emails are considered confirmed.
+        emailVerified: new Date(),
+        isVerified: user.role === "CREATOR" || user.role === "ADMIN" || user.role === "SUPER_ADMIN",
       },
     });
     userIds.push(created.id);

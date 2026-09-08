@@ -27,51 +27,72 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const { postId, type, value, variant, sessionId } = body as {
-      postId?: string;
-      type?: string;
-      value?: number;
-      variant?: string;
-      sessionId?: string;
+    const userId = session?.user?.id ?? null;
+    const sessionId =
+      typeof (body as { sessionId?: unknown }).sessionId === "string"
+        ? (body as { sessionId: string }).sessionId
+        : null;
+
+    const cleanEvent = (raw: Record<string, unknown>) => {
+      const type = typeof raw.type === "string" ? raw.type : "";
+      if (!VALID_TYPES.has(type)) return null;
+      const postId = typeof raw.postId === "string" ? raw.postId : null;
+      const value = typeof raw.value === "number" && isFinite(raw.value) ? raw.value : null;
+      const variant =
+        typeof raw.variant === "string" && raw.variant.length <= 64 ? raw.variant : null;
+      const rawSession = typeof raw.sessionId === "string" ? raw.sessionId : null;
+      return { postId, type, value, variant, sessionId: rawSession };
     };
 
-    if (!type || !VALID_TYPES.has(type)) {
-      return NextResponse.json({ error: "Invalid feedback type" }, { status: 400 });
-    }
+    const events = (body as { events?: unknown }).events;
+    if (Array.isArray(events)) {
+      const rows = events
+        .filter((e): e is Record<string, unknown> => e != null && typeof e === "object")
+        .map(cleanEvent)
+        .filter((e): e is NonNullable<ReturnType<typeof cleanEvent>> => e != null)
+        .map((e) => ({ ...e, userId }));
 
-    const userId = session?.user?.id ?? null;
-    const v = typeof value === "number" && isFinite(value) ? value : null;
-    const cleanVariant =
-      typeof variant === "string" && variant.length <= 64 ? variant : null;
-    if (userId) {
-      await prisma.modelFeedback.create({
-        data: {
-          userId,
-          postId: postId ?? null,
-          type,
-          value: v,
-          variant: cleanVariant,
-          sessionId: sessionId ?? null,
-        },
-      });
+      if (rows.length === 0) {
+        return NextResponse.json({ ok: true }, { status: 201 });
+      }
 
-      // Coalesce affinity after meaningful engagement signals.
-      if (type === "like" || type === "bookmark") {
+      await prisma.modelFeedback.createMany({ data: rows });
+
+      // Coalesce affinity after meaningful engagement signals (once per flush).
+      if (userId && rows.some((r) => r.type === "like" || r.type === "bookmark")) {
         prisma.$transaction(async () => {
           const { updateUserPreference } = await import("@/lib/neural-vector");
           await updateUserPreference(userId);
         }).catch(() => {});
       }
-    } else if (sessionId) {
-      await prisma.modelFeedback.create({
-        data: {
-          postId: postId ?? null,
-          type,
-          value: v,
-          variant: cleanVariant,
-          sessionId,
-        },
-      });
+
+      return NextResponse.json({ ok: true }, { status: 201 });
+    }
+
+    const event = cleanEvent(
+      body as Record<string, unknown>
+    );
+    if (!event) {
+      return NextResponse.json({ error: "Invalid feedback type" }, { status: 400 });
+    }
+
+    const { postId, type, value, variant, sessionId: eventSessionId } = event;
+    await prisma.modelFeedback.create({
+      data: {
+        userId,
+        postId: postId ?? null,
+        type,
+        value,
+        variant: variant ?? null,
+        sessionId: eventSessionId ?? sessionId,
+      },
+    });
+
+    if (userId && (type === "like" || type === "bookmark")) {
+      prisma.$transaction(async () => {
+        const { updateUserPreference } = await import("@/lib/neural-vector");
+        await updateUserPreference(userId);
+      }).catch(() => {});
     }
 
     return NextResponse.json({ ok: true }, { status: 201 });

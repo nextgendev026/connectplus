@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import ConnectPlusMark from "@/components/ui/ConnectPlusMark";
 import {
   Mail,
+  MailWarning,
   Lock,
   Eye,
   EyeOff,
@@ -23,10 +24,12 @@ export default function SignInPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [unverified, setUnverified] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setUnverified(false);
 
     if (!email.trim() || !password) {
       setError("Please enter both your email and password.");
@@ -45,6 +48,15 @@ export default function SignInPage() {
       if (result?.error) {
         setError("Invalid email or password. Please try again.");
         setIsLoading(false);
+        return;
+      }
+
+      // Signed in — check whether the email is confirmed yet.
+      const fresh = await fetch("/api/auth/session").then((r) => r.json());
+      const emailVerified = fresh?.user?.emailVerified as string | null | undefined;
+      if (!emailVerified) {
+        setIsLoading(false);
+        setUnverified(true);
         return;
       }
 
@@ -85,6 +97,24 @@ export default function SignInPage() {
             <div className="flex items-start gap-2.5 rounded-xl bg-red-500/10 border border-red-500/20 px-4 py-3 mb-6 animate-slide-down">
               <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
               <p className="text-xs text-red-300 leading-relaxed">{error}</p>
+            </div>
+          )}
+
+          {unverified && (
+            <div className="flex items-start gap-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 px-4 py-3 mb-6 animate-slide-down">
+              <MailWarning className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="text-xs leading-relaxed">
+                <p className="text-surface-300">
+                  Welcome back! Your email isn&apos;t confirmed yet — publishing and
+                  verified-writer applications are unlocked after you verify it.
+                </p>
+                <Link
+                  href="/auth/verify-email"
+                  className="mt-2 inline-flex items-center gap-1.5 font-medium text-amber-300 hover:text-amber-200 transition-colors"
+                >
+                  Go to verification <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
+              </div>
             </div>
           )}
 

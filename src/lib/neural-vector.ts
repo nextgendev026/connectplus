@@ -175,18 +175,57 @@ export async function relatedPosts(postId: string, limit = 4): Promise<{ id: str
  * Detect near-duplicate content by embedding similarity.
  * Returns the most similar existing post if it clears the threshold.
  */
-export async function findDuplicate(post: { id?: string; title: string; content: string }, threshold = 0.6): Promise<{ postId: string; score: number } | null> {
+export async function findDuplicate(
+  post: { id?: string; title: string; content: string },
+  threshold = 0.82,
+  overlap = 0.55
+): Promise<{ postId: string; score: number } | null> {
   const qVec = normalize(embedText(postText(post.title, null, post.content)));
+  const qTokens = normTokens(lexTokens(post.title + " " + post.content));
   const embs = await prisma.postEmbedding.findMany({
     where: post.id ? { NOT: { postId: post.id } } : undefined,
     select: { postId: true, vector: true },
   });
-  let best: { postId: string; score: number } | null = null;
+  let best: { postId: string; score: number; overlap: number } | null = null;
   for (const e of embs) {
     const score = cosineSimilarity(qVec, normalize(decodeVector(e.vector)));
-    if (!best || score > best.score) best = { postId: e.postId, score };
+    if (best && score <= best.score) continue;
+    const tokOverlap = await tokenOverlapWith(qTokens, e.postId);
+    best = { postId: e.postId, score, overlap: tokOverlap };
   }
-  return best && best.score >= threshold ? best : null;
+  return best && best.score >= threshold && best.overlap >= overlap
+    ? { postId: best.postId, score: best.score }
+    : null;
+}
+
+function lexTokens(text: string): Set<string> {
+  return new Set(text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean));
+}
+
+function normTokens(tokens: Set<string>): Set<string> {
+  const stop = new Set([
+    "the", "a", "an", "and", "or", "but", "if", "then", "for", "of", "to", "in",
+    "on", "at", "by", "with", "from", "as", "is", "are", "was", "were", "be", "been",
+    "being", "have", "has", "had", "do", "does", "did", "i", "you", "he", "she",
+    "it", "we", "they", "my", "your", "his", "her", "its", "our", "their", "this",
+    "that", "these", "those", "not", "no", "so", "up", "down", "about", "into",
+    "out", "now", "just", "very", "really", "own", "also", "over", "under",
+  ]);
+  const out = new Set<string>();
+  for (const t of tokens) if (t.length > 1 && !stop.has(t)) out.add(t);
+  return out;
+}
+
+async function tokenOverlapWith(qTokens: Set<string>, otherPostId: string): Promise<number> {
+  const other = await prisma.post.findUnique({
+    where: { id: otherPostId },
+    select: { title: true, excerpt: true },
+  });
+  const otherTokens = normTokens(lexTokens(`${other?.title ?? ""} ${other?.excerpt ?? ""}`));
+  if (qTokens.size === 0 || otherTokens.size === 0) return 0;
+  let inter = 0;
+  for (const t of qTokens) if (otherTokens.has(t)) inter++;
+  return inter / Math.min(qTokens.size, otherTokens.size);
 }
 
 // ── Phase 3: user preference learning ──────────────────────────────────────

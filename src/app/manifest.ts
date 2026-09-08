@@ -42,10 +42,16 @@ export default function manifest(): MetadataRoute.Manifest {
       },
     ],
     icons: [
+      { src: "/favicon.svg", sizes: "any", type: "image/svg+xml" },
       { src: "/icon-16.png", sizes: "16x16", type: "image/png" },
       { src: "/icon-32.png", sizes: "32x32", type: "image/png" },
       { src: "/icon-48.png", sizes: "48x48", type: "image/png" },
-      { src: "/icon-180.png", sizes: "180x180", type: "image/png", purpose: "any" },
+      {
+        src: "/icon-180.png",
+        sizes: "180x180",
+        type: "image/png",
+        purpose: "any",
+      },
       { src: "/pwa-192.png", sizes: "192x192", type: "image/png" },
       { src: "/pwa-512.png", sizes: "512x512", type: "image/png" },
       {
@@ -57,11 +63,18 @@ export default function manifest(): MetadataRoute.Manifest {
     ],
     screenshots: [
       {
-        src: "/pwa-512.png",
-        sizes: "512x512",
+        src: "/screenshots/mobile-home.png",
+        sizes: "390x844",
         type: "image/png",
         form_factor: "narrow",
         label: "The connectPlus home feed — stories that connect East Africa",
+      },
+      {
+        src: "/screenshots/desktop-home.png",
+        sizes: "1280x800",
+        type: "image/png",
+        form_factor: "wide",
+        label: "connectPlus on desktop — browse stories, radio, and the story studio",
       },
     ],
   };

@@ -31,6 +31,7 @@ export default function SignUpPage() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [devVerifyUrl, setDevVerifyUrl] = useState<string | null>(null);
 
   const validateUsername = (value: string): boolean =>
     /^[a-zA-Z0-9_]{3,20}$/.test(value);
@@ -92,6 +93,16 @@ export default function SignUpPage() {
         return;
       }
 
+      const devVerifyUrl = data?.emailVerification?.devUrl as string | undefined;
+      if (devVerifyUrl) {
+        setDevVerifyUrl(devVerifyUrl);
+        try {
+          // Dev-mode handoff: surface the link on /auth/verify-email too, since
+          // this page unmounts on redirect.
+          localStorage.setItem("connectplus:dev-verify-url", devVerifyUrl);
+        } catch {}
+      }
+
       const result = await signIn("credentials", {
         email: email.trim(),
         password,
@@ -105,7 +116,8 @@ export default function SignUpPage() {
         return;
       }
 
-      router.push("/");
+      // New accounts land on the verification screen until their email is confirmed.
+      router.push("/auth/verify-email?sent=1");
       router.refresh();
     } catch {
       setError("Something went wrong. Please try again.");
@@ -142,6 +154,24 @@ export default function SignUpPage() {
             <div className="flex items-start gap-2.5 rounded-xl bg-red-500/10 border border-red-500/20 px-4 py-3 mb-6 animate-slide-down">
               <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
               <p className="text-xs text-red-300 leading-relaxed">{error}</p>
+            </div>
+          )}
+
+          {devVerifyUrl && (
+            <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/25 px-4 py-3 mb-6">
+              <p className="text-xs text-emerald-300 leading-relaxed mb-1.5">
+                Dev mode — no email provider configured. Verify with this link:
+              </p>
+              <div className="flex items-center gap-2">
+                <a
+                  href={devVerifyUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-brand-300 underline break-all hover:text-brand-200 transition-colors min-w-0"
+                >
+                  {devVerifyUrl}
+                </a>
+              </div>
             </div>
           )}
 

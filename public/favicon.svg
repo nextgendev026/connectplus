@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <defs>
+    <linearGradient id="cp-g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FFD75E"/>
+      <stop offset="35%" stop-color="#FBBF24"/>
+      <stop offset="70%" stop-color="#F97316"/>
+      <stop offset="100%" stop-color="#F43F5E"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="112" height="112" rx="30" fill="url(#cp-g)"/>
+  <circle cx="38" cy="32" r="46" fill="#ffffff" opacity="0.12"/>
+  <rect x="9" y="9" width="102" height="102" rx="26" fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="1.5"/>
+  <rect x="52" y="30" width="16" height="60" rx="8" fill="#ffffff"/>
+  <rect x="30" y="52" width="60" height="16" rx="8" fill="#ffffff"/>
+  <circle cx="60" cy="24" r="4.2" fill="#ffffff"/>
+  <circle cx="60" cy="96" r="4.2" fill="#ffffff"/>
+  <circle cx="24" cy="60" r="4.2" fill="#ffffff"/>
+  <circle cx="96" cy="60" r="4.2" fill="#ffffff"/>
+  <path d="M88 28 l2.3 5.4 5.4 2.3 -5.4 2.3 -2.3 5.4 -2.3 -5.4 -5.4 -2.3 5.4 -2.3 Z" fill="#ffffff" opacity="0.92"/>
+</svg>

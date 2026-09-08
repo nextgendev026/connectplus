@@ -224,6 +224,14 @@ export default function Navbar() {
               {session ? (
                 <>
                   <Link
+                    href={`/profile/${user?.username}`}
+                    onClick={() => setMobileOpen(false)}
+                    className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-surface-400 hover:text-surface-50 hover:bg-surface-800"
+                  >
+                    <User className="h-4 w-4 text-brand-500/70" />
+                    Profile
+                  </Link>
+                  <Link
                     href="/studio"
                     onClick={() => setMobileOpen(false)}
                     className="btn-gradient mt-1 rounded-lg px-3 py-2.5 text-center text-sm font-semibold text-white"
@@ -235,9 +243,17 @@ export default function Navbar() {
                       Admin Panel
                     </Link>
                   )}
-                  <Link href="/settings" onClick={() => setMobileOpen(false)} className="rounded-lg px-3 py-2.5 text-sm font-medium text-surface-400 hover:text-surface-50">
+                  <Link href="/settings" onClick={() => setMobileOpen(false)} className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-surface-400 hover:text-surface-50 hover:bg-surface-800">
+                    <Settings className="h-4 w-4 text-brand-500/70" />
                     Settings
                   </Link>
+                  <button
+                    onClick={() => signOut()}
+                    className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-surface-400 hover:text-surface-50 hover:bg-surface-800 hover:text-red-400"
+                  >
+                    <LogOut className="h-4 w-4 text-brand-500/70" />
+                    Sign out
+                  </button>
                 </>
               ) : (
                 <>

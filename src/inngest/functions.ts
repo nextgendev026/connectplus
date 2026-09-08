@@ -5,6 +5,7 @@ import { hiveBrain } from "@/lib/hive-brain";
 import { autoTagPost } from "@/lib/auto-tag";
 import { createPublishNotifications } from "@/lib/notifications";
 import { createLogger } from "@/lib/logger";
+import { redisIncr } from "@/lib/redis";
 
 const log = createLogger("inngest");
 
@@ -37,6 +38,7 @@ export const publishScheduled = inngest.createFunction(
           excerpt: true,
           authorId: true,
           scheduledAt: true,
+          moderationStatus: true,
         },
       })
     );
@@ -46,29 +48,53 @@ export const publishScheduled = inngest.createFunction(
     let publishedCount = 0;
 
     for (const post of due) {
-      const live = await step.run(`publish-${post.id}`, async () =>
-        prisma.post.update({
+      const live = await step.run(`publish-${post.id}`, async () => {
+        // Trusted writers (CREATOR + ADMIN tier) go straight to APPROVED;
+        // regular users' scheduled posts publish but stay PENDING in the
+        // moderation queue until an admin approves them.
+        const author = await prisma.user.findUnique({
+          where: { id: post.authorId },
+          select: { role: true, emailVerified: true },
+        });
+        const trusted =
+          author != null &&
+          (author.role === "CREATOR" ||
+            author.role === "ADMIN" ||
+            author.role === "SUPER_ADMIN") &&
+          author.emailVerified != null;
+        const moderationStatus =
+          post.moderationStatus === "REJECTED" || post.moderationStatus === "FLAGGED"
+            ? post.moderationStatus
+            : trusted
+              ? "APPROVED"
+              : post.moderationStatus === "APPROVED"
+                ? post.moderationStatus
+                : "PENDING";
+
+        return prisma.post.update({
           where: { id: post.id },
           data: {
             status: "PUBLISHED",
-            moderationStatus: "APPROVED",
+            moderationStatus,
             publishedAt: post.scheduledAt ?? new Date(),
           },
           include: {
             author: { select: { name: true, username: true } },
             category: { select: { name: true, slug: true } },
           },
-        })
-      );
+        });
+      });
 
-      await step.run(`notify-${post.id}`, async () =>
-        createPublishNotifications({
-          authorId: live.authorId,
-          authorName: live.author.name ?? live.author.username,
-          postId: live.id,
-          postTitle: live.title,
-        })
-      );
+      if (live.moderationStatus === "APPROVED") {
+        await step.run(`notify-${post.id}`, async () =>
+          createPublishNotifications({
+            authorId: live.authorId,
+            authorName: live.author.name ?? live.author.username,
+            postId: live.id,
+            postTitle: live.title,
+          })
+        );
+      }
 
       await step.run(`learn-${post.id}`, async () => {
         const hive = await hiveBrain.ingestPost(live);
@@ -82,6 +108,12 @@ export const publishScheduled = inngest.createFunction(
       });
 
       publishedCount++;
+    }
+
+    if (publishedCount > 0) {
+      await step.run("invalidate-feed", async () => {
+        await redisIncr("feed:version").catch(() => {});
+      });
     }
 
     return { published: publishedCount };

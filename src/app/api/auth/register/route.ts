@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hash } from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import {
+  appBaseUrl,
+  createEmailVerificationToken,
+  sendVerificationEmail,
+} from "@/lib/mailer";
 
 const EAST_AFRICAN_CITIES = [
   "Nairobi",
@@ -67,6 +72,7 @@ export async function POST(request: NextRequest) {
     const randomCity =
       EAST_AFRICAN_CITIES[Math.floor(Math.random() * EAST_AFRICAN_CITIES.length)];
 
+    const { token, expiresAt } = createEmailVerificationToken();
     const hashedPassword = await hash(password, 12);
 
     const user = await prisma.user.create({
@@ -76,6 +82,8 @@ export async function POST(request: NextRequest) {
         email: email.toLowerCase().trim(),
         password: hashedPassword,
         node: randomCity,
+        emailToken: token,
+        emailTokenExpires: expiresAt,
       },
       select: {
         id: true,
@@ -88,8 +96,23 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    const verificationUrl = `${appBaseUrl()}/auth/verify-email?token=${token}`;
+    const emailResult = await sendVerificationEmail({
+      to: user.email,
+      name: user.name ?? user.username,
+      verificationUrl,
+    }).catch(() => ({ ok: false as const, delivered: false as const }));
+
     return NextResponse.json(
-      { message: "Account created successfully", user },
+      {
+        message: "Account created successfully",
+        user,
+        emailVerification: {
+          sent: emailResult?.delivered ?? false,
+          devUrl: emailResult?.delivered ? undefined : verificationUrl,
+          expiresInHours: 24,
+        },
+      },
       { status: 201 }
     );
   } catch (error: unknown) {

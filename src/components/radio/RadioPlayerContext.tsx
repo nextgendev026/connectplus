@@ -277,7 +277,7 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
     };
 
     tick(true);
-    const interval = setInterval(() => tick(false), 12_000);
+    const interval = setInterval(() => tick(false), 20_000);
 
     const onVisible = () => {
       if (document.visibilityState === "visible") {

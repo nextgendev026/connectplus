@@ -36,6 +36,18 @@ export async function generateMetadata(): Promise<Metadata> {
         "Kigali", "stories", "writing", "community",
       ];
 
+  // Structured metadata so crawlers and the browser chrome always pick the
+  // brand-faithful vector mark first, mirroring the in-app ConnectPlusMark.
+  const iconEntries = [
+    { url: "/favicon.svg", type: "image/svg+xml" },
+    { url: "/icon-16.png", sizes: "16x16", type: "image/png" },
+    { url: "/icon-32.png", sizes: "32x32", type: "image/png" },
+    { url: "/icon-48.png", sizes: "48x48", type: "image/png" },
+    { url: "/pwa-192.png", sizes: "192x192", type: "image/png" },
+    { url: "/pwa-512.png", sizes: "512x512", type: "image/png" },
+    { url: "/favicon.ico", sizes: "any", type: "image/x-icon" },
+  ];
+
   return {
     metadataBase: new URL(url),
     title: {
@@ -54,13 +66,8 @@ export async function generateMetadata(): Promise<Metadata> {
       },
     },
     icons: {
-      icon: [
-        { url: "/icon-32.png", sizes: "32x32", type: "image/png" },
-        { url: "/icon-48.png", sizes: "48x48", type: "image/png" },
-        { url: "/pwa-192.png", sizes: "192x192", type: "image/png" },
-        { url: "/favicon.ico", sizes: "any", type: "image/x-icon" },
-      ],
-      apple: [{ url: "/icon-180.png", sizes: "180x180", type: "image/png" }],
+      icon: iconEntries,
+      apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
     },
     appleWebApp: {
       capable: true,

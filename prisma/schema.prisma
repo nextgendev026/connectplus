@@ -20,6 +20,10 @@ model User {
   role          String    @default("USER")
   isVerified    Boolean   @default(false)
   node          String?
+  emailVerified DateTime?
+  emailToken    String?
+  emailTokenExpires DateTime?
+  writerApplication WriterApplication?
   followersCount Int      @default(0)
   followingCount Int      @default(0)
   posts         Post[]
@@ -39,6 +43,25 @@ model User {
 
   @@index([username])
   @@index([email])
+}
+
+/// Verified-writer applications. Users apply; admins approve (role -> CREATOR,
+/// isVerified -> true) or reject (allowing re-application).
+model WriterApplication {
+  id          String     @id @default(cuid())
+  userId      String     @unique
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  motivation  String     @db.Text
+  portfolio   String?    @db.Text
+  status      String     @default("PENDING") // PENDING | APPROVED | REJECTED
+  reviewedById String?
+  reviewedAt  DateTime?
+  reviewedNote String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
 }
 
 model Post {
