@@ -257,7 +257,7 @@ export const statusWatchdog = inngest.createFunction(
   },
   async ({ step }) => {
     const alerts = await step.run("probe-services", async () => {
-      const { runChecks, alertRecipients } = await import("@/lib/status-alerts");
+      const { runChecks, alertRecipients, alertWebhookUrl } = await import("@/lib/status-alerts");
       const checks = await runChecks();
       const bad = checks.services.filter((s) => s.status === "down" || s.status === "degraded");
       if (bad.length === 0) return [] as { id: string; name: string; status: string; detail: string }[];
@@ -273,7 +273,7 @@ export const statusWatchdog = inngest.createFunction(
       }
       if (sendable.length === 0) return [];
 
-      const recipients = alertRecipients();
+      const recipients = await alertRecipients();
       const lines = sendable.map(
         (s) => `• ${s.name}: ${s.status.toUpperCase()} — ${s.detail}`
       );
@@ -295,8 +295,8 @@ export const statusWatchdog = inngest.createFunction(
         );
       }
 
-      // Webhook (Slack/Discord/generic JSON).
-      const webhook = process.env.STATUS_WEBHOOK_URL;
+      // Webhook (Slack/Discord/generic JSON) — admin-managed URL with env override.
+      const webhook = await alertWebhookUrl();
       if (webhook) {
         await fetch(webhook, {
           method: "POST",

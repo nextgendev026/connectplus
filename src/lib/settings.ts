@@ -189,6 +189,23 @@ export const SETTINGS_CATALOG: SettingDef[] = [
     type: "boolean",
     isPublic: true,
   },
+  {
+    key: "statusAlertEmails",
+    defaultValue: "",
+    group: "integrations",
+    label: "Status alert emails",
+    hint: "Comma-separated addresses that receive service-down alerts from the status watchdog (every 5 min). Falls back to the super admin's email when empty.",
+    type: "text",
+  },
+  {
+    key: "statusWebhookUrl",
+    defaultValue: "",
+    group: "integrations",
+    label: "Status alert webhook",
+    hint: "Optional Slack/Discord-compatible webhook that receives the same alerts as email.",
+    type: "url",
+    isSecret: true,
+  },
 
   // ── Feature flags / plugins ──────────────────────────────────────────────
   {
@@ -283,6 +300,10 @@ const cache = new Map<string, { at: number; value: Record<string, string> }>();
 const CACHE_TTL_MS = 30_000;
 const CACHE_TTL_SECONDS = 30;
 
+/** Last-known-good values kept forever — served when the DB is unreachable so
+ * a database blip degrades page speed instead of taking pages down. */
+const lastKnown = new Map<string, Record<string, string>>();
+
 export function settingDef(key: string): SettingDef | undefined {
   return CATALOG_BY_KEY.get(key);
 }
@@ -340,9 +361,31 @@ export async function getSettings(
     return fromRedis;
   }
 
-  await ensureSettings().catch(() => {});
+  // Fast-fail: if the DB is unreachable (network blip, pooler outage), don't
+  // hang every server render for the full connect timeout. Race BOTH the
+  // catalog-seed pass and the read against one short deadline, then fall back
+  // to stale caches or catalog defaults.
+  const rows = await Promise.race([
+    (async () => {
+      await ensureSettings();
+      return prisma.platformSetting.findMany();
+    })(),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("settings-db-deadline")), 1_500)
+    ),
+  ]).catch(() => null);
 
-  const rows = await prisma.platformSetting.findMany();
+  if (rows === null) {
+    const stale = lastKnown.get(cacheKey);
+    if (stale) return stale;
+    const out: Record<string, string> = {};
+    for (const def of SETTINGS_CATALOG) {
+      if (publicOnly && !def.isPublic) continue;
+      out[def.key] = def.defaultValue;
+    }
+    return out;
+  }
+
   const out: Record<string, string> = {};
   for (const def of SETTINGS_CATALOG) {
     if (publicOnly && !def.isPublic) continue;
@@ -354,7 +397,9 @@ export async function getSettings(
   }
 
   cache.set(cacheKey, { at: Date.now(), value: out });
+  lastKnown.set(cacheKey, out);
   await cacheSet(redisKey, out, CACHE_TTL_SECONDS).catch(() => {});
+  await cacheSet(`${redisKey}:backup`, out, 24 * 60 * 60).catch(() => {});
   return out;
 }
 

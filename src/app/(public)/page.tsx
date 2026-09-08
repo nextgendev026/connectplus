@@ -6,6 +6,7 @@ import { cn, estimateReadTime, timeAgo } from "@/lib/utils";
 import { coverSrc } from "@/lib/thumb";
 import { auth } from "@/lib/auth";
 import { rankFeed } from "@/lib/feed-ranker";
+import { cacheGet, cacheSet } from "@/lib/redis";
 import { FeedLiveRefresh } from "@/components/feed/FeedLiveRefresh";
 import { TrendingTopics } from "@/components/feed/TrendingTopics";
 import { ListeningLocation } from "@/components/feed/ListeningLocation";
@@ -30,6 +31,24 @@ function formatViews(count: number): string {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
   if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`;
   return String(count);
+}
+
+/** Serve the home feed from a 24h Redis snapshot when the database is
+ * unreachable (network blip / pooler outage) instead of hard-erroring the
+ * page. Fresh fetches continuously refresh the snapshot. */
+async function withFeedFallback<T extends unknown[]>(
+  pages: { [K in keyof T]: Promise<T[K]> }
+): Promise<T> {
+  const FALLBACK_KEY = "feed:home:fallback";
+  try {
+    const result = await Promise.all(pages);
+    void cacheSet(FALLBACK_KEY, result, 60 * 60 * 24).catch(() => {});
+    return result;
+  } catch (err) {
+    const cached = await cacheGet<T>(FALLBACK_KEY).catch(() => null);
+    if (cached !== null) return cached;
+    throw err;
+  }
 }
 
 interface CategoryData {
@@ -517,7 +536,7 @@ export default async function HomeFeedPage({
     where.category = { slug: categoryFilter };
   }
 
-  const [posts, heroPostRows, allCategories, allTags, allCreators] = await Promise.all([
+  const [posts, heroPostRows, allCategories, allTags, allCreators] = await withFeedFallback([
     prisma.post.findMany({
       where,
       include: {

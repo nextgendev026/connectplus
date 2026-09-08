@@ -291,6 +291,8 @@ export async function fetchCronRuns(): Promise<CronRun[]> {
   const watched = [
     { fnId: "radio-status-sweep", name: "Radio metadata sweep" },
     { fnId: "rss-poll", name: "RSS poll" },
+    { fnId: "status-watchdog", name: "Status watchdog" },
+    { fnId: "status-daily-snapshot", name: "Daily status snapshot" },
   ];
 
   const results: CronRun[] = [];
