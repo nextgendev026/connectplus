@@ -241,6 +241,109 @@ export const radioStatusSweep = inngest.createFunction(
 );
 
 /**
+ * Status watchdog: runs the health checks every 5 minutes and alerts when a
+ * service degrades or goes down. Uses `status:alert:<service>` cooldown keys
+ * in Redis (6h) so a flapping service doesn't spam — one alert per episode.
+ * Email goes through the shared mailer (RESEND_API_KEY); STATUS_WEBHOOK_URL
+ * additionally receives a JSON payload (Slack/Discord/generic compatible).
+ */
+export const statusWatchdog = inngest.createFunction(
+  {
+    id: "status-watchdog",
+    name: "Status watchdog alerts",
+    triggers: [{ cron: "*/5 * * * *" }],
+    concurrency: 1,
+    retries: 2,
+  },
+  async ({ step }) => {
+    const alerts = await step.run("probe-services", async () => {
+      const { runChecks, alertRecipients } = await import("@/lib/status-alerts");
+      const checks = await runChecks();
+      const bad = checks.services.filter((s) => s.status === "down" || s.status === "degraded");
+      if (bad.length === 0) return [] as { id: string; name: string; status: string; detail: string }[];
+
+      const { redisGetRaw, redisSetEx } = await import("@/lib/redis");
+      const sendable: typeof bad = [];
+      for (const s of bad) {
+        const key = `status:alert:${s.id}`;
+        const last = await redisGetRaw(key).catch(() => null);
+        if (last) continue; // already alerted for this episode
+        await redisSetEx(key, 6 * 60 * 60, new Date().toISOString());
+        sendable.push(s);
+      }
+      if (sendable.length === 0) return [];
+
+      const recipients = alertRecipients();
+      const lines = sendable.map(
+        (s) => `• ${s.name}: ${s.status.toUpperCase()} — ${s.detail}`
+      );
+      const subject = `[connectPlus] ${sendable.length} service${sendable.length === 1 ? "" : "s"} ${
+        sendable.some((s) => s.status === "down") ? "DOWN" : "degraded"
+      }`;
+
+      // Email (best-effort; mailer logs in dev when RESEND_API_KEY is unset).
+      if (recipients.length > 0) {
+        const { sendEmail } = await import("@/lib/mailer");
+        await Promise.allSettled(
+          recipients.map((to) =>
+            sendEmail({
+              to,
+              subject,
+              text: `connectPlus status alert (${new Date().toISOString()})\n\n${lines.join("\n")}\n\n— connectPlus status watchdog`,
+            })
+          )
+        );
+      }
+
+      // Webhook (Slack/Discord/generic JSON).
+      const webhook = process.env.STATUS_WEBHOOK_URL;
+      if (webhook) {
+        await fetch(webhook, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: `${subject}\n${lines.join("\n")}`,
+            content: `${subject}\n${lines.join("\n")}`,
+            alerts: sendable.map((s) => ({ service: s.id, status: s.status, detail: s.detail })),
+          }),
+          signal: AbortSignal.timeout(8000),
+        }).catch(() => {});
+      }
+
+      return sendable.map((s) => ({ id: s.id, name: s.name, status: s.status, detail: s.detail }));
+    });
+
+    return { alerted: alerts.length, alerts };
+  }
+);
+
+/**
+ * Daily status snapshot: probes once at 00:05 UTC and stamps the day's
+ * baseline into the 90-day history so a day with no visitors still shows
+ * its first-hours result (recordAndReadHistory escalates from there).
+ */
+export const statusDailySnapshot = inngest.createFunction(
+  {
+    id: "status-daily-snapshot",
+    name: "Daily status history snapshot",
+    triggers: [{ cron: "5 0 * * *" }],
+    concurrency: 1,
+    retries: 2,
+  },
+  async ({ step }) => {
+    return step.run("snapshot", async () => {
+      const { runChecks, recordAndReadHistory } = await import("@/lib/status");
+      const checks = await runChecks();
+      const history = await recordAndReadHistory(checks.services);
+      return {
+        overall: checks.overall,
+        recorded: Object.keys(history).length,
+      };
+    });
+  }
+);
+
+/**
  * Manual deep-learning trigger exposed to admins.
  */
 export const neuralLearn = inngest.createFunction(
@@ -270,4 +373,6 @@ export const functions = [
   embedPosts,
   neuralLearn,
   radioStatusSweep,
+  statusWatchdog,
+  statusDailySnapshot,
 ];

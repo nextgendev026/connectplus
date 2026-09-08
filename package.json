@@ -19,7 +19,9 @@
     "db:promote-admin": "node scripts/promote-superadmin.ts",
     "db:feed-mind": "node scripts/feed-the-mind.ts",
     "db:studio": "prisma studio",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "vercel-build": "prisma migrate deploy && prisma generate && next build"
   },
   "dependencies": {
     "@prisma/client": "^6.6.0",
