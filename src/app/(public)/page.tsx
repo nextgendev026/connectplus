@@ -22,29 +22,26 @@ import {
   PenLine,
 } from "lucide-react";
 
+// NOTE: no `ssr: false` — that option is illegal in Server Components.
+// Plain next/dynamic still code-splits each chunk so the first paint ships
+// less JavaScript; the components hydrate on the client as before.
 const FeedLiveRefresh = nextDynamic(
-  () => import("@/components/feed/FeedLiveRefresh").then((m) => m.FeedLiveRefresh),
-  { ssr: false }
+  () => import("@/components/feed/FeedLiveRefresh").then((m) => m.FeedLiveRefresh)
 );
 const TrendingTopics = nextDynamic(
-  () => import("@/components/feed/TrendingTopics").then((m) => m.TrendingTopics),
-  { ssr: false }
+  () => import("@/components/feed/TrendingTopics").then((m) => m.TrendingTopics)
 );
 const ListeningLocation = nextDynamic(
-  () => import("@/components/feed/ListeningLocation").then((m) => m.ListeningLocation),
-  { ssr: false }
+  () => import("@/components/feed/ListeningLocation").then((m) => m.ListeningLocation)
 );
 const FeedFeedbackTracker = nextDynamic(
-  () => import("@/components/feed/FeedFeedbackTracker").then((m) => m.FeedFeedbackTracker),
-  { ssr: false }
+  () => import("@/components/feed/FeedFeedbackTracker").then((m) => m.FeedFeedbackTracker)
 );
 const LoadMoreFeed = nextDynamic(
-  () => import("@/components/feed/LoadMoreFeed").then((m) => m.LoadMoreFeed),
-  { ssr: false }
+  () => import("@/components/feed/LoadMoreFeed").then((m) => m.LoadMoreFeed)
 );
 const HeroSlideshow = nextDynamic(
-  () => import("@/components/feed/HeroSlideshow").then((m) => m.HeroSlideshow),
-  { ssr: false }
+  () => import("@/components/feed/HeroSlideshow").then((m) => m.HeroSlideshow)
 );
 
 function formatViews(count: number): string {
