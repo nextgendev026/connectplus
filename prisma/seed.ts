@@ -568,13 +568,16 @@ async function main() {
   console.log("\n📡 Creating RSS feeds...");
   const rssFeeds = [
     { name: "BBC Africa", url: "http://feeds.bbci.co.uk/news/world/africa/rss.xml", siteUrl: "https://bbc.co.uk/africa", description: "BBC Africa News", category: "News" },
-    { name: "Nation Africa", url: "https://nation.africa/rss", siteUrl: "https://nation.africa", description: "Nation Media Group", category: "News" },
     { name: "TechCabal", url: "https://techcabal.com/feed/", siteUrl: "https://techcabal.com", description: "Africa's leading tech publication", category: "Technology" },
     { name: "Disrupt Africa", url: "https://disrupt-africa.com/feed/", siteUrl: "https://disrupt-africa.com", description: "African tech startup news", category: "Technology" },
     { name: "Nairobi Wire", url: "https://nairobiwire.com/feed/", siteUrl: "https://nairobiwire.com", description: "Nairobi's digital newsroom", category: "News" },
-    { name: "Capital FM Kenya", url: "https://capitalfm.co.ke/feed/", siteUrl: "https://capitalfm.co.ke", description: "Capital FM Kenya", category: "Entertainment" },
-    { name: "The Citizen Tanzania", url: "https://www.thecitizen.co.tz/rss", siteUrl: "https://thecitizen.co.tz", description: "The Citizen Tanzania", category: "News" },
-    { name: "New Vision Uganda", url: "https://www.newvision.co.ug/rss", siteUrl: "https://newvision.co.ug", description: "New Vision Uganda", category: "News" },
+    { name: "KBC Kenya", url: "https://www.kbc.co.ke/feed/", siteUrl: "https://www.kbc.co.ke", description: "Kenya Broadcasting Corporation", category: "News" },
+    { name: "Ghafla Kenya", url: "https://www.ghafla.co.ke/feed/", siteUrl: "https://www.ghafla.co.ke", description: "Kenyan entertainment news", category: "Entertainment" },
+    { name: "Michuzi Blog (TZ)", url: "https://michuzijr.blogspot.com/feeds/posts/default", siteUrl: "https://michuzijr.blogspot.com", description: "Tanzania's leading news blog", category: "News" },
+    { name: "Nile Post Uganda", url: "https://nilepost.co.ug/feed/", siteUrl: "https://nilepost.co.ug", description: "Ugandan news and analysis", category: "News" },
+    { name: "SoftPower Uganda", url: "https://softpower.ug/feed/", siteUrl: "https://softpower.ug", description: "Ugandan journalism", category: "News" },
+    { name: "Independent Uganda", url: "https://www.independent.co.ug/feed/", siteUrl: "https://www.independent.co.ug", description: "Ugandan independent journalism", category: "News" },
+    { name: "PML Daily Uganda", url: "https://www.pmldaily.com/feed", siteUrl: "https://www.pmldaily.com", description: "Uganda news daily", category: "News" },
   ];
 
   for (const feed of rssFeeds) {

@@ -122,7 +122,11 @@ export const publishScheduled = inngest.createFunction(
 
 /**
  * Polls all active RSS feeds. Triggered manually from the admin panel or by
- * the Inngest daily cron.
+ * the Inngest hourly cron.
+ *
+ * Each feed runs as its OWN step: if a source hangs or a serverless window
+ * ends mid-run, Inngest resumes from the next feed instead of losing the
+ * whole cycle (the previous single-step version stalled feeds for days).
  */
 export const rssPoll = inngest.createFunction(
   {
@@ -135,16 +139,34 @@ export const rssPoll = inngest.createFunction(
     retries: 2,
   },
   async ({ step }) => {
-    const summary = await step.run("poll-feeds", async () => pollFeeds());
+    const { listDueFeeds, pollSingleFeed, resolveDefaultAuthorId } = await import("@/lib/rss-poll");
 
-    if (summary.newArticles > 0) {
+    const due = await step.run("list-due-feeds", async () => listDueFeeds());
+    const authorId = await step.run("resolve-author", async () => resolveDefaultAuthorId());
+
+    const summaries: import("@/lib/rss-poll").FeedSummary[] = [];
+    for (const [i, feed] of due.entries()) {
+      // Stagger feeds so one cycle never spikes outbound egress against all
+      // sources at once — free-tier friendly.
+      if (i > 0) await step.sleep(`stagger-${feed.id}`, "500ms");
+      const s = await step.run(`poll-feed-${feed.id}`, async () => pollSingleFeed(feed, authorId));
+      summaries.push(s);
+    }
+
+    const totalNew = summaries.reduce((n, s) => n + s.newArticles, 0);
+    if (totalNew > 0) {
       await step.run("neural-learn", async () => {
         const { neuralMind } = await import("@/lib/neural-mind");
         await neuralMind.learnFromRssArticles();
       });
     }
 
-    return summary;
+    return {
+      feedsPolled: summaries.length,
+      newArticles: totalNew,
+      errors: summaries.filter((s) => s.error).length,
+      details: summaries.map(({ feedName, newArticles, error }) => ({ feedName, newArticles, error })),
+    };
   }
 );
 
@@ -163,7 +185,20 @@ export const rssPollFeed = inngest.createFunction(
     const feedId = (event.data as { feedId?: string } | undefined)?.feedId;
     if (!feedId) return { error: "missing feedId" };
 
-    return step.run("poll-feed", async () => pollFeeds(feedId));
+    return step.run("poll-feed", async () => {
+      const { listDueFeeds, pollSingleFeed, resolveDefaultAuthorId } = await import("@/lib/rss-poll");
+      const [feed] = await listDueFeeds(feedId);
+      // A single-feed trigger bypasses the interval throttle so admins can
+      // force-run a feed; fall back to fetching the record directly.
+      const target = feed ??
+        (await prisma.rssFeed.findUnique({
+          where: { id: feedId },
+          select: { id: true, name: true, url: true },
+        }));
+      if (!target) return { feedId, feedName: "", newArticles: 0, error: "feed not found" };
+      const authorId = await resolveDefaultAuthorId();
+      return pollSingleFeed(target, authorId);
+    });
   }
 );
 

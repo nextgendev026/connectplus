@@ -252,6 +252,14 @@ export const SETTINGS_CATALOG: SettingDef[] = [
     hint: "Allow scheduled RSS feeds to import articles as posts.",
     type: "boolean",
   },
+  {
+    key: "radioDirectStream",
+    defaultValue: "false",
+    group: "plugins",
+    label: "Direct radio streams (HD)",
+    hint: "Bypass the same-origin proxy for radio so bitrate is never throttled by serverless limits. Clearer HD audio; station hosts see listener IPs directly.",
+    type: "boolean",
+  },
 
   // ── API keys / third-party services ─────────────────────────────────────
   {

@@ -13,6 +13,10 @@ const securityHeaders = [
       "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "img-src 'self' data: blob: https:",
+      // media-src: direct third-party stream URLs are allowed as an HD
+      // fallback path when the same-origin proxy is throttled (Vercel
+      // serverless windows); the proxy route remains the default.
+      "media-src 'self' blob: https: http:",
       "font-src 'self' https://fonts.gstatic.com",
       "connect-src 'self' https://*.supabase.co https://ipapi.co https://api.bigdatacloud.net",
       "frame-ancestors 'none'",

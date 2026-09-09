@@ -254,6 +254,14 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
       pausedByUser.current = false;
       retryCount.current = 0;
       streamFailed.current = false;
+      // A pause on a live stream typically exhausts the proxy's serverless
+      // window, so the buffered source is a dead end — re-arm a fresh
+      // connection before attempting playback.
+      if (audio.src) {
+        audio.removeAttribute("src");
+        audio.src = expectedPath;
+        audio.load();
+      }
       setStreamState("connecting");
       audio.play().catch(() => {
         setStreamState("error");
@@ -351,6 +359,7 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
           changes. Hidden via fixed positioning to avoid layout/display quirks. */}
       <audio
         ref={audioRef}
+        preload="none"
         className="fixed top-0 left-0 w-0 h-0 opacity-0 pointer-events-none"
         onPlaying={() => {
           setStreamState("playing");
@@ -364,6 +373,13 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
         }}
         onStalled={() => {
           if (!pausedByUser.current && !streamFailed.current) setStreamState("connecting");
+        }}
+        onEnded={() => {
+          // Live streams never "end" naturally — this fires when the proxy
+          // window closed (serverless timeout) or the upstream dropped.
+          // Re-arm the same source and resume without user action.
+          if (pausedByUser.current || !stationRef.current) return;
+          scheduleReconnect();
         }}
         onError={() => {
           // Ignore errors while stopped/paused (clearing src fires one) or
