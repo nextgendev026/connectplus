@@ -35,7 +35,7 @@ export const SETTINGS_CATALOG: SettingDef[] = [
   },
   {
     key: "siteTagline",
-    defaultValue: "Stories that connect East Africa",
+    defaultValue: "Voices of the Silicon Savanna",
     group: "general",
     label: "Tagline",
     hint: "Short brand line used in metadata and the footer.",
@@ -45,7 +45,7 @@ export const SETTINGS_CATALOG: SettingDef[] = [
   {
     key: "siteDescription",
     defaultValue:
-      "A modern social blogging platform sharing stories, ideas, and perspectives from across East Africa. Join the conversation.",
+      "Homegrown stories, tech, and ideas from East Africa's Silicon Savanna — Nairobi to Kigali, Kampala to Dar es Salaam. Read, write, listen, and belong.",
     group: "general",
     label: "Site description",
     hint: "Default description used for SEO and link previews.",
@@ -111,7 +111,7 @@ export const SETTINGS_CATALOG: SettingDef[] = [
   {
     key: "seoKeywords",
     defaultValue:
-      "blog, East Africa, Nairobi, Kampala, Dar es Salaam, Kigali, stories, writing, community",
+      "Silicon Savanna, blog, East Africa, Nairobi, Kampala, Dar es Salaam, Kigali, African tech, stories, writing, community, radio",
     group: "seo",
     label: "Default keywords",
     hint: "Comma-separated keywords for the home page.",
@@ -374,10 +374,7 @@ export async function getSettings(
   // catalog-seed pass and the read against one short deadline, then fall back
   // to stale caches or catalog defaults.
   const rows = await Promise.race([
-    (async () => {
-      await ensureSettings();
-      return prisma.platformSetting.findMany();
-    })(),
+    prisma.platformSetting.findMany(),
     new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error("settings-db-deadline")), 1_500)
     ),
@@ -523,10 +520,10 @@ export async function getSiteConfig(): Promise<SiteConfig> {
     v === undefined ? fallback : v === "true";
   return {
     siteName: s.siteName || "connectPlus",
-    siteTagline: s.siteTagline || "Stories that connect East Africa",
+    siteTagline: s.siteTagline || "Voices of the Silicon Savanna",
     siteDescription:
       s.siteDescription ||
-      "A modern social blogging platform sharing stories, ideas, and perspectives from across East Africa.",
+      "Homegrown stories, tech, and ideas from East Africa's Silicon Savanna — Nairobi to Kigali, Kampala to Dar es Salaam.",
     siteUrl: s.siteUrl || process.env.AUTH_URL || "https://connectplusapp.vercel.app",
     contactEmail: s.contactEmail || "hello@connectplus.io",
     ogImage: s.ogImage || "/pwa-512.png",

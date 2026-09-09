@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { coverSrc } from "@/lib/thumb";
 
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
+export const revalidate = 120;
+export const dynamic = "force-static";
 
 /**
  * GET /api/trending/topics
@@ -12,6 +12,7 @@ export const revalidate = 0;
  * comment velocity). Each topic carries a thumbnail from its hottest post so
  * the sidebar can render rich, live-updating cards.
  *
+ * Cached for 2 minutes to reduce DB load on mobile connections.
  * Optional query params:
  *   ?limit=8          — number of topics (default 8)
  *   ?refresh=1        — force bypass of any cache
@@ -78,11 +79,10 @@ export async function GET(request: Request) {
       .sort((a, b) => b.heat - a.heat)
       .slice(0, limit);
 
-    return NextResponse.json({
-      topics,
-      generatedAt: new Date().toISOString(),
-      count: topics.length,
-    });
+    return NextResponse.json(
+      { topics, generatedAt: new Date().toISOString(), count: topics.length },
+      { headers: { "Cache-Control": "public, s-maxage=120, stale-while-revalidate=300" } }
+    );
   } catch {
     return NextResponse.json({ topics: [], count: 0, error: "unavailable" });
   }

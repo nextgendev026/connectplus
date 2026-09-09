@@ -18,10 +18,11 @@
     "db:seed": "node prisma/seed.ts",
     "db:promote-admin": "node scripts/promote-superadmin.ts",
     "db:feed-mind": "node scripts/feed-the-mind.ts",
+    "db:ensure": "ts-node scripts/ensure-settings.ts",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate",
     "db:migrate:deploy": "prisma migrate deploy",
-    "vercel-build": "prisma migrate deploy && prisma generate && next build"
+    "vercel-build": "prisma migrate deploy && prisma generate && ts-node scripts/ensure-settings.ts && next build"
   },
   "dependencies": {
     "@prisma/client": "^6.6.0",

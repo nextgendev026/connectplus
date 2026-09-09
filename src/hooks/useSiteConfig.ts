@@ -44,7 +44,7 @@ async function fetchConfig(): Promise<PublicSiteConfig> {
   } catch {
     return {
       siteName: "connectPlus",
-      siteTagline: "Stories that connect East Africa",
+      siteTagline: "Voices of the Silicon Savanna",
       siteDescription: "",
       siteUrl: "",
       contactEmail: "",

@@ -8,6 +8,10 @@ export interface RadioStation {
   language: string;
   frequency: string;
   streamUrl: string;
+  /** Ordered backup channels — the player and the probe walk these when the
+   *  primary channel fails. Upstream mounts rotate (notably Zeno.fm), so a
+   *  station is only as reliable as its fallback chain. */
+  fallbacks?: string[];
   color: string;
   icon: string;
   tagline: string;
@@ -15,6 +19,16 @@ export interface RadioStation {
   programming: string[];
   favorite: boolean;
   verified: boolean;
+}
+
+/**
+ * Every playable channel for a station, primary first. The same-origin proxy
+ * (`/api/radio/stream?stationId=&source=`) walks this list server-side, so
+ * failover never touches mixed-content or CORS — the browser only ever talks
+ * to our origin.
+ */
+export function stationSources(station: RadioStation): string[] {
+  return [station.streamUrl, ...(station.fallbacks ?? [])];
 }
 
 export const RADIO_GENRES = [
@@ -86,7 +100,8 @@ export const STATIONS: RadioStation[] = [
     genre: "Indie / Trending",
     language: "English / Sheng",
     frequency: "90.9 FM",
-    streamUrl: "https://stream.zeno.fm/cmgkmed5u18uv",
+    streamUrl: "https://streamingv2.shoutcast.com/nrg-radio-ke",
+    fallbacks: ["https://stream.zeno.fm/cmgkmed5u18uv"],
     color: "#a855f7",
     icon: "N",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23a855f7'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='16' fill='white' text-anchor='middle'%3ENRG%3C/text%3E%3C/svg%3E",
@@ -104,7 +119,8 @@ export const STATIONS: RadioStation[] = [
     genre: "Pop / Hits",
     language: "English / Swahili",
     frequency: "47 FM",
-    streamUrl: "https://stream.zeno.fm/t65cszbgunhvv",
+    streamUrl: "https://streaming.shoutcast.com/radio-47?ver=690109",
+    fallbacks: ["https://stream.zeno.fm/t65cszbgunhvv"],
     color: "#f59e0b",
     icon: "47",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23f59e0b'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3E47%3C/text%3E%3C/svg%3E",
@@ -248,7 +264,8 @@ export const STATIONS: RadioStation[] = [
     genre: "Hip Hop",
     language: "Sheng",
     frequency: "89.5 FM",
-    streamUrl: "https://stream.zeno.fm/cs4q33arb2zuv",
+    streamUrl: "https://stream.zeno.fm/kvudezx1h2zuv",
+    fallbacks: ["https://stream.zeno.fm/cs4q33arb2zuv"],
     color: "#ec4899",
     icon: "G",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23ec4899'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='24' fill='white' text-anchor='middle'%3EG%3C/text%3E%3C/svg%3E",
@@ -304,7 +321,8 @@ export const STATIONS: RadioStation[] = [
     genre: "Indie / Trending",
     language: "English",
     frequency: "91.3 FM",
-    streamUrl: "https://stream.zeno.fm/lbca7zintcnuv",
+    streamUrl: "https://dc4.serverse.com/proxy/nrgugstream/stream",
+    fallbacks: ["https://stream.zeno.fm/lbca7zintcnuv"],
     color: "#8b5cf6",
     icon: "NU",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%238b5cf6'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3ENU%3C/text%3E%3C/svg%3E",
@@ -340,7 +358,11 @@ export const STATIONS: RadioStation[] = [
     genre: "Pop / Hits",
     language: "English / Luganda",
     frequency: "106.1 FM",
-    streamUrl: "https://stream-154.zeno.fm/lbca7zintcnuv",
+    streamUrl: "https://stream.nextradio.live/listen/nextradio/NextHD",
+    fallbacks: [
+      "https://stream-154.zeno.fm/lbca7zintcnuv?zs=P9UBEqoSSr69riqZniMYMw",
+      "https://stream-154.zeno.fm/lbca7zintcnuv",
+    ],
     color: "#eab308",
     icon: "NR",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23eab308'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3ENR%3C/text%3E%3C/svg%3E",
@@ -358,7 +380,8 @@ export const STATIONS: RadioStation[] = [
     genre: "Pop / Hits",
     language: "English / Luganda",
     frequency: "88.2 FM",
-    streamUrl: "http://s44.myradiostream.com:8138/stream",
+    streamUrl: "https://s44.myradiostream.com:8138/stream",
+    fallbacks: ["http://s44.myradiostream.com:8138/stream"],
     color: "#f97316",
     icon: "S",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23f97316'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='24' fill='white' text-anchor='middle'%3ES%3C/text%3E%3C/svg%3E",
@@ -452,7 +475,8 @@ export const STATIONS: RadioStation[] = [
     genre: "News / Talk",
     language: "Kinyarwanda / French",
     frequency: "95.0 FM",
-    streamUrl: "http://stream.zeno.fm/eequgfw72hhvv",
+    streamUrl: "https://listen.rba.co.rw:8008/rwanda/",
+    fallbacks: ["http://stream.zeno.fm/eequgfw72hhvv"],
     color: "#2563eb",
     icon: "RR",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%232563eb'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3ERR%3C/text%3E%3C/svg%3E",
@@ -462,20 +486,21 @@ export const STATIONS: RadioStation[] = [
     verified: true,
   },
   {
-    id: "menya-fm",
-    name: "MENYA FM",
+    id: "magic-fm",
+    name: "Magic FM 90.7",
     country: "Rwanda",
     city: "Kigali",
     region: "Kigali",
     genre: "Pop / Hits",
-    language: "Kinyarwanda",
-    frequency: "105.0 FM",
-    streamUrl: "https://stream.zeno.fm/k5rq7qwkggauv",
+    language: "Kinyarwanda / English",
+    frequency: "90.7 FM",
+    streamUrl: "http://listen.rba.co.rw:8080/",
+    fallbacks: ["http://listen.rba.co.rw:8080/;"],
     color: "#db2777",
     icon: "M",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23db2777'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='24' fill='white' text-anchor='middle'%3EM%3C/text%3E%3C/svg%3E",
-    tagline: "Kinyarwanda hits and talk",
-    programming: ["Kinyarwanda Hits", "Youth Talk", "Weekend Party"],
+    tagline: "Kigali's Feel-Good hits — RBA",
+    programming: ["Morning Magic", "Kinyarwanda Hits", "Weekend Party"],
     favorite: false,
     verified: true,
   },
@@ -650,8 +675,8 @@ export const STATIONS: RadioStation[] = [
     verified: true,
   },
   {
-    id: "france24",
-    name: "BBC World Service (East Africa)",
+    id: "bbc-east-africa",
+    name: "BBC World Service — East Africa",
     country: "International",
     city: "London",
     region: "London",
@@ -668,8 +693,8 @@ export const STATIONS: RadioStation[] = [
     verified: true,
   },
   {
-    id: "ntv-kenya",
-    name: "KBC — Kenya Broadcasting",
+    id: "kbc-english",
+    name: "KBC English Service",
     country: "Kenya",
     city: "Nairobi",
     region: "Nairobi",
@@ -677,6 +702,7 @@ export const STATIONS: RadioStation[] = [
     language: "English / Swahili",
     frequency: "Digital",
     streamUrl: "http://stream.zeno.fm/ud2u96xst5quv",
+    fallbacks: ["https://stream.zeno.fm/ud2u96xst5quv"],
     color: "#06b6d4",
     icon: "NTV",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2306b6d4'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='16' fill='white' text-anchor='middle'%3ENTV%3C/text%3E%3C/svg%3E",
@@ -694,7 +720,8 @@ export const STATIONS: RadioStation[] = [
     genre: "Urban / R&B",
     language: "English / Sheng",
     frequency: "96.3 FM",
-    streamUrl: "http://edge.mixlr.com/channel/rumps",
+    streamUrl: "https://edge.mixlr.com/channel/rumps",
+    fallbacks: ["http://edge.mixlr.com/channel/rumps"],
     color: "#e879f9",
     icon: "Q",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23e879f9'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='24' fill='white' text-anchor='middle'%3EQ%3C/text%3E%3C/svg%3E",

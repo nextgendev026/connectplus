@@ -10,9 +10,9 @@ import { PwaBootstrap } from "@/components/pwa/PwaBootstrap";
 import RouteProgress from "@/components/layout/RouteProgress";
 import { getSiteConfig, buildIntegrationScripts } from "@/lib/settings";
 
-const DEFAULT_TITLE = "connectPlus - Stories that connect East Africa";
+const DEFAULT_TITLE = "connectPlus - Voices of the Silicon Savanna";
 const DEFAULT_DESCRIPTION =
-  "A modern social blogging platform sharing stories, ideas, and perspectives from across East Africa. Join the conversation.";
+  "Homegrown stories, tech, and ideas from East Africa's Silicon Savanna — Nairobi to Kigali, Kampala to Dar es Salaam. Read, write, listen, and belong.";
 
 export async function generateMetadata(): Promise<Metadata> {
   let cfg;
@@ -80,7 +80,7 @@ export async function generateMetadata(): Promise<Metadata> {
       description,
       type: "website",
       url,
-      images: [{ url: ogImageUrl, width: 1200, height: 630, alt: `${siteName} — ${cfg?.siteTagline ?? "Stories that connect East Africa"}` }],
+      images: [{ url: ogImageUrl, width: 1200, height: 630, alt: `${siteName} — ${cfg?.siteTagline ?? "Voices of the Silicon Savanna"}` }],
     },
     twitter: {
       card: "summary_large_image",
@@ -94,8 +94,8 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#96AEC3" },
-    { media: "(prefers-color-scheme: dark)", color: "#0E1114" },
+    { media: "(prefers-color-scheme: light)", color: "#F6EFE2" },
+    { media: "(prefers-color-scheme: dark)", color: "#14100D" },
   ],
   width: "device-width",
   initialScale: 1,

@@ -14,7 +14,7 @@ import {
 import { useRadioPlayer } from "@/components/radio/RadioPlayerContext";
 
 export function RadioPlayerBar() {
-  const { station, isPlaying, streamState, nowPlaying, togglePlay, stop, setVolume, volume, skip } = useRadioPlayer();
+  const { station, isPlaying, streamState, nowPlaying, signal, playSource, togglePlay, stop, setVolume, volume, skip } = useRadioPlayer();
   const [isMuted, setIsMuted] = useState(false);
 
   if (!station) return null;
@@ -79,7 +79,9 @@ export function RadioPlayerBar() {
             </div>
             <span className="text-[10px] text-surface-500">
               {streamState === "error" ? (
-                <span className="text-amber-400">Can’t reach stream — trying again</span>
+                <button onClick={() => station && playSource(0)} className="text-amber-400 hover:underline">
+                  Can’t reach stream — tap to retry
+                </button>
               ) : nowPlaying.meta ? (
                 <span className="inline-flex items-center gap-1.5 text-brand-400">
                   <Radio className="h-3 w-3" />
@@ -89,9 +91,22 @@ export function RadioPlayerBar() {
                       · {nowPlaying.listeners.toLocaleString()} listening
                     </span>
                   )}
+                  {signal.bitrateKbps !== null && (
+                    <span className="text-surface-500">· {signal.bitrateKbps} kbps</span>
+                  )}
                 </span>
               ) : (
-                "REALTIME"
+                <span className="inline-flex items-center gap-1.5">
+                  REALTIME
+                  {signal.channels > 1 && (
+                    <span className="text-surface-500">
+                      · ch {signal.source + 1}/{signal.channels}
+                    </span>
+                  )}
+                  {signal.bitrateKbps !== null && (
+                    <span className="text-surface-500">· {signal.bitrateKbps} kbps</span>
+                  )}
+                </span>
               )}
             </span>
           </div>

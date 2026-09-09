@@ -3,10 +3,10 @@ import type { MetadataRoute } from "next";
 export default function manifest(): MetadataRoute.Manifest {
   return {
     id: "/",
-    name: "connectPlus - Stories that connect East Africa",
+    name: "connectPlus - Voices of the Silicon Savanna",
     short_name: "connectPlus",
     description:
-      "A vibrant social blogging platform sharing stories, ideas, and perspectives from across East Africa — read, write, and connect.",
+      "Homegrown stories, tech, and ideas from East Africa's Silicon Savanna — read, write, listen to live radio, and belong.",
     lang: "en",
     start_url: "/",
     scope: "/",

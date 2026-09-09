@@ -12,6 +12,13 @@ import { autoTagPost } from "@/lib/auto-tag";
 import { findDuplicate } from "@/lib/neural-vector";
 
 const POST_SELECT = {
+  id: true,
+  title: true,
+  slug: true,
+  excerpt: true,
+  coverImage: true,
+  viewCount: true,
+  createdAt: true,
   author: { select: { id: true, name: true, username: true, avatar: true } },
   category: { select: { id: true, name: true, slug: true } },
   tags: { select: { id: true, name: true, slug: true } },
@@ -38,6 +45,9 @@ async function withSources<T extends { id: string }>(posts: T[]) {
     };
   });
 }
+
+export const revalidate = 60;
+export const dynamic = "force-static";
 
 export async function GET(request: NextRequest) {
   try {
@@ -128,7 +138,7 @@ export async function GET(request: NextRequest) {
       const pool = await prisma.post.findMany({
         where: baseWhere,
         orderBy: { createdAt: "desc" },
-        take: 200,
+        take: 50,
         include: POST_SELECT,
       });
       const { posts: ranked, variant } = await rankFeed(pool, authorId);
@@ -173,7 +183,12 @@ export async function GET(request: NextRequest) {
       await cacheSet(cacheKey, body, 45).catch(() => {});
     }
     return new NextResponse(body, {
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": cacheable
+          ? "public, s-maxage=60, stale-while-revalidate=120"
+          : "private, no-store",
+      },
     });
   } catch (error) {
     console.error("Error fetching posts:", error);

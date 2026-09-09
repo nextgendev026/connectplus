@@ -6,19 +6,16 @@
  * can serve stale JS after a recompile, which bricks the app. SWR returns the
  * cached copy instantly on repeat loads and revalidates in the background, so
  * it is just as fast and cannot serve a permanently-wrong bundle. */
-const CACHE_VERSION = "connectplus-v3";
+const CACHE_VERSION = "connectplus-v4";
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
+const IMAGE_CACHE = `${CACHE_VERSION}-images`;
 const API_CACHE = `${CACHE_VERSION}-api`;
 const PRECACHE = [
   "/",
   "/manifest.webmanifest",
   "/icon-32.png",
   "/icon-48.png",
-  "/icon-180.png",
-  "/pwa-192.png",
-  "/pwa-512.png",
-  "/pwa-512-maskable.png",
   "/favicon.ico",
 ];
 
@@ -77,20 +74,30 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  /* Same-origin static assets (JS/CSS/images/fonts): stale-while-revalidate. */
+  /* Next.js optimized images — cache-first with size cap to save mobile data. */
+  if (url.pathname.startsWith("/_next/image")) {
+    event.respondWith(cacheFirstImage(request));
+    return;
+  }
+
+  /* Same-origin static assets (JS/CSS/fonts): stale-while-revalidate. */
   if (
-    url.pathname.startsWith("/_next/") ||
+    url.pathname.startsWith("/_next/static/") ||
     url.pathname.startsWith("/images/") ||
-    url.pathname.startsWith("/icon-") ||
-    url.pathname.startsWith("/pwa-") ||
-    url.pathname.endsWith(".png") ||
-    url.pathname.endsWith(".jpg") ||
-    url.pathname.endsWith(".jpeg") ||
-    url.pathname.endsWith(".webp") ||
-    url.pathname.endsWith(".svg") ||
     url.pathname.endsWith(".woff2")
   ) {
     event.respondWith(swrAsset(request));
+    return;
+  }
+
+  /* PWA icons + favicons — cache-first, never re-fetch. */
+  if (
+    url.pathname.startsWith("/icon-") ||
+    url.pathname.startsWith("/pwa-") ||
+    url.pathname.endsWith(".svg") ||
+    url.pathname.endsWith(".ico")
+  ) {
+    event.respondWith(cacheFirstPermanent(request));
     return;
   }
 });
@@ -105,6 +112,42 @@ async function swrAsset(request) {
     })
     .catch(() => cached);
   return cached || network;
+}
+
+/** Cache-first for Next.js optimized images — saves mobile data by not
+ *  re-fetching images already downloaded. Cap at 200 entries to limit storage. */
+const IMAGE_CACHE_MAX = 200;
+async function cacheFirstImage(request) {
+  const cache = await caches.open(IMAGE_CACHE);
+  const cached = await cache.match(request);
+  if (cached) return cached;
+  try {
+    const res = await fetch(request);
+    if (res.ok) {
+      const keys = await cache.keys();
+      if (keys.length >= IMAGE_CACHE_MAX) {
+        await cache.delete(keys[0]);
+      }
+      cache.put(request, res.clone()).catch(() => {});
+    }
+    return res;
+  } catch {
+    return Response.error();
+  }
+}
+
+/** Permanent cache for icons/SVGs — never re-fetch once cached. */
+async function cacheFirstPermanent(request) {
+  const cache = await caches.open(ASSET_CACHE);
+  const cached = await cache.match(request);
+  if (cached) return cached;
+  try {
+    const res = await fetch(request);
+    if (res.ok) cache.put(request, res.clone()).catch(() => {});
+    return res;
+  } catch {
+    return Response.error();
+  }
 }
 
 async function networkFirstNavigation(request, url) {

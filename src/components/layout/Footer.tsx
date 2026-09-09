@@ -47,7 +47,8 @@ export default function Footer() {
               <Logo size="sm" />
             </div>
             <p className="mt-3 text-sm text-surface-500 leading-relaxed">
-              Stories that connect East Africa. Share your voice with the world.
+              Voices of the Silicon Savanna — homegrown stories, tech, and
+              ideas from Nairobi to Kigali. Karibu nyumbani.
             </p>
             <div className="mt-4 flex items-center gap-3">
               <a
@@ -94,7 +95,7 @@ export default function Footer() {
               &copy; {new Date().getFullYear()} connectPlus. All rights reserved.
             </p>
             <p className="flex items-center gap-1 text-xs text-surface-600">
-              Made with <Heart className="h-3 w-3 text-red-500" /> in East Africa
+              Crafted with <Heart className="h-3 w-3 text-red-500" /> in the Silicon Savanna
             </p>
           </div>
         </div>

@@ -145,7 +145,7 @@ export function LoadingScreen() {
             connect<span className="text-gradient-brand">Plus</span>
           </p>
           <p className="mt-0.5 text-center text-xs text-surface-500">
-            Stories that connect East Africa
+            Voices of the Silicon Savanna
           </p>
         </div>
         <div className="h-1 w-40 overflow-hidden rounded-full bg-surface-800">

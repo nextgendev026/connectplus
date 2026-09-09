@@ -115,26 +115,34 @@ export function HeroSlideshow({ slides, stats }: HeroSlideshowProps) {
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
     >
-      {/* Slide backgrounds */}
-      {usable.map((s, i) => (
-        <div
-          key={s.id}
-          className={cn(
-            "absolute inset-0 transition-opacity duration-1000",
-            i === active ? "opacity-100" : "opacity-0"
-          )}
-        >
-          <Image
-            src={s.coverImage ?? coverSrc(null, { title: s.title, category: s.category?.name, seed: s.slug })}
-            alt=""
-            fill
-            sizes="100vw"
-            className="w-full h-full object-cover"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/75 to-black/40" />
-          <div className="absolute inset-0 bg-black/20" />
-        </div>
-      ))}
+      {/* Slide backgrounds — only render the active + adjacent slide images
+          to avoid preloading every slide at once (saves mobile data). */}
+      {usable.map((s, i) => {
+        const distance = Math.abs(i - active);
+        const isVisible = distance <= 1;
+        if (!isVisible) return null;
+        return (
+          <div
+            key={s.id}
+            className={cn(
+              "absolute inset-0 transition-opacity duration-1000",
+              i === active ? "opacity-100" : "opacity-0"
+            )}
+          >
+            <Image
+              src={s.coverImage ?? coverSrc(null, { title: s.title, category: s.category?.name, seed: s.slug })}
+              alt=""
+              fill
+              sizes="100vw"
+              priority={i === active}
+              loading={i === active ? "eager" : "lazy"}
+              className="w-full h-full object-cover"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-black via-black/75 to-black/40" />
+            <div className="absolute inset-0 bg-black/20" />
+          </div>
+        );
+      })}
 
       {/* Floating shapes */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">

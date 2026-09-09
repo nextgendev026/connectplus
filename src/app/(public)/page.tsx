@@ -1,18 +1,13 @@
 import Link from "next/link";
 import Image from "next/image";
 import Script from "next/script";
+import nextDynamic from "next/dynamic";
 import { prisma } from "@/lib/prisma";
 import { cn, estimateReadTime, timeAgo } from "@/lib/utils";
 import { coverSrc } from "@/lib/thumb";
 import { auth } from "@/lib/auth";
 import { rankFeed } from "@/lib/feed-ranker";
 import { cacheGet, cacheSet } from "@/lib/redis";
-import { FeedLiveRefresh } from "@/components/feed/FeedLiveRefresh";
-import { TrendingTopics } from "@/components/feed/TrendingTopics";
-import { ListeningLocation } from "@/components/feed/ListeningLocation";
-import { FeedFeedbackTracker } from "@/components/feed/FeedFeedbackTracker";
-import { LoadMoreFeed } from "@/components/feed/LoadMoreFeed";
-import { HeroSlideshow } from "@/components/feed/HeroSlideshow";
 import {
   Eye,
   Heart,
@@ -26,6 +21,31 @@ import {
   Clock,
   PenLine,
 } from "lucide-react";
+
+const FeedLiveRefresh = nextDynamic(
+  () => import("@/components/feed/FeedLiveRefresh").then((m) => m.FeedLiveRefresh),
+  { ssr: false }
+);
+const TrendingTopics = nextDynamic(
+  () => import("@/components/feed/TrendingTopics").then((m) => m.TrendingTopics),
+  { ssr: false }
+);
+const ListeningLocation = nextDynamic(
+  () => import("@/components/feed/ListeningLocation").then((m) => m.ListeningLocation),
+  { ssr: false }
+);
+const FeedFeedbackTracker = nextDynamic(
+  () => import("@/components/feed/FeedFeedbackTracker").then((m) => m.FeedFeedbackTracker),
+  { ssr: false }
+);
+const LoadMoreFeed = nextDynamic(
+  () => import("@/components/feed/LoadMoreFeed").then((m) => m.LoadMoreFeed),
+  { ssr: false }
+);
+const HeroSlideshow = nextDynamic(
+  () => import("@/components/feed/HeroSlideshow").then((m) => m.HeroSlideshow),
+  { ssr: false }
+);
 
 function formatViews(count: number): string {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
@@ -552,8 +572,7 @@ export default async function HomeFeedPage({
         _count: { select: { comments: true, likes: true } },
       },
       orderBy: { createdAt: "desc" },
-      // Larger pool for the adaptive ranker; filtered views stay at page size.
-      take: categoryFilter ? 20 : 200,
+      take: categoryFilter ? 20 : 30,
     }),
     prisma.post.findMany({
       where: {

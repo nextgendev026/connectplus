@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getStationById } from "@/lib/radio-stations";
+import { getStationById, stationSources } from "@/lib/radio-stations";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,14 +35,23 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unknown station" }, { status: 400 });
   }
 
+  // `source` selects a channel from the station's failover chain
+  // (stationSources). The player advances it on error, so one dead mount
+  // never kills the station — the proxy simply tunes the next channel.
+  const sources = stationSources(station);
+  const rawSource = Number(request.nextUrl.searchParams.get("source") ?? "0");
+  const sourceIndex =
+    Number.isFinite(rawSource) && rawSource >= 0 && rawSource < sources.length
+      ? Math.floor(rawSource)
+      : 0;
+  const upstream = sources[sourceIndex] ?? station.streamUrl;
+
   let upstreamHost = "localhost";
   try {
-    upstreamHost = new URL(station.streamUrl).hostname;
+    upstreamHost = new URL(upstream).hostname;
   } catch {
     // fall through with default host
   }
-
-  const upstream = station.streamUrl;
   let upstreamRes: Response;
   try {
     const ctrl = new AbortController();
@@ -83,6 +92,10 @@ export async function GET(request: NextRequest) {
     // Tell Vercel's edge not to buffer the response — buffering a live
     // stream adds latency and causes burst-then-starve playback.
     "X-Accel-Buffering": "no",
+    // Signal chain the player surfaces: which channel is live, at what
+    // quality, under which upstream name.
+    "X-Audio-Source": String(sourceIndex),
+    "X-Audio-Sources": String(sources.length),
   });
   if (icyBr) headers.set("X-Audio-Bitrate-Kbps", icyBr);
   if (icyName) headers.set("X-Audio-Station", encodeURIComponent(icyName));

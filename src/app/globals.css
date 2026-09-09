@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,100..900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;500;600;700&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -69,55 +69,61 @@
 }
 
 html:not(.dark) {
-  /* ===== LIGHT MODE =====
-     Canvas: #96AEC3 — soft sky-blue, glare-free and easy on the eyes.
-     Text: deep slate-navy, never pure black (WCAG AA on the canvas).
-     Cards: warm off-white so surfaces lift off the sky canvas.
-     Brand: darker orange for light bg (#E0562E). */
-  --surface-50: 15 26 40;      /* #0F1A28 — headings/body (darkest text) */
-  --surface-100: 30 46 66;     /* #1E2E42 — secondary text */
-  --surface-200: 49 67 89;     /* #314359 — muted text */
-  --surface-300: 66 86 110;    /* #42566E — icons */
-  --surface-400: 82 103 128;   /* #526780 — placeholders, secondary */
-  --surface-500: 106 128 152;  /* #6A8098 — borders, subtle text */
-  --surface-600: 133 154 176;  /* #859AB0 — light borders */
-  --surface-700: 165 185 205;  /* #A5B9CD — input borders */
-  --surface-800: 193 209 224;  /* #C1D1E0 — elevated bg (on sky canvas) */
-  --surface-850: 216 228 238;  /* #D8E4EE — cards */
-  --surface-900: 228 237 245;  /* #E4EDF5 — main bg */
-  --surface-950: 150 174 195;  /* #96AEC3 — canvas (sky blue) */
-  --foreground: 15 26 40;
-  --background: 150 174 195;
-  --scrollbar-thumb: 165 185 205;
-  --scrollbar-hover: 133 154 176;
-  --glass-bg: 228 237 245;
-  --glass-border: 193 209 224;
-  --card-bg: 240 246 251;
-  --card-border: 193 209 224;
-  --muted: 82 103 128;
-  /* Brand colors — darker for light backgrounds so orange stays legible
-     on the sky-blue canvas instead of clashing */
-  --brand-primary: #b84e00;
-  --brand-primary-light: #d05a00;
-  --brand-primary-dark: #8f3d00;
+  /* ===== SAVANNA DAY (light mode) =====
+     Canvas: warm kitenge paper (#F6EFE2) — homey, sunlit, easy on the eyes.
+     Text: deep espresso ink, never pure black. Every step of the scale was
+     checked for WCAG AA (4.5:1+) body contrast on the paper canvas, so type
+     stays legible on small phone screens in bright daylight.
+     Brand: deep terracotta so the sunset orange stays legible on paper. */
+  --surface-50: 36 26 18;      /* #241A12 — headings/body (darkest text) */
+  --surface-100: 62 46 32;     /* #3E2E20 — secondary text */
+  --surface-200: 93 74 56;     /* #5D4A38 — muted text */
+  --surface-300: 101 81 60;    /* #65513C — icons */
+  --surface-400: 110 91 70;    /* #6E5B46 — placeholders, secondary */
+  --surface-500: 122 104 84;   /* #7A6854 — subtle text */
+  --surface-600: 196 181 158;  /* #C4B59E — light borders */
+  --surface-700: 214 201 178;  /* #D6C9B2 — input borders */
+  --surface-800: 229 218 197;  /* #E5DAC5 — elevated bg on paper */
+  --surface-850: 244 235 220;  /* #F4EBDC — cards */
+  --surface-900: 250 244 231;  /* #FAF4E7 — main bg */
+  --surface-950: 246 239 226;  /* #F6EFE2 — canvas (savanna paper) */
+  --foreground: 36 26 18;
+  --background: 246 239 226;
+  --scrollbar-thumb: 196 181 158;
+  --scrollbar-hover: 160 143 122;
+  --glass-bg: 250 244 231;
+  --glass-border: 229 218 197;
+  --card-bg: 255 253 248;
+  --card-border: 229 218 197;
+  --muted: 93 74 56;
+  /* Brand colors — deep terracotta for light backgrounds so sunset orange
+     stays legible on paper instead of washing out */
+  --brand-primary: #c2410c;
+  --brand-primary-light: #ea580c;
+  --brand-primary-dark: #9a3412;
   --brand-on-primary: #ffffff;
-  --accent-coral: #dc4545;
-  --accent-amber: #d97706;
-  --accent-cyan: #0891b2;
-  --accent-violet: #7c3aed;
-  --border-subtle: rgb(203 213 225 / 0.5);
-  --border-default: rgb(203 213 225);
-  --shadow-color: 0 0 0;
+  --accent-coral: #dc2626;
+  --accent-amber: #b45309;
+  --accent-cyan: #0e7490;
+  --accent-violet: #6d28d9;
+  --border-subtle: rgb(214 201 178 / 0.6);
+  --border-default: rgb(214 201 178);
+  --shadow-color: 120 84 40;
   /* Success/Error/Warning semantic tokens */
-  --success-bg: rgb(4 120 87 / 0.08);
-  --success-text: #047857;
-  --success-border: rgb(4 120 87 / 0.2);
-  --warning-bg: rgb(180 83 9 / 0.08);
-  --warning-text: #b45309;
-  --warning-border: rgb(180 83 9 / 0.2);
-  --error-bg: rgb(185 28 28 / 0.08);
-  --error-text: #b91c1c;
-  --error-border: rgb(185 28 28 / 0.2);
+  --success-bg: rgb(20 83 45 / 0.1);
+  --success-text: #166534;
+  --success-border: rgb(20 83 45 / 0.25);
+  --warning-bg: rgb(146 64 14 / 0.1);
+  --warning-text: #92400e;
+  --warning-border: rgb(146 64 14 / 0.25);
+  --error-bg: rgb(153 27 27 / 0.1);
+  --error-text: #991b1b;
+  --error-border: rgb(153 27 27 / 0.25);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
@@ -128,7 +134,25 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  -webkit-tap-highlight-color: transparent;
   transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Mobile readability: 16px form type stops iOS auto-zoom on focus, and a
+   slightly roomier line-height keeps body copy legible on small screens. */
+@media (max-width: 768px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+  body {
+    line-height: 1.6;
+  }
+  p,
+  li {
+    text-wrap: pretty;
+  }
 }
 
 /* Light mode: ~5% heavier type so text stays crisp and visible on the

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Play,
   Pause,
@@ -56,16 +56,39 @@ function LiveBadge() {
   );
 }
 
+interface CardSignal {
+  song: string | null;
+  listeners: number | null;
+  meta: boolean;
+  live: boolean;
+}
+
+function SignalDot({ live, meta }: { live: boolean; meta: boolean }) {
+  return (
+    <span
+      title={live ? (meta ? "Live with now-playing metadata" : "Live — metadata unavailable") : "Signal unknown — tap play to tune in"}
+      className={cn(
+        "h-2 w-2 shrink-0 rounded-full",
+        live && meta && "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]",
+        live && !meta && "bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.9)]",
+        !live && "bg-surface-600"
+      )}
+    />
+  );
+}
+
 function StationCard({
   station,
   isPlaying,
   isActive,
   owner,
+  signal,
 }: {
   station: RadioStation;
   isPlaying: boolean;
   isActive: boolean;
   owner?: { nowPlaying: { song: string | null; meta: boolean; listeners: number | null }; streamState: string };
+  signal?: CardSignal;
 }) {
   const { playStation, toggleFavorite, favorites, streamState } = useRadioPlayer();
   const isFavorite = favorites.includes(station.id);
@@ -86,7 +109,10 @@ function StationCard({
           <StationThumb station={station} size="lg" className="ring-2 ring-white/5" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center justify-between gap-2">
-              <h3 className="truncate font-semibold text-surface-50 text-sm">{station.name}</h3>
+              <h3 className="flex min-w-0 items-center gap-1.5 truncate font-semibold text-surface-50 text-sm">
+                <SignalDot live={signal?.live ?? false} meta={signal?.meta ?? false} />
+                <span className="truncate">{station.name}</span>
+              </h3>
               <button
                 onClick={() => toggleFavorite(station.id)}
                 className="shrink-0 rounded-lg p-1 text-surface-500 hover:text-red-500 transition-colors"
@@ -120,8 +146,13 @@ function StationCard({
             <Music className="h-4 w-4 text-surface-500" />
           )}
           <div className="min-w-0 flex-1">
-            {isPlaying && owner?.nowPlaying.meta && owner.nowPlaying.song ? (
+            {isActive && owner?.nowPlaying.meta && owner.nowPlaying.song ? (
               <p className="truncate text-xs text-surface-200">{owner.nowPlaying.song}</p>
+            ) : signal?.meta && signal.song ? (
+              <p className="truncate text-xs text-surface-200">
+                <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 align-middle" />
+                {signal.song}
+              </p>
             ) : (
               <p className="truncate text-xs text-surface-300">{station.tagline}</p>
             )}
@@ -146,12 +177,12 @@ function StationCard({
           </div>
         )}
 
-        {isActive && owner?.nowPlaying.listeners !== null && owner && (
+        {(isActive && owner?.nowPlaying.listeners !== null && owner) || (!isActive && signal?.listeners !== null && signal !== undefined) ? (
           <p className="mt-2 flex items-center gap-1 text-[10px] text-surface-500">
             <Users className="h-3 w-3 text-accent-strong" />
-            {owner.nowPlaying.listeners!.toLocaleString()} listening now
+            {((isActive && owner ? owner.nowPlaying.listeners : signal?.listeners) ?? 0).toLocaleString()} listening now
           </p>
-        )}
+        ) : null}
 
         <button
           onClick={() => playStation(station.id)}
@@ -188,6 +219,38 @@ export default function RadioPage() {
 
   const currentStation = player.station;
   const nowPlaying = player.nowPlaying;
+  const [signals, setSignals] = useState<Record<string, CardSignal>>({});
+
+  // One lightweight poll for the whole dial — every card gets a live
+  // now-playing + listener readout without N separate status requests.
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/radio/stations", {
+          signal: AbortSignal.timeout(12000),
+        });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as {
+          signals: Array<{ id: string; song: string | null; listeners: number | null; meta: boolean; live: boolean }>;
+        };
+        if (cancelled || !Array.isArray(data.signals)) return;
+        const map: Record<string, CardSignal> = {};
+        for (const s of data.signals) {
+          map[s.id] = { song: s.song, listeners: s.listeners, meta: s.meta, live: s.live };
+        }
+        setSignals(map);
+      } catch {
+        // dial keeps working without signal data — play path is independent
+      }
+    };
+    load();
+    const interval = setInterval(load, 45_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
 
   const filteredStations = useMemo(
     () =>
@@ -204,9 +267,14 @@ export default function RadioPage() {
         const matchesCountry = activeCountry === "All" || station.country === activeCountry;
         const matchesRegion = activeRegion === "All" || station.region === activeRegion;
         return matchesSearch && matchesGenre && matchesCountry && matchesRegion;
-      }),
-    [searchQuery, activeGenre, activeCountry, activeRegion]
+      })
+        // Live channels first — the dial leads with stations that are
+        // verifiably on air right now.
+        .sort((a, b) => Number(signals[b.id]?.live ?? false) - Number(signals[a.id]?.live ?? false)),
+    [searchQuery, activeGenre, activeCountry, activeRegion, signals]
   );
+
+  const liveCount = useMemo(() => Object.values(signals).filter((s) => s.live).length, [signals]);
 
   const recentStations = player.recentlyPlayed
     .map((id) => STATIONS.find((s) => s.id === id))
@@ -237,9 +305,9 @@ export default function RadioPage() {
               <Radio className="h-5 w-5 text-accent-strong" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-surface-50">East African Radio</h1>
+              <h1 className="font-display text-2xl font-bold text-surface-50">The Savanna Dial</h1>
               <p className="text-xs text-surface-400">
-                Live stations from Kenya, Uganda, Tanzania & Rwanda
+                Live radio from Nairobi to Kigali — Karibu, tune in and feel at home
               </p>
             </div>
           </div>
@@ -453,8 +521,8 @@ export default function RadioPage() {
             {activeCountry !== "All" ? ` in ${activeCountry}` : ""}
           </h2>
           <span className="inline-flex items-center gap-1.5 text-[11px] text-surface-500">
-            <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
-            All streams live
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            {liveCount > 0 ? `${liveCount} live now` : "Tuning the dial…"}
           </span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -469,6 +537,7 @@ export default function RadioPage() {
                   ? { nowPlaying, streamState: player.streamState }
                   : undefined
               }
+              signal={signals[station.id]}
             />
           ))}
         </div>
@@ -500,6 +569,7 @@ export default function RadioPage() {
                       ? { nowPlaying, streamState: player.streamState }
                       : undefined
                   }
+                  signal={signals[station.id]}
                 />
               ))}
             </div>

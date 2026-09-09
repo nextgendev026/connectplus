@@ -46,6 +46,18 @@ const config: Config = {
           cyan: "#22d3ee",
           violet: "#a78bfa",
         },
+        savanna: {
+          // Silicon Savanna identity — sunset, clay, acacia, paper, night.
+          sun: "#FFD75E",
+          marigold: "#F59E0B",
+          ember: "#C2410C",
+          clay: "#9A3412",
+          bark: "#3E2E20",
+          acacia: "#4D7C0F",
+          paper: "#F6EFE2",
+          cream: "#FFFBF2",
+          night: "#14100D",
+        },
         amber: {
           400: "#fbbf24",
           500: "#f59e0b",
@@ -77,7 +89,10 @@ const config: Config = {
       },
       fontFamily: {
         sans: ["Inter", "system-ui", "sans-serif"],
-        display: ["Inter", "system-ui", "sans-serif"],
+        // Editorial display voice — a warm local serif for headlines (system
+        // stack, zero downloads), Inter for UI/body. BuzzFeed warmth meets
+        // broadsheet craft.
+        display: ["Iowan Old Style", "Palatino Linotype", "Palatino", "Georgia", "serif"],
         mono: ["JetBrains Mono", "monospace"],
       },
       backgroundImage: {

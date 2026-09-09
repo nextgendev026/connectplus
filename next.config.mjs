@@ -13,9 +13,6 @@ const securityHeaders = [
       "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "img-src 'self' data: blob: https:",
-      // media-src: direct third-party stream URLs are allowed as an HD
-      // fallback path when the same-origin proxy is throttled (Vercel
-      // serverless windows); the proxy route remains the default.
       "media-src 'self' blob: https: http:",
       "font-src 'self' https://fonts.gstatic.com",
       "connect-src 'self' https://*.supabase.co https://ipapi.co https://api.bigdatacloud.net",
@@ -37,7 +34,13 @@ const nextConfig = {
       { protocol: "https", hostname: "i.pravatar.cc" },
       { protocol: "https", hostname: "picsum.photos" },
     ],
-    unoptimized: true,
+    formats: ["image/avif", "image/webp"],
+    deviceSizes: [640, 750, 828, 1080, 1200],
+    imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
+    minimumCacheTTL: 60 * 60 * 24 * 30,
+  },
+  experimental: {
+    optimizeCss: false,
   },
   async headers() {
     return [
@@ -49,8 +52,32 @@ const nextConfig = {
         source: "/api/:path*",
         headers: [
           ...securityHeaders,
-          { key: "Cache-Control", value: "no-store, no-cache, must-revalidate" },
-          { key: "Pragma", value: "no-cache" },
+          {
+            key: "Cache-Control",
+            value: "no-store, no-cache, must-revalidate",
+          },
+        ],
+      },
+      // Allow public caches for read-only API endpoints
+      {
+        source: "/api/posts",
+        headers: [
+          ...securityHeaders,
+          { key: "Cache-Control", value: "public, s-maxage=60, stale-while-revalidate=120" },
+        ],
+      },
+      {
+        source: "/api/posts/check",
+        headers: [
+          ...securityHeaders,
+          { key: "Cache-Control", value: "public, s-maxage=30, stale-while-revalidate=60" },
+        ],
+      },
+      {
+        source: "/api/trending/topics",
+        headers: [
+          ...securityHeaders,
+          { key: "Cache-Control", value: "public, s-maxage=120, stale-while-revalidate=300" },
         ],
       },
     ];

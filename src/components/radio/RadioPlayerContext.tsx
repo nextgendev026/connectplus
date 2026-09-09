@@ -10,7 +10,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { STATIONS, getStationById } from "@/lib/radio-stations";
+import { STATIONS, getStationById, stationSources } from "@/lib/radio-stations";
 import type { RadioStation } from "@/lib/radio-stations";
 
 export type StreamState = "idle" | "connecting" | "playing" | "error";
@@ -21,6 +21,15 @@ export interface NowPlaying {
   meta: boolean;
 }
 
+/** Live signal chain readout — which channel is tuned and at what quality. */
+export interface SignalState {
+  source: number;
+  channels: number;
+  bitrateKbps: number | null;
+  channelName: string | null;
+  probed: boolean;
+}
+
 interface RadioPlayerContextValue {
   station: RadioStation | null;
   isPlaying: boolean;
@@ -29,12 +38,18 @@ interface RadioPlayerContextValue {
   favorites: string[];
   recentlyPlayed: string[];
   nowPlaying: NowPlaying;
-  playStation: (stationId: string) => void;
+  signal: SignalState;
+  playStation: (stationId: string, source?: number) => void;
+  playSource: (source: number) => void;
   togglePlay: () => void;
   stop: () => void;
   setVolume: (v: number) => void;
   toggleFavorite: (stationId: string) => void;
   skip: (dir: 1 | -1) => void;
+}
+
+function proxyUrl(stationId: string, source: number): string {
+  return `/api/radio/stream?stationId=${encodeURIComponent(stationId)}&source=${source}`;
 }
 
 const RadioPlayerContext = createContext<RadioPlayerContextValue | null>(null);
@@ -66,6 +81,7 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
   const [favorites, setFavorites] = useState<string[]>([]);
   const [recentlyPlayed, setRecentlyPlayed] = useState<string[]>([]);
   const [nowPlaying, setNowPlaying] = useState<NowPlaying>({ song: null, listeners: null, meta: false });
+  const [signal, setSignal] = useState<SignalState>({ source: 0, channels: 1, bitrateKbps: null, channelName: null, probed: false });
 
   const volumeRef = useRef(volume);
   const stationRef = useRef(station);
@@ -73,6 +89,7 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
   const retryCount = useRef(0);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamFailed = useRef(false);
+  const sourceRef = useRef(0);
 
   useEffect(() => {
     volumeRef.current = volume;
@@ -82,6 +99,9 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
   // Indirection so the reconnect callback can reschedule itself without a
   // self-reference (which React Compiler rejects as a forward access).
   const scheduleReconnectRef = useRef<() => void>(() => {});
+  // Same indirection for channel failover: the tune callback steps to the
+  // next channel on error without referencing itself.
+  const tuneSourceRef = useRef<(station: RadioStation, source: number) => void>(() => {});
 
   // Auto-reconnect with exponential backoff when a live stream drops.
   const scheduleReconnect = useCallback(() => {
@@ -95,6 +115,10 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
       if (!audio || !current || pausedByUser.current) return;
       setStreamState("connecting");
       streamFailed.current = false;
+      // Re-arm from the head of the failover chain so a recovered primary
+      // channel is picked up again instead of camping on a backup.
+      sourceRef.current = 0;
+      audio.src = proxyUrl(current.id, 0);
       audio.play().catch(() => scheduleReconnectRef.current());
     }, delay);
   }, []);
@@ -144,7 +168,7 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
         // empty element → instant error → endless "reconnecting" loop.
         const audio = audioRef.current;
         if (audio && !audio.src) {
-          audio.src = `/api/radio/stream?stationId=${encodeURIComponent(st.id)}`;
+          audio.src = proxyUrl(st.id, 0);
           audio.volume = volumeRef.current / 100;
         }
       }
@@ -170,6 +194,8 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
 
   const stop = useCallback(() => {
     setNowPlaying({ song: null, listeners: null, meta: false });
+    setSignal({ source: 0, channels: 1, bitrateKbps: null, channelName: null, probed: false });
+    sourceRef.current = 0;
     setStation(null);
     setIsPlaying(false);
     setStreamState("idle");
@@ -187,8 +213,64 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
     if (typeof window !== "undefined") window.localStorage.removeItem("radio-station");
   }, []);
 
+  // Walk the station's channels in the background and surface the signal
+  // readout (bitrate, upstream name, best channel). Never blocks playback.
+  const probeSignal = useCallback(async (stationId: string, channels: number) => {
+    try {
+      const res = await fetch(`/api/radio/probe?stationId=${encodeURIComponent(stationId)}`, {
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        best: number;
+        channels: Array<{ index: number; ok: boolean; bitrateKbps: number | null; stationName: string | null }>;
+      };
+      const best = data.channels?.[data.best];
+      setSignal({
+        source: data.best ?? 0,
+        channels,
+        bitrateKbps: best?.bitrateKbps ?? null,
+        channelName: best?.stationName ?? null,
+        probed: true,
+      });
+    } catch {
+      // probe is progressive enhancement — playback never depends on it
+    }
+  }, []);
+
+  const tuneSource = useCallback(
+    (next: RadioStation, source: number) => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      const channels = stationSources(next).length;
+      sourceRef.current = source;
+      setSignal((prev) => ({ ...prev, source, channels, probed: false }));
+      retryCount.current = 0;
+      streamFailed.current = false;
+      if (retryTimer.current) clearTimeout(retryTimer.current);
+      audio.src = proxyUrl(next.id, source);
+      audio.volume = volumeRef.current / 100;
+      setStreamState("connecting");
+      audio.play().catch(() => {
+        // Channel failed — step to the next channel in the chain instead of
+        // dying. Only when every channel fails do we surface the error.
+        const following = source + 1;
+        if (following < channels) {
+          tuneSourceRef.current(next, following);
+        } else {
+          setStreamState("error");
+          setIsPlaying(false);
+          streamFailed.current = true;
+          scheduleReconnect();
+        }
+      });
+      void probeSignal(next.id, channels);
+    },
+    [probeSignal, scheduleReconnect]
+  );
+
   const playStation = useCallback(
-    (stationId: string) => {
+    (stationId: string, source?: number) => {
       const next = getStationById(stationId);
       if (!next) return;
       const audio = audioRef.current;
@@ -198,7 +280,7 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
 
       // Same station already live (playing or still connecting/buffering) →
       // treat the tap as pause so the button never gets stuck on Play.
-      if (stationRef.current?.id === stationId && (isPlaying || streamState === "connecting")) {
+      if (stationRef.current?.id === stationId && (isPlaying || streamState === "connecting") && source === undefined) {
         audio.pause();
         setIsPlaying(false);
         setStreamState("idle");
@@ -215,20 +297,28 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
       setRecentlyPlayed(recent);
       safeSetStorage("radio-recently", JSON.stringify(recent));
 
-      retryCount.current = 0;
-      streamFailed.current = false;
-      if (retryTimer.current) clearTimeout(retryTimer.current);
-      audio.src = `/api/radio/stream?stationId=${encodeURIComponent(next.id)}`;
-      setStreamState("connecting");
-      audio.play().catch(() => {
-        setStreamState("error");
-        setIsPlaying(false);
-        streamFailed.current = true;
-        scheduleReconnect();
-      });
+      tuneSource(next, source ?? 0);
     },
-    [isPlaying, streamState, recentlyPlayed, scheduleReconnect]
+    [isPlaying, streamState, recentlyPlayed, tuneSource]
   );
+
+  // Manually tune a specific channel (signal panel / retry button).
+  const playSource = useCallback(
+    (source: number) => {
+      const current = stationRef.current;
+      if (!current) return;
+      const channels = stationSources(current).length;
+      if (source < 0 || source >= channels) return;
+      pausedByUser.current = false;
+      setStreamState("connecting");
+      tuneSource(current, source);
+    },
+    [tuneSource]
+  );
+
+  useEffect(() => {
+    tuneSourceRef.current = tuneSource;
+  }, [tuneSource]);
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;
@@ -236,7 +326,7 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
     if (!audio || !current) return;
     // Make sure the element actually carries the current station's source
     // (covers restore-from-localStorage and any cleared src).
-    const expectedPath = `/api/radio/stream?stationId=${encodeURIComponent(current.id)}`;
+    const expectedPath = proxyUrl(current.id, sourceRef.current);
     if (!audio.src || !audio.src.endsWith(expectedPath)) {
       audio.src = expectedPath;
       audio.volume = volumeRef.current / 100;
@@ -333,6 +423,26 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
     if (audioRef.current) audioRef.current.volume = volume / 100;
   }, [volume]);
 
+  // Lock-screen / OS media controls carry the live station + song, so the
+  // stream behaves like a real radio channel on mobile.
+  useEffect(() => {
+    if (typeof window === "undefined" || !("mediaSession" in navigator)) return;
+    if (!station) return;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: nowPlaying.meta && nowPlaying.song ? nowPlaying.song : station.name,
+        artist: station.tagline,
+        album: `${station.city} · ${station.frequency}`,
+      });
+      navigator.mediaSession.setActionHandler("play", () => togglePlay());
+      navigator.mediaSession.setActionHandler("pause", () => togglePlay());
+      navigator.mediaSession.setActionHandler("previoustrack", () => skip(-1));
+      navigator.mediaSession.setActionHandler("nexttrack", () => skip(1));
+    } catch {
+      // MediaSession is progressive enhancement
+    }
+  }, [station, nowPlaying, togglePlay, skip]);
+
   const value = useMemo(
     () => ({
       station,
@@ -342,14 +452,16 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
       favorites,
       recentlyPlayed,
       nowPlaying,
+      signal,
       playStation,
+      playSource,
       togglePlay,
       stop,
       setVolume,
       toggleFavorite,
       skip,
     }),
-    [station, isPlaying, streamState, volume, favorites, recentlyPlayed, nowPlaying, playStation, togglePlay, stop, setVolume, toggleFavorite, skip]
+    [station, isPlaying, streamState, volume, favorites, recentlyPlayed, nowPlaying, signal, playStation, playSource, togglePlay, stop, setVolume, toggleFavorite, skip]
   );
 
   return (
