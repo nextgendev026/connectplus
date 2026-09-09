@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "allowImportingTsExtensions": false
+  },
+  "include": ["ensure-settings.ts", "../src/lib/settings.ts", "../src/lib/prisma.ts", "../src/lib/redis.ts"]
+}
