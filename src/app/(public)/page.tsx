@@ -35,18 +35,24 @@ function formatViews(count: number): string {
 
 /** Serve the home feed from a 24h Redis snapshot when the database is
  * unreachable (network blip / pooler outage) instead of hard-erroring the
- * page. Fresh fetches continuously refresh the snapshot. */
+ * page. Fresh fetches continuously refresh the snapshot. An in-memory
+ * last-known-good mirror is the final tier so the page still renders when
+ * BOTH the database and Redis are unreachable from this process. */
+const FALLBACK_KEY = "feed:home:fallback";
+let memoryFeedCache: { at: number; value: unknown } | null = null;
+
 async function withFeedFallback<T extends unknown[]>(
   pages: { [K in keyof T]: Promise<T[K]> }
 ): Promise<T> {
-  const FALLBACK_KEY = "feed:home:fallback";
   try {
     const result = await Promise.all(pages);
+    memoryFeedCache = { at: Date.now(), value: result };
     void cacheSet(FALLBACK_KEY, result, 60 * 60 * 24).catch(() => {});
     return result;
   } catch (err) {
     const cached = await cacheGet<T>(FALLBACK_KEY).catch(() => null);
     if (cached !== null) return cached;
+    if (memoryFeedCache) return memoryFeedCache.value as T;
     throw err;
   }
 }
