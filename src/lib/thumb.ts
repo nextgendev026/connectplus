@@ -1,8 +1,15 @@
 /**
  * Post cover resolution. When an article has a real cover image we use it;
- * otherwise we return a generated branded thumbnail (`/api/thumb`) so that
- * every published article — including RSS imports that lack images — still
- * renders a relevant visual instead of an empty gradient block.
+ * otherwise we return a generated branded thumbnail so that every published
+ * article — including RSS imports that lack images — still renders a
+ * relevant visual instead of an empty gradient block.
+ *
+ * Generated covers use the query-free /api/thumb/<code> form (base64url of
+ * the thumbnail parts). Local optimizer URLs carrying a "?" are rejected by
+ * the Next.js image optimizer, which is exactly why generated covers used to
+ * render only where raw <img> tags were used while uploaded covers worked
+ * everywhere. The path form flows through next/image, the CDN, and the PWA
+ * image cache like any other cover.
  */
 
 export interface ThumbOptions {
@@ -20,6 +27,27 @@ function clampText(value: string | null | undefined, max: number): string {
   return v.length > max ? `${v.slice(0, max - 1).trimEnd()}…` : v;
 }
 
+/** Universal base64url (coverSrc runs on both server and client components,
+ *  where Node's Buffer does not exist). Byte-identical output on both sides
+ *  so SSR and client renders mint the same cache-friendly URL. */
+function toB64Url(json: string): string {
+  const bytes = new TextEncoder().encode(json);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+  const b64 = typeof Buffer !== "undefined" ? Buffer.from(json, "utf-8").toString("base64") : btoa(bin);
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function encodeCode(opts: Required<Pick<ThumbOptions, "title" | "seed">> & ThumbOptions): string {
+  const payload = {
+    t: clampText(opts.title, 120),
+    c: clampText(opts.category, 32),
+    a: clampText(opts.author, 32),
+    s: String(opts.seed ?? opts.title ?? "connectplus"),
+  };
+  return toB64Url(JSON.stringify(payload));
+}
+
 /**
  * Returns the cover URL for a post. Prefer the real image; only synthesize a
  * thumbnail when there is none (or `force` is set).
@@ -29,19 +57,7 @@ export function coverSrc(
   opts: ThumbOptions = {}
 ): string {
   if (!opts.force && coverImage) return coverImage;
-
-  const params = new URLSearchParams();
-  const title = clampText(opts.title, 120);
-  if (title) params.set("t", title);
-  const category = clampText(opts.category, 32);
-  if (category) params.set("c", category);
-  const author = clampText(opts.author, 32);
-  if (author) params.set("a", author);
-  // The slug/id pins the color way; deterministic but nicely varied.
-  const seedForHash = opts.seed ?? (title || "connectplus");
-  params.set("s", String(seedForHash));
-
-  return `/api/thumb?${params.toString()}`;
+  return `/api/thumb/${encodeCode({ title: opts.title ?? "", seed: opts.seed ?? "", ...opts })}`;
 }
 
 /** Convenience when you only have the parts. */

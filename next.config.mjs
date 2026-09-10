@@ -33,11 +33,24 @@ const nextConfig = {
       { protocol: "https", hostname: "**.unsplash.com" },
       { protocol: "https", hostname: "i.pravatar.cc" },
       { protocol: "https", hostname: "picsum.photos" },
+      // RSS ingestion pulls covers from any publisher domain on the web —
+      // allowlisting the open web through the optimizer (which re-serves
+      // everything as AVIF/WebP from our own origin) is what keeps every
+      // imported story illustrated. http sources get upgraded to https
+      // delivery, which also kills mixed-content warnings on mobile.
+      { protocol: "https", hostname: "**" },
+      { protocol: "http", hostname: "**" },
     ],
     formats: ["image/avif", "image/webp"],
     deviceSizes: [640, 750, 828, 1080, 1200],
     imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
     minimumCacheTTL: 60 * 60 * 24 * 30,
+    // The /api/thumb fallback covers are self-generated SVG (all dynamic
+    // text is XML-escaped server-side, no scripts emitted). Allow them
+    // through the optimizer sandboxed so generated covers behave exactly
+    // like uploaded JPEG/PNG covers everywhere next/image is used.
+    dangerouslyAllowSVG: true,
+    contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
   },
   experimental: {
     optimizeCss: false,
