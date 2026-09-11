@@ -1,31 +1,78 @@
 # connectPlus
 
-Full-stack social blogging platform built with Next.js 16 (App Router), Prisma ORM + PostgreSQL, and NextAuth.js. Designed for East African content creators — with multi-regional node support, Kenyan radio streaming, RSS ingestion, a dual-intelligence Neural Mind feed system, and a savanna-inspired brand.
+Full-stack social blogging platform built with Next.js 16 (App Router), Prisma ORM + PostgreSQL, and NextAuth.js. Designed for East African content creators — with multi-regional node support, Kenyan radio streaming, RSS ingestion, a dual-intelligence Neural Mind feed system, a comprehensive monetization pipeline, and a savanna-inspired brand.
 
 ## Tech Stack
 
 - **Framework:** Next.js 16 (App Router, React 19)
-- **Database:** PostgreSQL via Prisma ORM
+- **Database:** PostgreSQL via Prisma ORM (Supabase)
 - **Auth:** NextAuth.js v5 (Credentials + JWT sessions)
 - **Storage:** Supabase Storage bucket (`uploads`, public, 5MB limit)
-- **Styling:** Tailwind CSS with CSS variable theming (savanna palette)
+- **Styling:** Tailwind CSS with CSS variable theming (light/dark mode, WCAG-compliant)
 - **Charts:** Recharts · **Icons:** Lucide React
 - **Streams:** RSS parsing via `rss-parser`
+- **Background Jobs:** Inngest (serverless cron — RSS poll, status watchdog, thumbnail recovery, scheduled publishing, nightly training)
+- **Cache:** Redis (Cloud) with in-memory fallback
+- **Realtime Views:** Convex (article view counters, ad metrics offloaded from Supabase)
+- **AI Providers:** OpenRouter (free tier), OpenCode Zen, OpenAI, Anthropic — dynamically fetched model lists
 
 ## Features
 
-- **Neural feed** — the home feed ranks stories with a hybrid neural-intent scoring pipeline (`src/lib/neural-*.ts`) combining text analysis, recency, engagement, and regional relevance; a Brain Chat widget (`/radio`) answers fact-based questions with citations.
-- **Creator Studio + Brain Copilot** — markdown editor (insert-at-cursor formatting toolbar), drag-and-drop cover upload via `/api/upload`, real auto-save to DRAFT (debounced), `?edit=<id>` edit mode, and a My Stories manager (list / edit / delete). The studio uses a modern, focus-oriented layout with a short **tabbed rail** (AI Brain / SEO & Tags / Stories) instead of a long stacked sidebar. The **Brain Copilot** is wired straight to the typing console with a read/write loop: it reads the current draft + text selection and writes results back at the cursor (Polish / Continue / Outline / Curate via `/api/ai/studio`), or into the title / excerpt / tag fields (Headline / Excerpt / Tags), or answers free-form prompts about the draft. Publishing auto-fills missing excerpts/tags from the brain for review before going live.
-- **Neural Mind chat** — the admin `/admin/neural` chat is a robust blogging + content-creation brain: it decodes the language of each query (keywords, entities, sentiment) and answers dynamically instead of repeating canned reports. Beyond platform intents (health, growth, moderation, trends…) it can `write about <topic>`, `polish this: <text>`, `summarize`, suggest headlines/tags/outlines, continue a draft, and curate what to publish next — the same content brain the studio uses. Content answers get one-click **Open in Studio** / **Save as draft** / **Copy** actions.
-- **Optional LLM provider** — set `aiProvider` + `openaiApiKey` / `anthropicApiKey` in the admin Settings console (or `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` env vars) and the studio copilot + Neural Mind chat answer through a real model (OpenAI/Anthropic) with graceful fallback to the built-in deterministic brains when no key is configured.
-- **Social layer** — follows (`/api/follows`, toggling with denormalized counters), bookmarks (`/api/bookmarks/*`), profile pages with tabs (posts / saved / about / stats), follow & bookmark buttons across feeds and articles.
-- **Account settings** — profile, avatar & cover uploads, email change (current-password verified), and password change (`/api/user/settings`, `/api/user/password`).
-- **Savanna branding** — generated in `scripts/generate-assets.mjs` (canvas-rendered sun-plus roundel): `favicon.ico`, `icon-*.png`, `pwa-192/512(+maskable)`, web manifest, warm amber/terracotta theme + warm glows.
-- **Admin console** — moderation, user management, RSS control, analytics, and a full **Settings & Integrations console** under `/admin` (ADMIN / SUPER_ADMIN only). The console controls the whole build at runtime: site identity + metadata, SEO defaults, analytics/chat/pixel integrations, feature flags, and third-party API keys. Sign in as `connect@plus.com` (seeded as SUPER_ADMIN; run `npm run db:promote-admin` on pre-seeded databases to upgrade existing admins).
-- **Mobile-first navigation** — fixed bottom nav on small screens, responsive cards and articles.
-- **SEO pipeline** — per-article Open Graph / Twitter cards with the original thumbnail, JSON-LD Article schema, canonical URLs, `sitemap.xml`, `robots.txt`, and an RSS `feed.xml`. Share links are robust and SEO-optimized (X, Facebook, LinkedIn, WhatsApp, Telegram, email, copy) with a live link-preview card, plus a `/api/share` metadata endpoint.
-- **Syndication credits** — RSS-imported articles always carry a visible “originally published by … Read the original” link on the article page and a `via <source>` badge on feed cards, backed by `source`/`sourceUrl` on the posts API.
-- **Seed data** — 10 creators, categories, tags, and published stories via `prisma/seed.ts`.
+### Content & Editorial
+- **Neural feed** — the home feed ranks stories with a hybrid neural-intent scoring pipeline combining text analysis, recency, engagement, and regional relevance.
+- **Creator Studio + Brain Copilot** — markdown editor with insert-at-cursor formatting toolbar, drag-and-drop cover upload, real auto-save, edit mode, and a My Stories manager. The Brain Copilot reads the current draft + text selection and writes results back at the cursor (Polish / Continue / Outline / Curate), or fills in title / excerpt / tags.
+- **AI Pipeline** — dynamic provider system with auto-discovered free models from OpenRouter and OpenCode Zen. Admins inject API keys, pick a model from a live dropdown, and set the default AI that powers inline curation, brain training, and the copilot. Built-in deterministic fallback when no key is configured.
+- **Neural Mind chat** — admin chat brain answers dynamically: platform intents (health, growth, moderation, trends), content creation (write, polish, summarize, headlines, tags, outlines), with one-click Open in Studio / Save as draft / Copy.
+- **RSS ingestion** — per-feed polling with batched inserts, thumbnail recovery, feed health tracking (status/error/lastError), and Inngest-scheduled execution. 11+ feeds covering BBC Africa, TechCabal, SautiBus, and more.
+
+### Social Layer
+- **Follows & bookmarks** — toggle with denormalized counters, profile pages with tabs (posts / saved / about / stats).
+- **Share system** — robust share popup (X, Facebook, LinkedIn, WhatsApp, Telegram, email, copy) with live link-preview card, SEO-optimized share URLs, and mobile-friendly positioning.
+- **Profile** — avatar upload, cover images, bio, follower/following lists, verified writer badges.
+
+### Monetization Pipeline
+- **First-party ads** — admin-created creatives (image + click-through tracking) served per-slot (feed-inline, article-top, article-inline, article-sidebar, radio-hero) with weight-based rotation.
+- **Third-party ad slots** — inject Google AdSense, Facebook Audience Network, MGID, Propeller, or custom HTML `<script>` tags into any placement. Server-rendered, no client-side auction.
+- **Real-time ad analytics** — impression and click tracking for both first-party and third-party slots, displayed in the admin Monetization console.
+
+### Subscription System
+- **3 tiers × 2 audiences** — Free / Pro / Premium for both Readers and Writers.
+- **Reader plans:** unlimited reading → ad-free + AI recommendations → exclusive content + offline reading.
+- **Writer plans:** 5 articles/month → unlimited + AI editor + SEO → team collab + API + revenue share.
+- **User controls** — subscribe, cancel (at period end), reactivate. Usage tracking per billing cycle.
+- **Admin console** — manage plans, view features/pricing cards, filter by audience.
+
+### Live Radio
+- **Kenyan + regional radio** — 30+ stations (Capital FM, Kiss FM, NRG, Radio Citizen, Clouds, etc.) with server-side stream proxy to strip ICY metadata corruption and deliver clean audio.
+- **HD mode** — optional direct-stream bypass for higher bitrate.
+- **Radio page** — hero section, station grid, mini-player with pause/resume, session persistence.
+
+### Admin Console
+- **Command Center** — dashboard with key metrics.
+- **Neural Mind** — chat interface for platform intelligence.
+- **AI Pipelines** — semantic index coverage, moderation queue, learning loop, A/B experiments, agent control panel.
+- **Moderation** — post moderation queue with approve/reject/flag.
+- **Content Console** — manage posts, toggle featured, categorize RSS imports.
+- **Monetization** — first-party ad manager, third-party ad slot configurator.
+- **Subscriptions** — plan management cards with pricing and features.
+- **RSS Feeds** — feed health dashboard with status, error rates, last polled.
+- **Settings & Integrations** — site identity, SEO, analytics, chat widget, feature flags, API keys.
+- **Sticky sidebar** — stays in view while scrolling on desktop.
+
+### SEO & Performance
+- **Structured data** — JSON-LD Article schema, Open Graph, Twitter cards per article.
+- **Sitemap & robots.txt** — auto-generated, indexable when enabled.
+- **Feed cache** — Redis-backed with in-memory fallback, 3-tier fallback (live → Redis → memory).
+- **Feed resilience** — three-tier fetch with `force-dynamic` on query-driven routes, correct `Cache-Control` headers per endpoint.
+
+### Weather Widget
+- **Real-time location** — GPS tracking with cookie persistence (accept once, no more prompts).
+- **Animated** — SVG cloud, sun, rain, and snow animations.
+- **Forecast** — hourly + 7-day with temperature, humidity, wind.
+
+### PWA
+- **Installable** — web manifest, service worker, splash screen, app icons.
+- **Offline** — cached shell for offline reading.
 
 ## Getting Started
 
@@ -35,7 +82,7 @@ npm install
 
 # Set up environment
 cp .env.example .env
-# Fill in the keys below, then apply the schema (creates versioned migrations)
+# Fill in the keys below, then apply the schema
 npm run db:migrate
 npm run db:generate
 
@@ -48,9 +95,7 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-> **Migrations:** always change the schema via `npm run db:migrate` (Prisma `migrate dev`), which generates a timestamped migration file and applies it. Avoid `db:push` for shared/production schemas — it syncs the schema but creates no migration history, causing drift on other environments and CI. The `migrate deploy` step in CI applies committed migrations to production automatically.
-
-> Tip: `next dev` is run with `--webpack` in this environment; the plain `npm run dev` uses the default bundler. Use `next watch --webpack` / `next build --webpack` if you need to force webpack.
+> **Migrations:** always change the schema via `npm run db:migrate` (Prisma `migrate dev`). Avoid `db:push` for shared/production schemas.
 
 ## Environment Variables
 
@@ -64,55 +109,62 @@ Open [http://localhost:3000](http://localhost:3000).
 | `SUPABASE_SERVICE_KEY` | Service key for Storage uploads (server-only) |
 | `SUPABASE_ANON_KEY` | Public anon key |
 | `SUPABASE_STORAGE_BUCKET` | Storage bucket name (default `uploads`) |
-| `MAX_FILE_SIZE` | Overall upload cap in bytes (default 5MB) |
-| `MAX_<TYPE>_SIZE` | Per-type upload caps, e.g. `MAX_GIF_SIZE` (GIF default 8MB) |
-| `UPLOAD_DIR` | Local fallback upload directory |
-| `RSS_POLL_INTERVAL_SECONDS` | Default per-feed RSS poll interval (default 3600) |
+| `REDIS_URL` | Redis Cloud connection string |
+| `INNGEST_SIGN_KEY` / `INNGEST_EVENT_KEY` | Inngest cloud queue keys |
+| `OPENROUTER_API_KEY` | OpenRouter API key (free models available) |
+| `OPENCODE_API_KEY` | OpenCode Zen API key |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | Optional paid AI providers |
 | `CRON_SECRET` | Bearer secret for the `/api/rss/cron` Vercel Cron trigger |
-| `RATE_LIMIT_<KEY>` / `RATE_LIMIT_DEFAULT` | Optional rate-limit overrides (`limit:windowMs`) |
+| `RATE_LIMIT_<KEY>` / `RATE_LIMIT_DEFAULT` | Optional rate-limit overrides |
 | `LOG_LEVEL` | `debug` / `info` / `warn` / `error` for server logging |
 
 ## Scripts
 
 - `npm run dev` — development server
-- `npm run build` — production build (`next build`; add `--webpack` for webpack)
+- `npm run build` — production build
 - `npm run typecheck` — `tsc --noEmit`
 - `npm run lint` — ESLint
 - `npm test` / `npm run test:watch` — unit tests (Vitest)
-- `npm run test:e2e` — E2E smoke tests (Playwright; run `npx playwright install chromium` once)
+- `npm run test:e2e` — E2E smoke tests (Playwright)
 - `npm run db:migrate` / `db:migrate:prod` — dev / deploy migrations
-- `npm run db:push` — push schema without migrations (dev-only; prefer `db:migrate`)
-- `npm run db:seed` — seed 10 creators + content
-- `npm run db:promote-admin` — promote all existing ADMIN accounts to SUPER_ADMIN
-- `npm run db:feed-mind` — seed the Neural Mind's knowledge base (topics, entities, intent maps, lessons) on an existing DB without a full re-seed; idempotent
-- `npm run db:studio` — Prisma Studio
+- `npm run db:seed` — seed creators + content
+- `npm run db:promote-admin` — promote all ADMIN accounts to SUPER_ADMIN
+- `npm run db:feed-mind` — seed the Neural Mind knowledge base
 
 ## Database Seeding
 
 `prisma/seed.ts` creates sample data: users (including an `admin`), categories, tags, and published posts. After seeding, sign in with:
 
-- Regular creators: `user@connectplus.io` pattern with password `Password123!`
+- Regular creators: `user@connectplus.io` with password `Password123!`
 - Admin: `connect@plus.com` / `Mtemi@254#`
 
 ## Deploying
 
-- **Vercel** — connect the repo; the `next.config.mjs` CSP, `vercel.json` cron, and runtime config are build-ready. Set all env vars above in the project settings (including `CRON_SECRET` for the hourly RSS job).
-- **GitHub Actions** — `.github/workflows/webpack.yml` runs typecheck, lint, unit tests, and `next build --webpack` on every push/PR; a Playwright E2E job runs against Chromium; and a `migrate` job applies `prisma migrate deploy` to production on `main`.
+- **Vercel** — connect the repo; set all env vars in project settings. Inngest handles background jobs via cloud queue. Daily cron serves as a fallback floor.
+- **GitHub Actions** — typecheck, lint, unit tests, and build on every push/PR.
+
+## Architecture
+
+```
+connectPlus/
+├── src/
+│   ├── app/
+│   │   ├── (public)/          # Public pages (home, article, profile, radio, studio)
+│   │   ├── (admin)/admin/     # Admin console (dashboard, neural, ai, moderation, etc.)
+│   │   ├── api/               # API routes (posts, auth, ads, subscription, rss, etc.)
+│   │   ├── feed.xml/          # RSS feed
+│   │   ├── sitemap.ts         # Dynamic sitemap
+│   │   └── robots.ts          # Robots.txt
+│   ├── components/            # React components (ads, admin, layout, profile, radio, ui, weather)
+│   ├── lib/                   # Core libraries (ai-provider, ads, feed-ranker, hive-brain, etc.)
+│   ├── inngest/               # Inngest functions (rss-poll, status, thumbnails, etc.)
+│   └── proxy.ts               # Rate limiting middleware
+├── convex/                    # Convex functions (views, ads — offloaded from Supabase)
+├── prisma/                    # Schema, migrations, seed
+└── public/                    # PWA assets, icons, manifest
+```
 
 ## Testing
 
-- **Unit (Vitest)** — `npm test` covers the pure logic: `slugify`/excerpt utilities and the Neural Mind's intent classifier, keyword extraction, and sentiment analysis (`tests/unit/*`).
-- **E2E (Playwright)** — `npm run test:e2e` boots the dev server and smoke-checks public pages and the sign-in form (`tests/e2e/smoke.spec.ts`).
-
-## Production Hardening Roadmap
-
-Items below need external infrastructure or are deliberately scoped out for now:
-
-- **Redis** — shared settings + anonymous feed caches already activate automatically when any of `REDIS_URL`, `UPSTASH_REDIS_REST_URL`+`TOKEN`, or Vercel KV `KV_REST_API_URL`+`TOKEN` is set (`src/lib/redis.ts`), with free-tier-friendly 30–45s TTLs, no-expiry writes, and graceful in-memory fallback. **Job orchestration** — heavy jobs already run through Inngest (`src/inngest/functions.ts`: hourly RSS poll, scheduled publishing, nightly hive/neural training at 01:00 UTC, semantic embedding at 03:00 UTC) with single-concurrency + retries so runs never stack, and the RSS poller staggers feed fetches + caps per-feed imports to keep egress and Postgres writes flat. The `vercel.json` daily cron remains only as a fallback floor when Inngest is unconfigured.
-- **Sentry** — `@sentry/nextjs` for error tracking; Vercel Analytics for RUM/performance.
-- **Chunked/large uploads** — the upload route supports per-type caps today; switch to Tus for video (>10MB).
-- **Rate limiting to Upstash** — the in-memory limiter in `src/proxy.ts` is per-instance; Upstash Ratelimit (`@upstash/ratelimit`) makes it shared across serverless instances when you scale horizontally.
-- **i18n** — `next-intl` when expanding beyond the East African market.
-- **Rehype sanitisation** — no markdown→HTML renderer exists today (article bodies are rendered as escaped text), so XSS risk is low; adopt `rehype-sanitize` the day a rich renderer is added.
-
-Migrations must be applied before the first deploy using `prisma migrate deploy` (the CI `migrate` job does this automatically against `DATABASE_URL`).
+- **Unit (Vitest)** — `npm test` covers utilities, intent classifier, keyword extraction, sentiment analysis.
+- **E2E (Playwright)** — `npm run test:e2e` smoke-checks public pages and sign-in.

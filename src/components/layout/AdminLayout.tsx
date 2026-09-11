@@ -15,6 +15,7 @@ import {
   Layers,
   FileText,
   Megaphone,
+  CreditCard,
   FolderTree,
   ChevronLeft,
   Menu,
@@ -34,6 +35,7 @@ const ADMIN_LINKS = [
   { href: "/admin/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/admin/content", label: "Content Console", icon: FileText },
   { href: "/admin/ads", label: "Monetization", icon: Megaphone },
+  { href: "/admin/subscriptions", label: "Subscriptions", icon: CreditCard },
   { href: "/admin/categories", label: "Categories", icon: FolderTree },
   { href: "/admin/users", label: "Users & Nodes", icon: Users },
   { href: "/admin/rss", label: "RSS Feeds", icon: Rss },
@@ -81,9 +83,9 @@ export default function AdminLayout({
 
   return (
     <SessionProvider>
-      <div className="flex min-h-screen bg-surface-950">
-        {/* Desktop sidebar */}
-        <aside className="hidden lg:flex w-64 flex-col border-r border-surface-800/50 bg-surface-900/50">
+      <div className="flex min-h-screen bg-surface-950 selection:bg-brand-500/30">
+        {/* Desktop sidebar — sticky so it stays in view while content scrolls */}
+        <aside className="hidden lg:flex w-64 flex-col border-r border-surface-800/50 bg-surface-900/80 backdrop-blur-md sticky top-0 h-screen overflow-y-auto shrink-0">
           <div className="flex h-16 items-center border-b border-surface-800/50 px-6">
             <Logo size="sm" />
             <span className="ml-2 rounded bg-gradient-to-r from-brand-500 to-accent-coral/80 px-1.5 py-0.5 text-[10px] font-bold text-white">
@@ -104,7 +106,7 @@ export default function AdminLayout({
           </div>
         </aside>
 
-        <div className="flex flex-1 flex-col min-w-0">
+        <div className="flex flex-1 flex-col min-w-0 h-screen overflow-y-auto">
           <header className="flex h-14 sm:h-16 shrink-0 items-center justify-between gap-3 border-b border-surface-800/50 bg-surface-900/30 px-3 sm:px-6 backdrop-blur-sm sticky top-0 z-40">
             <div className="flex items-center gap-2 sm:gap-3 min-w-0">
               {/* Mobile menu trigger */}

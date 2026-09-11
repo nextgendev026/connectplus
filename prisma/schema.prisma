@@ -38,6 +38,7 @@ model User {
   sentNotifications Notification[] @relation("NotifActor")
   preference  UserPreference?
   feedback    ModelFeedback[]
+  subscriptions UserSubscription[]
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -95,6 +96,7 @@ model Post {
   notifications Notification[]
   postEmbedding PostEmbedding?
   feedback    ModelFeedback[]
+  seoMetadata  SeoMetadata?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -421,4 +423,83 @@ model ModelFeedback {
   @@index([type])
   @@index([createdAt])
   @@index([variant])
+}
+
+/// Subscription plans — 3 tiers for both readers and writers.
+model SubscriptionPlan {
+  id            String   @id @default(cuid())
+  name          String   @unique // e.g. "reader-free", "reader-pro", "writer-pro"
+  displayName   String   // "Free Reader", "Pro Reader", "Pro Writer"
+  tier          String   // free | pro | premium
+  audience      String   // reader | writer
+  priceMonthly  Float    @default(0)
+  priceYearly   Float    @default(0)
+  currency      String   @default("USD")
+  features      String   @db.Text // JSON array of feature strings
+  limits        String   @db.Text // JSON object: { postsPerMonth, storageMb, aiRequests, ... }
+  isActive      Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  subscriptions UserSubscription[]
+
+  @@index([tier, audience])
+}
+
+/// Active user subscriptions.
+model UserSubscription {
+  id              String            @id @default(cuid())
+  userId          String
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId          String
+  plan            SubscriptionPlan  @relation(fields: [planId], references: [id])
+  status          String            @default("active") // active | cancelled | past_due | trialing
+  billingCycle    String            @default("monthly") // monthly | yearly
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean         @default(false)
+  stripeSubscriptionId String?
+  stripeCustomerId    String?
+  usageThisPeriod     Int             @default(0)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([userId, planId])
+  @@index([userId])
+  @@index([status])
+}
+
+/// Third-party ad slot configuration — allows admins to inject Google AdSense,
+/// Facebook Audience Network, or custom ad scripts into specific placements.
+model ThirdPartyAdSlot {
+  id          String   @id @default(cuid())
+  name        String   @unique // "sidebar-banner", "article-bottom", etc.
+  slot        String   // matches Ad.slot: feed-inline | article-top | article-inline | article-sidebar | radio-hero
+  provider    String   // adsense | facebook | custom | mgid | propeller
+  scriptTag   String?  @db.Text // full <script> or <ins> tag to inject
+  adUnitId    String?  // e.g. ca-pub-XXXXXXXX or ad placement ID
+  sizes       String?  // JSON array of ad sizes [[300,250],[728,90]]
+  isActive    Boolean  @default(true)
+  weight      Int      @default(1)
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([slot, isActive])
+}
+
+/// SEO: article-level structured data and metadata overrides.
+model SeoMetadata {
+  id            String  @id @default(cuid())
+  postId        String  @unique
+  post          Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  canonicalUrl  String?
+  noIndex       Boolean @default(false)
+  jsonLd        String? @db.Text // custom JSON-LD overrides
+  customOgTitle String?
+  customOgDesc  String?
+  customOgImage String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
