@@ -224,7 +224,31 @@ export const hiveSweep = inngest.createFunction(
       await neuralMind.learnFromRssArticles();
     });
 
-    return { ok: true };
+    // Fold the day's Convex view deltas back into Post.viewCount. Article
+    // renders write to Convex (off Supabase's write budget); this one nightly
+    // pass keeps Postgres authoritative for ranking and display.
+    const synced = await step.run("sync-view-counts", async () => {
+      const { convexPendingViews, convexMarkViewsSynced } = await import("@/lib/convex");
+      const deltas = await convexPendingViews(500);
+      if (deltas.length === 0) return { posts: 0, views: 0 };
+
+      let views = 0;
+      const applied: string[] = [];
+      for (const d of deltas) {
+        const ok = await prisma.post
+          .update({ where: { id: d.postId }, data: { viewCount: { increment: d.delta } } })
+          .then(() => true)
+          .catch(() => false);
+        if (ok) {
+          applied.push(d.postId);
+          views += d.delta;
+        }
+      }
+      const marked = await convexMarkViewsSynced(applied);
+      return { posts: marked, views };
+    });
+
+    return { ok: true, viewSync: synced };
   }
 );
 

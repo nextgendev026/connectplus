@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { cacheGet, cacheSet, redisDel } from "@/lib/redis";
+import { convexAdClick, convexAdImpression, convexAdStats } from "@/lib/convex";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("ads");
@@ -118,21 +119,69 @@ export async function pickAd(slot: string, seed?: number): Promise<AdCreative | 
 }
 
 /**
- * Impressions are a cheap counter, not a ledger: a single UPDATE per rendered
- * slot, fire-and-forget so it never delays a page.
+ * Impressions are a cheap counter, not a ledger. Convex owns it, which keeps
+ * the write off Supabase entirely (free-tier writes are the scarce resource);
+ * Postgres stays as the fallback so metrics survive a Convex outage.
  */
 export function recordImpression(adId: string): void {
-  void prisma.ad
-    .update({ where: { id: adId }, data: { impressions: { increment: 1 } } })
-    .catch(() => {});
+  void convexAdImpression(adId).then((ok) => {
+    if (ok) return;
+    return prisma.ad
+      .update({ where: { id: adId }, data: { impressions: { increment: 1 } } })
+      .catch(() => {});
+  });
 }
 
-/** Click-through target: counts the click then hands back the destination. */
+/**
+ * Click-through target: counts the click then hands back the destination. The
+ * destination is read (not written) so Convex can own the counter without
+ * costing an extra Postgres UPDATE.
+ */
 export async function resolveAdClick(adId: string): Promise<string | null> {
+  const recorded = await convexAdClick(adId);
+  if (!recorded) {
+    const bumped = await prisma.ad
+      .update({ where: { id: adId }, data: { clicks: { increment: 1 } }, select: { targetUrl: true } })
+      .catch(() => null);
+    return bumped?.targetUrl ?? null;
+  }
   const ad = await prisma.ad
-    .update({ where: { id: adId }, data: { clicks: { increment: 1 } }, select: { targetUrl: true } })
+    .findUnique({ where: { id: adId }, select: { targetUrl: true } })
     .catch(() => null);
   return ad?.targetUrl ?? null;
+}
+
+/**
+ * Merged impression/click totals for the admin console. Convex holds live
+ * counts; any Postgres totals on top of the Convex baseline are added so
+ * history recorded before the offload is not lost.
+ */
+export async function getAdStats(): Promise<{
+  byAd: Record<string, { impressions: number; clicks: number }>;
+  impressions: number;
+  clicks: number;
+}> {
+  const [convex, ads] = await Promise.all([
+    convexAdStats(),
+    prisma.ad
+      .findMany({ select: { id: true, impressions: true, clicks: true } })
+      .catch(() => [] as { id: string; impressions: number; clicks: number }[]),
+  ]);
+
+  const byAd: Record<string, { impressions: number; clicks: number }> = {};
+  for (const ad of ads) byAd[ad.id] = { impressions: 0, clicks: 0 };
+
+  if (convex) {
+    for (const row of convex.ads) {
+      byAd[row.adId] = { impressions: row.impressions, clicks: row.clicks };
+    }
+  } else {
+    for (const ad of ads) byAd[ad.id] = { impressions: ad.impressions, clicks: ad.clicks };
+  }
+
+  const impressions = Object.values(byAd).reduce((n, a) => n + a.impressions, 0);
+  const clicks = Object.values(byAd).reduce((n, a) => n + a.clicks, 0);
+  return { byAd, impressions, clicks };
 }
 
 export const AD_SLOT_OPTIONS = AD_SLOTS.map((slot) => ({ value: slot, label: AD_SLOT_LABELS[slot] ?? slot }));

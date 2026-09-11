@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { AD_SLOTS, invalidateSlotAds } from "@/lib/ads";
+import { AD_SLOTS, getAdStats, invalidateSlotAds } from "@/lib/ads";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,16 +20,27 @@ export async function GET() {
   const guard = await requireAdmin();
   if (guard.error) return guard.error;
 
-  const ads = await prisma.ad.findMany({ orderBy: [{ isActive: "desc" }, { createdAt: "desc" }] });
+  const [ads, stats] = await Promise.all([
+    prisma.ad.findMany({ orderBy: [{ isActive: "desc" }, { createdAt: "desc" }] }),
+    getAdStats(),
+  ]);
+
+  // Metrics live in Convex now; merge them onto each creative so the console
+  // shows live numbers without a single Postgres write.
+  const adsWithStats = ads.map((ad) => ({
+    ...ad,
+    impressions: stats.byAd[ad.id]?.impressions ?? ad.impressions,
+    clicks: stats.byAd[ad.id]?.clicks ?? ad.clicks,
+  }));
 
   const summary = {
     total: ads.length,
     active: ads.filter((a) => a.isActive).length,
-    impressions: ads.reduce((n, a) => n + a.impressions, 0),
-    clicks: ads.reduce((n, a) => n + a.clicks, 0),
+    impressions: stats.impressions,
+    clicks: stats.clicks,
   };
 
-  return NextResponse.json({ ads, slots: AD_SLOTS, summary });
+  return NextResponse.json({ ads: adsWithStats, slots: AD_SLOTS, summary });
 }
 
 export async function POST(request: NextRequest) {

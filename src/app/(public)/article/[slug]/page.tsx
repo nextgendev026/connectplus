@@ -17,6 +17,7 @@ import { ArticleActions } from "@/components/ui/ArticleActions";
 import { CommentsSection } from "@/components/ui/CommentsSection";
 import { StyledContent } from "@/components/ui/StyledContent";
 import AdSlot from "@/components/ads/AdSlot";
+import { convexRecordView, convexViewCount } from "@/lib/convex";
 
 interface ArticleParams {
   params: Promise<{ slug: string }>;
@@ -155,13 +156,22 @@ export default async function ArticlePage({ params }: ArticleParams) {
       : Promise.resolve(false),
   ]);
 
-  // increment view count
-  await prisma.post.update({
-    where: { id: post.id },
-    data: { viewCount: { increment: 1 } },
-  });
-
-  const viewCount = post.viewCount + 1;
+  // Count the view in Convex — the old code ran a Postgres UPDATE on every
+  // article render, which was the single hottest write against Supabase's free
+  // tier. A nightly Inngest step folds the Convex deltas back into
+  // Post.viewCount, so ranking and display stay correct. Postgres remains the
+  // fallback when Convex is not configured or is unreachable.
+  const counted = await convexRecordView(post.id);
+  let viewCount = post.viewCount + 1;
+  if (!counted) {
+    await prisma.post
+      .update({ where: { id: post.id }, data: { viewCount: { increment: 1 } } })
+      .catch(() => {});
+  } else {
+    // Show the live Convex total (it includes views not yet synced back).
+    const live = await convexViewCount(post.id);
+    if (live !== null) viewCount = Math.max(live, post.viewCount + 1);
+  }
   const readTime = estimateReadTime(post.content);
   const publishedDate = post.publishedAt
     ? formatDate(post.publishedAt)
