@@ -11,6 +11,7 @@ export type Intent =
   | "recommendation"
   | "external_learn"
   | "knowledge_search"
+  | "web_research"
   | "memory_manage"
   | "run_sweep"
   | "write_content"
@@ -161,6 +162,19 @@ const INTENT_PATTERNS: IntentPattern[] = [
       "do you remember anything about",
     ],
     boostKeywords: ["find", "search", "look up", "about"],
+  },
+  {
+    // Live internet research — distinct from knowledge_search, which only reads
+    // what the hive has ALREADY learned. This one goes out to the web.
+    intent: "web_research",
+    keywords: ["research", "internet", "online", "web", "google", "latest", "current", "news", "facts", "sources", "verify"],
+    phrases: [
+      "research this", "research on", "search the internet", "search the web", "search online",
+      "look it up online", "find out about", "what does the internet say", "google this",
+      "latest on", "current situation", "get me sources", "fact check", "verify this",
+      "what is happening with", "find latest news about", "look up online",
+    ],
+    boostKeywords: ["latest", "recent", "today", "2026", "sources", "internet", "online"],
   },
   {
     intent: "memory_manage",

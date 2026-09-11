@@ -199,10 +199,19 @@ model ModerationLog {
   @@index([moderatorId])
 }
 
+/// Page-level traffic. One row per view; `visitorHash` is a salted, non-
+/// reversible hash of a first-party cookie, so unique visitors can be counted
+/// WITHOUT storing a raw IP or any identifier that maps back to a person.
 model PageView {
   id        String   @id @default(cuid())
   postId    String?
   path      String
+  /// Salted hash of the visitor cookie — the unit of "unique visitor".
+  visitorHash String?
+  /// Coarse session bucket (visitorHash + hour) so sessions can be counted
+  /// without a second table.
+  sessionKey  String?
+  userId    String?
   userAgent String?
   ip        String?
   country   String?
@@ -213,6 +222,8 @@ model PageView {
   @@index([postId])
   @@index([country])
   @@index([path, createdAt])
+  @@index([visitorHash, createdAt])
+  @@index([createdAt])
 }
 
 model RssFeed {

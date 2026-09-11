@@ -1,8 +1,10 @@
 import { prisma } from "@/lib/prisma";
 import { classifyIntent, applyLearnedAliases, extractUrls, isUrl, type Intent } from "@/lib/neural-intent";
 import { extractKeywords, analyzeSentiment, extractEntities, summarizeText, stripHtml } from "@/lib/neural-text";
-import { hiveBrain } from "@/lib/hive-brain";
+import { hiveBrain, type EngagementSnapshot, type HiveStatus } from "@/lib/hive-brain";
 import { createLogger } from "@/lib/logger";
+import { generateText, getAiConfig } from "@/lib/ai-provider";
+import { research, findingsToContext, type ResearchFinding } from "@/lib/web-research";
 import {
   composeDraft,
   continueText,
@@ -21,6 +23,8 @@ export interface NeuralResponse {
   enginesUsed: ("internal" | "external" | "hive" | "llm")[];
   confidence: number;
   sources: string[];
+  /** Present when the answer leaned on live internet research. */
+  findings?: { title: string; url: string; source: string }[];
 }
 
 export interface PlatformStats {
@@ -494,6 +498,135 @@ class NeuralMindEngine {
     return memories;
   }
 
+  /**
+   * Live internet research.
+   *
+   * Searches the open web, reads the most promising sources, folds what it
+   * learned into the hive (so the knowledge survives the conversation), and
+   * returns the findings. Distinct from `knowledge_search`, which only replays
+   * what the hive already knew.
+   */
+  async researchTopic(query: string, maxSources = 3): Promise<ResearchFinding[]> {
+    const clean = stripInstruction(query).slice(0, 220).trim() || query.slice(0, 220);
+    const startedAt = Date.now();
+
+    let findings: ResearchFinding[] = [];
+    try {
+      findings = await research(clean, maxSources);
+    } catch (err) {
+      this.log.warn("web research failed", { query: clean.slice(0, 80), error: String(err) });
+      return [];
+    }
+
+    // Persist into the hive so a later `knowledge_search` can recall it even
+    // with no network. Fire-and-forget: never block the reply on a write.
+    if (findings.length > 0) {
+      const rows = findings.map((f) => ({
+        source: "external",
+        category: "external_knowledge",
+        content: `${f.title} — ${(f.text || f.snippet).slice(0, 900)}`,
+        tags: [
+          ...extractKeywords(`${f.title} ${f.snippet}`, 6).map((k) => k.keyword),
+          "web",
+          f.source,
+        ]
+          .slice(0, 10)
+          .join(","),
+        confidence: 0.7,
+        sourceUrl: f.url,
+        metadata: JSON.stringify({ kind: "web-research", query: clean, provider: f.source }),
+      }));
+      prisma.neuralMemory
+        .createMany({ data: rows })
+        .catch((err) => this.log.warn("research persist failed", { error: String(err) }));
+    }
+
+    this.log.info("web research", {
+      query: clean.slice(0, 80),
+      findings: findings.length,
+      elapsedMs: Date.now() - startedAt,
+    });
+    return findings;
+  }
+
+  /**
+   * AI-native conversation.
+   *
+   * Ranks the hive's own memories for the query, optionally pulls live web
+   * context, and asks the configured model to answer USING that material. The
+   * model is instructed to prefer the retrieved evidence and to say when it has
+   * none — this is retrieval-augmented generation, not a template replay.
+   *
+   * Returns null when no model is configured so callers keep the deterministic
+   * brain as a fallback.
+   */
+  async converse(
+    input: string,
+    history: { role: string; content: string }[] = [],
+    opts: { withWeb?: boolean; findings?: ResearchFinding[] } = {}
+  ): Promise<{ text: string; findings: ResearchFinding[] } | null> {
+    const cfg = await getAiConfig().catch(() => null);
+    if (!cfg || cfg.provider === "builtin" || !cfg.apiKey) return null;
+
+    const recall = await hiveBrain.recall(input, 8).catch(() => []);
+    const hive = await hiveBrain.status().catch(() => null);
+    const visits = await hiveBrain.getVisitAnalytics("7d").catch(() => null);
+
+    // Decide whether the question needs the open web: either the caller asked
+    // for it, or the hive is thin on the subject.
+    const thinKnowledge = recall.length < 3;
+    const wantsWeb = opts.withWeb === true || thinKnowledge;
+    const findings =
+      opts.findings && opts.findings.length > 0
+        ? opts.findings
+        : wantsWeb
+          ? await this.researchTopic(input, 3)
+          : [];
+
+    const knowledgeBlock = recall.length
+      ? recall
+          .map((m, i) => `[HIVE ${i + 1}] (${m.category}/${m.source}) ${m.content.slice(0, 600)}`)
+          .join("\n")
+      : "(the hive has no relevant memories yet)";
+
+    const statsBlock = hive
+      ? `Platform: ${visits?.uniqueVisitors ?? 0} unique visitors and ${visits?.totalViews ?? 0} views in the last 7 days; ` +
+        `${hive.total} hive memories (${hive.sourceBreakdown.internal ?? 0} internal, ${hive.sourceBreakdown.external ?? 0} external). ` +
+        `Top topics: ${hive.topTopics.slice(0, 8).map((t) => t.topic).join(", ") || "none yet"}.`
+      : "Platform stats unavailable.";
+
+    const recent = history.slice(-4).map((m) => `${m.role === "user" ? "Admin" : "Mind"}: ${m.content.slice(0, 600)}`).join("\n");
+
+    const system = [
+      "You are the connectPlus Neural Mind: the combined brain of an East African publishing platform.",
+      "You speak like a sharp, warm expert colleague — direct, specific, never padded with filler or restated questions.",
+      "Ground every factual claim in the HIVE MEMORY or WEB SOURCES provided. If neither covers the question, say so plainly, then answer from general knowledge and label it as such.",
+      "Never invent statistics, quotes, or citations. Cite web sources inline as [1], [2] matching the order given.",
+      "Prefer concrete numbers, named entities and next actions over vague advice.",
+      "Use short markdown: bold labels, tight bullets. East African context (Kenya, Uganda, Tanzania, Rwanda) is the default frame; use Kiswahili naturally when it fits.",
+    ].join(" ");
+
+    const user = [
+      `PLATFORM STATE: ${statsBlock}`,
+      "",
+      `HIVE MEMORY (learned from our posts, comments, RSS and past chats):\n${knowledgeBlock}`,
+      findings.length
+        ? `\n\nWEB SOURCES (live research, fresher than the hive):\n${findingsToContext(findings)}`
+        : "",
+      recent ? `\n\nRECENT CONVERSATION:\n${recent}` : "",
+      "",
+      `ADMIN ASKS: ${input}`,
+      "",
+      "Answer directly. If you used web sources, end with a one-line `Sources:` list of the numbered URLs.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const text = await generateText({ system, user, maxTokens: 1100 }).catch(() => null);
+    if (!text) return null;
+    return { text, findings };
+  }
+
   // ── Unified Query Processor ──
 
   // Consult the Hive Brain's learned intent-maps BEFORE static classification so
@@ -536,175 +669,6 @@ class NeuralMindEngine {
     return out;
   }
 
-  async processQuery(input: string, _history?: { role: string; content: string }[]): Promise<NeuralResponse> {
-    const startedAt = Date.now();
-    const { intent, confidence } = await this.classifyIntentWithMemory(input);
-    this.log.info("processing query", { intent, confidence });
-    const urls = extractUrls(input);
-    const enginesUsed: ("internal" | "external" | "hive")[] = [];
-    const sources: string[] = [];
-    // Each intent stores a different report shape in `data`; consumers below
-    // destructure it per-case with explicit callback types.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let data: any = {};
-
-    switch (intent) {
-      case "run_sweep": {
-        enginesUsed.push("hive");
-        const [sweep, hive] = await Promise.all([hiveBrain.sweepInternal(), hiveBrain.status()]);
-        data = { sweep, hive };
-        break;
-      }
-      case "write_content": {
-        enginesUsed.push("internal");
-        const topic = this.extractDraft(input);
-        data = { ...composeDraft(topic), topic };
-        break;
-      }
-      case "rewrite_content": {
-        enginesUsed.push("internal");
-        const draft = this.extractDraft(input);
-        data = { polish: polishText(draft), draft };
-        break;
-      }
-      case "summarize_content": {
-        enginesUsed.push("internal");
-        const draft = this.extractDraft(input);
-        data = { summary: summarizeText(stripHtml(draft), 2).slice(0, 280), draft };
-        break;
-      }
-      case "headline_suggest": {
-        enginesUsed.push("internal");
-        const draft = this.extractDraft(input);
-        const firstLine = draft.split(/\n/)[0]?.slice(0, 60) ?? "Untitled";
-        data = { result: generateHeadline(firstLine, draft), draft };
-        break;
-      }
-      case "tag_suggest": {
-        enginesUsed.push("internal");
-        const draft = this.extractDraft(input);
-        data = { result: generateTopics(draft), draft };
-        break;
-      }
-      case "outline_suggest": {
-        enginesUsed.push("internal");
-        const draft = this.extractDraft(input);
-        data = { outline: buildOutline(draft), draft };
-        break;
-      }
-      case "expand_content": {
-        enginesUsed.push("internal");
-        const draft = this.extractDraft(input);
-        data = { extension: continueText(draft), draft };
-        break;
-      }
-      case "curate_content": {
-        enginesUsed.push("internal", "hive");
-        const [analysis, engagement] = await Promise.all([this.analyzeContent(), hiveBrain.computeEngagement()]);
-        data = { analysis, engagement };
-        break;
-      }
-      case "system_health": {
-        enginesUsed.push("internal", "hive");
-        const [stats, anomalies, hive] = await Promise.all([this.getPlatformStats(), this.detectAnomalies(), hiveBrain.status()]);
-        data = { stats, anomalies: anomalies.anomalies, hive };
-        break;
-      }
-      case "content_analysis": {
-        enginesUsed.push("internal");
-        data = { analysis: await this.analyzeContent() };
-        break;
-      }
-      case "user_analysis": {
-        enginesUsed.push("internal");
-        data = { users: await this.analyzeUsers() };
-        break;
-      }
-      case "moderation_report": {
-        enginesUsed.push("internal");
-        data = { moderation: await this.getModerationReport() };
-        break;
-      }
-      case "threat_scan": {
-        enginesUsed.push("internal");
-        const [anomalies, moderation] = await Promise.all([this.detectAnomalies(), this.getModerationReport()]);
-        data = { anomalies: anomalies.anomalies, moderation };
-        break;
-      }
-      case "growth_report": {
-        enginesUsed.push("internal");
-        data = { growth: await this.getGrowthReport() };
-        break;
-      }
-      case "regional_analysis": {
-        enginesUsed.push("internal");
-        data = { regional: await this.getRegionalIntelligence() };
-        break;
-      }
-      case "trend_query": {
-        enginesUsed.push("internal", "external", "hive");
-        const [analysis, externalKnowledge, hiveLearnings] = await Promise.all([
-          this.analyzeContent(),
-          this.getExternalKnowledge(input),
-          hiveBrain.recall(input, 5),
-        ]);
-        data = { internalTopics: analysis.topTopics, externalKnowledge, hiveLearnings };
-        break;
-      }
-      case "hive_report": {
-        enginesUsed.push("hive");
-        const [hive, recall] = await Promise.all([hiveBrain.status(), hiveBrain.recall(input, 6)]);
-        data = { hive, recall };
-        break;
-      }
-      case "recommendation": {
-        enginesUsed.push("internal", "hive");
-        const [recommended, engagement] = await Promise.all([hiveBrain.recommend(undefined, 6), hiveBrain.computeEngagement()]);
-        data = { recommended, engagement };
-        break;
-      }
-      case "external_learn": {
-        enginesUsed.push("external");
-        const url = urls[0];
-        if (url && isUrl(url)) {
-          data = await this.learnFromUrl(url);
-          sources.push(url);
-        } else {
-          data = { results: await this.getExternalKnowledge(input) };
-        }
-        break;
-      }
-      case "knowledge_search": {
-        enginesUsed.push("external", "hive");
-        const [results, hiveRecall] = await Promise.all([this.getExternalKnowledge(input), hiveBrain.recall(input, 5)]);
-        data = { results, hiveRecall };
-        break;
-      }
-      case "memory_manage": {
-        enginesUsed.push("external");
-        if (input.toLowerCase().includes("clear")) {
-          const deleted = await prisma.neuralMemory.deleteMany({});
-          data = { deleted: deleted.count, action: "clear" };
-        } else {
-          data = { memories: await this.getMemoryBank({ limit: 10 }), action: "list" };
-        }
-        break;
-      }
-      default: {
-        // The "conversational brain": decode the language of the query
-        // (greetings, thanks, identity, capabilities, or anything else) and
-        // answer dynamically instead of repeating a canned platform overview.
-        enginesUsed.push("internal", "hive");
-        const [hive, recall] = await Promise.all([hiveBrain.status(), hiveBrain.recall(input, 3)]);
-        data = { hive, recall, query: input };
-        break;
-      }
-    }
-
-    const text = await this.synthesizeResponse(intent, data, input);
-    this.log.info("query resolved", { intent, enginesUsed, elapsedMs: Date.now() - startedAt });
-    return { text, intent, enginesUsed, confidence, sources };
-  }
 
   async synthesizeResponse(
     intent: Intent,
@@ -759,7 +723,17 @@ class NeuralMindEngine {
       }
 
       case "user_analysis": {
-        const { users } = data as { users: UserAnalysis };
+        const { users, visits, findings, intentInfo } = data as {
+          users: UserAnalysis;
+          visits: Awaited<ReturnType<typeof hiveBrain.getVisitAnalytics>>;
+          findings: ResearchFinding[];
+          intentInfo: {
+            keywords: string[];
+            entities: { value: string; type: string }[];
+            sentiment: { sentiment: string; score: number };
+            toneSeverity?: "positive" | "negative" | "neutral";
+          } | null;
+        };
         const lines = [
           "**User Intelligence Report**",
           "",
@@ -771,6 +745,36 @@ class NeuralMindEngine {
         ];
         users.topRegions.slice(0, 5).forEach((r, i) => lines.push(`${i + 1}. **${r.city}** — ${r.users} users, ${r.posts} posts`));
         lines.push("", "**Active vs Inactive:**", `• Active (posted at least once): ${users.activeVsInactive.active}`, `• Inactive: ${users.activeVsInactive.inactive}`);
+
+        // Visits are only fresh when coming through the research/general-chat path;
+        // for the standalone analytics intent we show whatever the hive currently
+        // knows on the week.
+        if (visits) {
+          lines.push("", "**Traffic (7 days):**", `• Unique visitors: ${visits.uniqueVisitors}`, `• Total views: ${visits.totalViews}`, `• Sessions: ${visits.sessions}`, `• New / returning: ${visits.newVisitors} / ${visits.returningVisitors}`);
+          if (visits.countries.length > 0) {
+            lines.push("");
+            lines.push("**Top visitor countries:**");
+            visits.countries.slice(0, 5).forEach((c, i) => lines.push(`${i + 1}. **${c.country}** — ${c.views} views`));
+          }
+          if (visits.topPosts.length > 0) {
+            lines.push("");
+            lines.push("**Most-visited posts (7 days):**");
+            visits.topPosts.slice(0, 5).forEach((p, i) => lines.push(`${i + 1}. "${p.title}" — ${p.views} views, ${p.visitors} unique visitors`));
+          }
+          if (visits.topPages.length > 0) {
+            lines.push("");
+            lines.push("**Most-visited pages (7 days):**");
+            visits.topPages.slice(0, 5).forEach((p, i) => lines.push(`${i + 1}. ${p.path} — ${p.views} views, ${p.visitors} unique visitors`));
+          }
+        }
+
+        if (findings && findings.length > 0) {
+          lines.push("");
+          lines.push("**Live web context:**");
+          findings.slice(0, 3).forEach((f, i) => lines.push(`• **${f.title}** — ${f.text.slice(0, 200)}`));
+        }
+
+        lines.push("");
         return lines.join("\n");
       }
 
@@ -806,7 +810,11 @@ class NeuralMindEngine {
       }
 
       case "growth_report": {
-        const { growth } = data;
+        const { growth, visits, findings } = data as {
+          growth: Awaited<ReturnType<typeof neuralMind.getGrowthReport>>;
+          visits: Awaited<ReturnType<typeof hiveBrain.getVisitAnalytics>>;
+          findings: ResearchFinding[];
+        };
         const lines = [
           "**Growth Report — Last 30 Days**",
           "",
@@ -819,11 +827,36 @@ class NeuralMindEngine {
         const totalUsers = lastWeek.reduce((s: number, d: { users: number }) => s + d.users, 0);
         const totalPosts = lastWeek.reduce((s: number, d: { posts: number }) => s + d.posts, 0);
         lines.push("", "**Last 7 Days Totals:**", `• ${totalUsers} new users`, `• ${totalPosts} new posts`);
+
+        if (visits) {
+          lines.push("", "**Traffic (7 days):**", `• Unique visitors: ${visits.uniqueVisitors}`, `• Total views: ${visits.totalViews}`, `• Sessions: ${visits.sessions}`, `• New / returning: ${visits.newVisitors} / ${visits.returningVisitors}`);
+          if (visits.topPosts.length > 0) {
+            lines.push("");
+            lines.push("**Most-visited posts (7 days):**");
+            visits.topPosts.slice(0, 5).forEach((p, i) => lines.push(`${i + 1}. "${p.title}" — ${p.views} views, ${p.visitors} unique visitors`));
+          }
+          if (visits.topPages.length > 0) {
+            lines.push("");
+            lines.push("**Most-visited pages (7 days):**");
+            visits.topPages.slice(0, 5).forEach((p, i) => lines.push(`${i + 1}. ${p.path} — ${p.views} views, ${p.visitors} unique visitors`));
+          }
+        }
+
+        if (findings && findings.length > 0) {
+          lines.push("");
+          lines.push("**Live web context (industry trends):**");
+          findings.slice(0, 3).forEach((f) => lines.push(`• **${f.title}** — ${f.text.slice(0, 200)}`));
+        }
+
         return lines.join("\n");
       }
 
       case "regional_analysis": {
-        const { regional } = data;
+        const { regional, visits, findings } = data as {
+          regional: Awaited<ReturnType<typeof neuralMind.getRegionalIntelligence>>;
+          visits: Awaited<ReturnType<typeof hiveBrain.getVisitAnalytics>>;
+          findings: ResearchFinding[];
+        };
         const lines = [
           "**Regional Network Intelligence**",
           "",
@@ -836,11 +869,32 @@ class NeuralMindEngine {
           lines.push("", "**Most Engaged:**");
           regional.mostEngaged.forEach((r: { city: string; viewsPerPost: number }) => lines.push(`• ${r.city}: ${r.viewsPerPost.toFixed(0)} views/post`));
         }
+
+        if (visits) {
+          lines.push("", "**Traffic by region (7 days):**");
+          if (visits.countries.length > 0) {
+            lines.push("");
+            lines.push("Most popular visitor countries:");
+            visits.countries.slice(0, 6).forEach((c, i) => lines.push(`${i + 1}. **${c.country}** — ${c.views} views`));
+          }
+        }
+
+        if (findings && findings.length > 0) {
+          lines.push("");
+          lines.push("**Live web context on regional topics:**");
+          findings.slice(0, 3).forEach((f) => lines.push(`• **${f.title}** — ${f.text.slice(0, 200)}`));
+        }
+
         return lines.join("\n");
       }
 
       case "hive_report": {
-        const { hive, recall } = data;
+        const { hive, recall, visits, findings } = data as {
+          hive: HiveStatus;
+          recall: { content: string; source: string; category: string }[];
+          visits: Awaited<ReturnType<typeof hiveBrain.getVisitAnalytics>>;
+          findings: ResearchFinding[];
+        };
         const internal = hive.sourceBreakdown.internal ?? 0;
         const external = hive.sourceBreakdown.external ?? 0;
         const lines = [
@@ -869,11 +923,39 @@ class NeuralMindEngine {
           lines.push("", "**Recalled for Your Query:**");
           recall.slice(0, 4).forEach((m: { content: string }) => lines.push(`• ${m.content.slice(0, 120)}`));
         }
+
+        if (visits) {
+          lines.push("", "**Traffic (7 days):**");
+          lines.push(`• Unique visitors: ${visits.uniqueVisitors}`);
+          lines.push(`• Total views: ${visits.totalViews}`);
+          lines.push(`• Sessions: ${visits.sessions}`);
+          lines.push(`• New / returning: ${visits.newVisitors} / ${visits.returningVisitors}`);
+          if (visits.topPosts.length > 0) {
+            lines.push("", "**Most-visited posts (7 days):**");
+            visits.topPosts.slice(0, 5).forEach((p, i) => lines.push(`${i + 1}. "${p.title}" — ${p.views} views, ${p.visitors} unique visitors`));
+          }
+          if (visits.topPages.length > 0) {
+            lines.push("", "**Most-visited pages (7 days):**");
+            visits.topPages.slice(0, 5).forEach((p, i) => lines.push(`${i + 1}. ${p.path} — ${p.views} views, ${p.visitors} unique visitors`));
+          }
+        }
+
+        if (findings && findings.length > 0) {
+          lines.push("", "**Live web context (what's trending online):**");
+          findings.slice(0, 3).forEach((f) => lines.push(`• **${f.title}** — ${f.text.slice(0, 200)}`));
+        }
+
         return lines.join("\n");
       }
 
       case "trend_query": {
-        const { internalTopics, externalKnowledge, hiveLearnings } = data;
+        const { internalTopics, externalKnowledge, hiveLearnings, visits, findings } = data as {
+          internalTopics: { topic: string; count: number; avgViews: number }[];
+          externalKnowledge: { category: string; source: string; content: string }[];
+          hiveLearnings: { category: string; source: string; content: string }[];
+          visits: Awaited<ReturnType<typeof hiveBrain.getVisitAnalytics>>;
+          findings: ResearchFinding[];
+        };
         const lines = ["**Trend Intelligence**", ""];
         if (internalTopics.length > 0) {
           lines.push("**Platform Trends:**");
@@ -889,6 +971,23 @@ class NeuralMindEngine {
           lines.push("**Hive Brain Learned Signals:**");
           hiveLearnings.slice(0, 5).forEach((m: { category: string; source: string; content: string }) => lines.push(`• [${m.category}@${m.source}] ${m.content.slice(0, 120)}`));
           lines.push("");
+        }
+        if (visits) {
+          lines.push("**Traffic (7 days):**");
+          lines.push(`• Unique visitors: ${visits.uniqueVisitors}`);
+          lines.push(`• Total views: ${visits.totalViews}`);
+          lines.push(`• Sessions: ${visits.sessions}`);
+          lines.push(`• New / returning: ${visits.newVisitors} / ${visits.returningVisitors}`);
+          if (visits.topPosts.length > 0) {
+            lines.push("");
+            lines.push("**Most-visited posts (7 days):**");
+            visits.topPosts.slice(0, 5).forEach((p, i) => lines.push(`${i + 1}. "${p.title}" — ${p.views} views, ${p.visitors} unique visitors`));
+          }
+        }
+        if (findings && findings.length > 0) {
+          lines.push("");
+          lines.push("**Live web context (current web trends):**");
+          findings.slice(0, 3).forEach((f) => lines.push(`• **${f.title}** — ${f.text.slice(0, 200)}`));
         }
         if (internalTopics.length === 0 && externalKnowledge.length === 0 && !(hiveLearnings && hiveLearnings.length > 0)) {
           lines.push("No trend data available yet. The external mind is still learning from RSS feeds.");
@@ -937,7 +1036,17 @@ class NeuralMindEngine {
       }
 
       case "recommendation": {
-        const { recommended, engagement } = data;
+        const { recommended, engagement, findings, intentInfo } = data as {
+          recommended: { post: { title: string }; reason: string }[];
+          engagement: EngagementSnapshot;
+          findings: ResearchFinding[];
+          intentInfo: {
+            keywords: string[];
+            entities: { value: string; type: string }[];
+            sentiment: { sentiment: string; score: number };
+            toneSeverity?: "positive" | "negative" | "neutral";
+          } | null;
+        };
         if (!recommended || recommended.length === 0) {
           return "No fresh content to recommend yet. Publish more posts and the hive will start ranking them by engagement velocity.";
         }
@@ -951,6 +1060,17 @@ class NeuralMindEngine {
         engagement.rising.slice(0, 3).forEach((p: { title: string; views: number; daysLive: number }, i: number) => lines.push(`${i + 1}. **${p.title}** — ${p.views} views in ${p.daysLive}d`));
         lines.push("", "**Why the Hive Ranked These:**");
         recommended.slice(0, 6).forEach((r: { post: { title: string }; reason: string }, i: number) => lines.push(`${i + 1}. **${r.post.title}** — ${r.reason}`));
+        // Wire web research into the recommendation response when available.
+        const web: string[] =
+          findings && findings.length > 0
+            ? [
+                "",
+                "**Live web context (trending topics on the internet right now):**",
+                ...findings.slice(0, 3).map((f) => `• **${f.title}** — ${f.text.slice(0, 200)}`),
+                "",
+              ]
+            : [];
+        if (web.length > 0) lines.push(...web);
         lines.push("", "The feed adapts automatically as engagement flows into the hive — likes, comments and views teach the ranking model.");
         return lines.join("\n");
       }
@@ -1069,7 +1189,7 @@ class NeuralMindEngine {
       case "curate_content": {
         const { analysis, engagement } = data as {
           analysis: ContentAnalysis;
-          engagement: { trending: { title: string; categoryName: string | null; velocity: number; views: number }[]; categories: { name: string; velocity: number; posts: number }[] };
+          engagement: EngagementSnapshot;
         };
         const lines = [`**🧭 Curation brief — what to write & publish next**`, ""];
         if (engagement.categories.length > 0) {
@@ -1090,13 +1210,59 @@ class NeuralMindEngine {
         return lines.join("\n");
       }
 
+      case "web_research": {
+        const { findings, intentInfo } = data;
+        const finds = findings ?? [];
+        if (finds.length === 0) {
+          const lines = [
+            "**🌐 Web Research**",
+            "",
+            "I searched the live web for current information on this topic, but no domains answered clearly. Try a more specific name, region or date — e.g. \"what is happening with fintech in Kenya this week\" instead of \"fintech\".",
+            "",
+            "I did still read your question like a human would — here's what I picked up:",
+          ];
+          const kw = intentInfo?.keywords.slice(0, 4);
+          const ents = intentInfo?.entities.slice(0, 3);
+          if (kw.length > 0) lines.push(`**Themes I noted:** ${kw.join(", ")}.`);
+          if (ents.length > 0) lines.push(`**Named things I saw:** ${ents.map((e: { value: string }) => e.value).join(", ")}.`);
+          const mt = intentInfo?.toneSeverity;
+          if (mt === "positive") lines.push("**Tone:** reads positive — good energy to build on.");
+          else if (mt === "negative") lines.push("**Tone:** reads cautious/negative — I can help frame this constructively.");
+          return lines.join("\n");
+        }
+
+        const cite = (i: number, f: { title: string; url: string }) => `[${i + 1}] **${f.title}** — ${f.url}`;
+        const lines = [
+          "**🌐 Web Research**",
+          "",
+          `I searched the live web and read ${finds.length} source${finds.length === 1 ? "" : "s"} about this. ${finds.length === 1 ? "Here's what I found:" : "Here's what I found:"}`,
+          "",
+        ];
+        for (let i = 0; i < finds.length; i += 1) {
+          const f = finds[i];
+          lines.push(cite(i, f));
+          lines.push(f.text.slice(0, 500));
+          lines.push("");
+        }
+        const kw = intentInfo?.keywords.slice(0, 4);
+        if (kw.length > 0) lines.push(`**What I understood you to ask about:** ${kw.join(", ")}.`);
+        return lines.join("\n");
+      }
+
       default: {
-        const { hive, recall, query } = data as {
+        const { hive, recall, query, findings, intentInfo } = data as {
           hive: { total: number; sourceBreakdown: Record<string, number> };
           recall: { content: string; source: string; category: string }[];
           query: string;
+          findings: ResearchFinding[];
+          intentInfo: {
+            keywords: string[];
+            entities: { value: string; type: string }[];
+            sentiment: { sentiment: string; score: number };
+            toneSeverity?: "positive" | "negative" | "neutral";
+          } | null;
         };
-        return this.generalChatResponse(query, hive.total, recall ?? []);
+        return this.generalChatResponse(query, hive.total, recall ?? [], findings ?? [], intentInfo ?? null);
       }
     }
   }
@@ -1106,8 +1272,18 @@ class NeuralMindEngine {
    * typed — greetings, thanks, identity, capabilities, or free-form questions —
    * and responds dynamically using the query's own keywords, entities and
    * sentiment (plus hive recall) so it never repeats a canned answer.
+   *
+   * When a model is configured it calls `converse` for an LLM-grounded reply
+   * and falls back to the deterministic render below. Either way it writes the
+   * exchange back into the hive so the brains improve with every chat session.
    */
-  private generalChatResponse(input: string, hiveTotal: number, recall: { content: string; source: string; category: string }[]): string {
+  private generalChatResponse(
+    input: string,
+    hiveTotal: number,
+    recall: { content: string; source: string; category: string }[],
+    findings: ResearchFinding[],
+    intentInfo: { keywords: string[]; entities: { value: string; type: string }[]; sentiment: { sentiment: string; score: number }; toneSeverity?: "positive" | "negative" | "neutral" } | null
+  ): string {
     const lower = input.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
     const seed = input.slice(0, 200);
 
@@ -1193,14 +1369,31 @@ class NeuralMindEngine {
       understood.push(`I parsed **${input.trim().slice(0, 60)}** as your core question`);
     }
 
+    const toneSeverity: "positive" | "negative" | "neutral" = sentiment.sentiment === "positive"
+      ? "positive"
+      : sentiment.sentiment === "negative"
+        ? "negative"
+        : "neutral";
     const tone =
       sentiment.sentiment === "positive"
-        ? "The tone reads positive — good energy to build on."
+        ? "good energy to build on"
         : sentiment.sentiment === "negative"
-          ? "The tone reads more cautious/negative — I can help frame this constructively."
-          : "";
+          ? "cautious — I can help frame this constructively"
+          : "neutral";
 
-    const heads: string[] = [];
+    // Web research adds real-world grounding when a model isn't available.
+    const webHeads: string[] = [];
+    if (findings.length > 0) {
+      webHeads.push(`**I searched the live web and found ${findings.length} source${findings.length === 1 ? "" : "s"}:**`);
+      for (let i = 0; i < Math.min(findings.length, 2); i += 1) {
+        const f = findings[i]!;
+        webHeads.push(`**${f.title}** — ${f.text.slice(0, 240)}`);
+      }
+      if (findings.length > 2) webHeads.push(`…and ${findings.length - 2} more source${findings.length - 2 === 1 ? "" : "s"}.`);
+      if (webHeads.length > 0) webHeads.push("");
+    }
+
+    const heads: string[] = [...webHeads, ""];
     if (/write|draft|compose|create/i.test(lower)) {
       heads.push(`• Say **\"write about ${keywords[0] ?? "your topic"}\"** and I'll draft the full post with a headline and tags.`);
     }
@@ -1219,11 +1412,226 @@ class NeuralMindEngine {
 
     return pickVariant(
       [
-        `**Got it — ${understood.join(" and ")}.** ${tone} ${tone ? "" : "Here's how I can help:"} ${heads.join(" ")}`,
-        `**Interesting — ${understood.join(", ")}.** ${tone ? tone + " " : ""}Let me point you somewhere useful: ${heads.join(" ")}`,
+        `**Got it — ${understood.join(" and ")}.** ${tone ? "The tone reads " + tone + ". " : ""}${webHeads.length > 0 ? "" : "Here's how I can help: "} ${heads.join(" ")}`,
+        `**Interesting — ${understood.join(", ")}.** ${tone ? "The tone reads " + tone + ". " : ""}${webHeads.length > 0 ? "" : "Let me point you somewhere useful: "} ${heads.join(" ")}`,
       ],
       seed + lower
     );
+  }
+
+  /**
+   * Main single-turn query processor that drives both chat routes and the studio
+   * composer. Every query is classified once, routed to the right engine, and
+   * the response is persisted back into the hive so the brains compound over
+   * time (one more value than just answering).
+   */
+  async processQuery(input: string, history: { role: string; content: string }[] = []): Promise<NeuralResponse> {
+    const startedAt = Date.now();
+    const { intent, confidence } = await this.classifyIntentWithMemory(input);
+    this.log.info("processing query", { intent, confidence });
+
+    const urls = extractUrls(input);
+    const enginesUsed: ("internal" | "external" | "hive" | "llm")[] = [];
+    const sources: string[] = [];
+    let findings: ResearchFinding[] = [];
+    // Each intent stores a different report shape in `data`; consumers below
+    // destructure it per-case with explicit callback types.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let data: any = {};
+
+    switch (intent) {
+      case "run_sweep": {
+        enginesUsed.push("hive");
+        const [sweep, hive] = await Promise.all([hiveBrain.sweepInternal(), hiveBrain.status()]);
+        data = { sweep, hive };
+        break;
+      }
+      case "write_content": {
+        enginesUsed.push("internal");
+        const topic = this.extractDraft(input);
+        data = { ...composeDraft(topic), topic };
+        break;
+      }
+      case "rewrite_content": {
+        enginesUsed.push("internal");
+        const draft = this.extractDraft(input);
+        data = { polish: polishText(draft), draft };
+        break;
+      }
+      case "summarize_content": {
+        enginesUsed.push("internal");
+        const draft = this.extractDraft(input);
+        data = { summary: summarizeText(stripHtml(draft), 2).slice(0, 280), draft };
+        break;
+      }
+      case "headline_suggest": {
+        enginesUsed.push("internal");
+        const draft = this.extractDraft(input);
+        const firstLine = draft.split(/\n/)[0]?.slice(0, 60) ?? "Untitled";
+        data = { result: generateHeadline(firstLine, draft), draft };
+        break;
+      }
+      case "tag_suggest": {
+        enginesUsed.push("internal");
+        const draft = this.extractDraft(input);
+        data = { result: generateTopics(draft), draft };
+        break;
+      }
+      case "outline_suggest": {
+        enginesUsed.push("internal");
+        const draft = this.extractDraft(input);
+        data = { outline: buildOutline(draft), draft };
+        break;
+      }
+      case "expand_content": {
+        enginesUsed.push("internal");
+        const draft = this.extractDraft(input);
+        data = { extension: continueText(draft), draft };
+        break;
+      }
+      case "curate_content": {
+        enginesUsed.push("internal", "hive");
+        const [analysis, engagement] = await Promise.all([this.analyzeContent(), hiveBrain.computeEngagement()]);
+        data = { analysis, engagement };
+        break;
+      }
+      case "system_health": {
+        enginesUsed.push("internal", "hive");
+        const [stats, anomalies, hive] = await Promise.all([this.getPlatformStats(), this.detectAnomalies(), hiveBrain.status()]);
+        data = { stats, anomalies: anomalies.anomalies, hive };
+        break;
+      }
+      case "content_analysis": {
+        enginesUsed.push("internal");
+        data = { analysis: await this.analyzeContent() };
+        break;
+      }
+      case "user_analysis": {
+        enginesUsed.push("internal");
+        const [users, visits] = await Promise.all([this.analyzeUsers(), this.getVisitAnalyticsSafe()]);
+        data = { users, visits, findings: [], intentInfo: this.analyzeQueryIntent(input) };
+        break;
+      }
+      case "moderation_report": {
+        enginesUsed.push("internal");
+        data = { moderation: await this.getModerationReport() };
+        break;
+      }
+      case "threat_scan": {
+        enginesUsed.push("internal");
+        const [anomalies, moderation] = await Promise.all([this.detectAnomalies(), this.getModerationReport()]);
+        data = { anomalies: anomalies.anomalies, moderation };
+        break;
+      }
+      case "growth_report": {
+        enginesUsed.push("internal");
+        const [growth, visits] = await Promise.all([this.getGrowthReport(), this.getVisitAnalyticsSafe()]);
+        data = { growth, visits, findings: [], intentInfo: this.analyzeQueryIntent(input) };
+        break;
+      }
+      case "regional_analysis": {
+        enginesUsed.push("internal");
+        const [regional, visits] = await Promise.all([this.getRegionalIntelligence(), this.getVisitAnalyticsSafe()]);
+        data = { regional, visits, findings: [], intentInfo: this.analyzeQueryIntent(input) };
+        break;
+      }
+      case "trend_query": {
+        enginesUsed.push("internal", "external", "hive");
+        const [analysis, externalKnowledge, hiveLearnings, visits] = await Promise.all([
+          this.analyzeContent(),
+          this.getExternalKnowledge(input),
+          hiveBrain.recall(input, 5),
+          this.getVisitAnalyticsSafe(),
+        ]);
+        data = { internalTopics: analysis.topTopics, externalKnowledge, hiveLearnings, visits, findings: [], intentInfo: this.analyzeQueryIntent(input) };
+        break;
+      }
+      case "hive_report": {
+        enginesUsed.push("hive");
+        const [hive, recall, visits] = await Promise.all([hiveBrain.status(), hiveBrain.recall(input, 6), this.getVisitAnalyticsSafe()]);
+        data = { hive, recall, visits, findings: [], intentInfo: this.analyzeQueryIntent(input) };
+        break;
+      }
+      case "recommendation": {
+        enginesUsed.push("internal", "hive");
+        const [recommended, engagement] = await Promise.all([hiveBrain.recommend(undefined, 6), hiveBrain.computeEngagement()]);
+        const webFinds = /research|web|online|latest|trend|news/i.test(input)
+          ? await this.researchTopic(input, 2).catch(() => [])
+          : [];
+        findings = webFinds;
+        data = { recommended, engagement, findings: webFinds, intentInfo: this.analyzeQueryIntent(input) };
+        break;
+      }
+      case "web_research": {
+        enginesUsed.push("external");
+        const intentInfo = this.analyzeQueryIntent(input);
+        const finds = await this.researchTopic(input, 3);
+        findings = finds;
+        data = { findings: finds, intentInfo, visits: await this.getVisitAnalyticsSafe() };
+        const llm = await this.tryConverse(input, history, finds, intent);
+        if (llm) return llm;
+        break;
+      }
+      case "external_learn": {
+        enginesUsed.push("external");
+        const url = urls[0];
+        if (url && isUrl(url)) {
+          data = await this.learnFromUrl(url);
+          sources.push(url);
+        } else {
+          data = { results: await this.getExternalKnowledge(input) };
+        }
+        break;
+      }
+      case "knowledge_search": {
+        enginesUsed.push("external", "hive");
+        const [results, hiveRecall] = await Promise.all([this.getExternalKnowledge(input), hiveBrain.recall(input, 5)]);
+        data = { results, hiveRecall };
+        break;
+      }
+      case "memory_manage": {
+        enginesUsed.push("external");
+        if (input.toLowerCase().includes("clear")) {
+          const deleted = await prisma.neuralMemory.deleteMany({});
+          data = { deleted: deleted.count, action: "clear" };
+        } else {
+          data = { memories: await this.getMemoryBank({ limit: 10 }), action: "list" };
+        }
+        break;
+      }
+      default: {
+        // The "conversational brain": decode the language of the query
+        // (greetings, thanks, identity, capabilities, or anything else) and
+        // answer dynamically instead of repeating a canned platform overview.
+        enginesUsed.push("internal", "hive");
+        const [hive, recall, visits] = await Promise.all([
+          hiveBrain.status(),
+          hiveBrain.recall(input, 3),
+          this.getVisitAnalyticsSafe(),
+        ]);
+        const intentInfo = this.analyzeQueryIntent(input);
+
+        // Back free-form questions with live research whenever the hive is thin
+        // on the subject or the admin asked for outside knowledge; plain small
+        // talk stays on the deterministic brain for instant replies.
+        const isSmallTalk = /^(hi|hey|hello|jambo|sasa|habari|mambo|hujambo|yo|hola|howdy|thanks|thank you|asante|nice|great work|good job|who are you|what can you do)\b/i.test(input.trim());
+        const thin = !recall || recall.length < 3;
+        const asksForWeb = /research|search (the )?(web|internet)|online|latest|news|google|fact check|verify|sources|current/i.test(input);
+        const finds = !isSmallTalk && (thin || asksForWeb) ? await this.researchTopic(input, 2) : [];
+        findings = finds;
+
+        data = { hive, recall, query: input, findings: finds, intentInfo, visits };
+        if (!isSmallTalk) {
+          const llm = await this.tryConverse(input, history, finds, intent);
+          if (llm) return llm;
+        }
+        break;
+      }
+    }
+
+    const text = await this.synthesizeResponse(intent, data, input);
+    this.log.info("query resolved", { intent, enginesUsed, elapsedMs: Date.now() - startedAt });
+    return { text, intent, enginesUsed, confidence, sources, findings: findings.length > 0 ? findings : undefined };
   }
 
   /** Extract the draft/topic from a chat instruction like "polish this: <text>". */
@@ -1233,7 +1641,52 @@ class NeuralMindEngine {
     return text;
   }
 
-  private calculateHealthScore(stats: PlatformStats, anomalies: { severity: string }[]): number {
+  /** Traffic intelligence, never fatal when Analytics is empty or slow. */
+  private async getVisitAnalyticsSafe(): Promise<Awaited<ReturnType<typeof hiveBrain.getVisitAnalytics>> | null> {
+    return hiveBrain.getVisitAnalytics("7d").catch(() => null);
+  }
+
+  /**
+   * The decoded shape of a human question: keywords, entities, sentiment and
+   * tone. The minds use this to speak like a colleague — reacting to the actual
+   * language of the query, not a canned template.
+   */
+  private analyzeQueryIntent(input: string) {
+    const keywords = extractKeywords(input, 6).map((k) => k.keyword);
+    const entities = extractEntities(input).slice(0, 5).map((e) => ({ value: e.value, type: e.type }));
+    const sentiment = analyzeSentiment(input);
+    const toneSeverity: "positive" | "negative" | "neutral" =
+      sentiment.sentiment === "positive" ? "positive" : sentiment.sentiment === "negative" ? "negative" : "neutral";
+    return { keywords, entities, sentiment, toneSeverity };
+  }
+
+  /**
+   * AI-native turn for the research/conversational branches: when a model is
+   * configured, ask it to answer from hive memory PLUS live web sources and
+   * return that as the response. `null` keeps the deterministic brains as the
+   * fallback so chat never breaks without a provider or network.
+   */
+  private async tryConverse(
+    input: string,
+    history: { role: string; content: string }[],
+    findings: ResearchFinding[],
+    intent: Intent
+  ): Promise<NeuralResponse | null> {
+    const llm = await this.converse(input, history, { withWeb: true, findings });
+    if (!llm) return null;
+    const merged = llm.findings.length > 0 ? llm.findings : findings;
+    return {
+      text: llm.text,
+      intent,
+      enginesUsed: ["hive", "external", "llm"],
+      confidence: 0.92,
+      sources: merged.map((f) => f.url),
+      findings: merged.length > 0 ? merged.map((f) => ({ title: f.title, url: f.url, source: f.source })) : undefined,
+    };
+  }
+
+
+    private calculateHealthScore(stats: PlatformStats, anomalies: { severity: string }[]): number {
     let score = 100;
     if (stats.pendingModeration > 50) score -= 15;
     else if (stats.pendingModeration > 20) score -= 8;

@@ -236,6 +236,33 @@ export async function redisIncr(key: string): Promise<number> {
   }
 }
 
+/**
+ * Counter with an explicit TTL. Used by the visitor tracker so daily visit
+ * counters live exactly as long as they are useful instead of a fixed hour.
+ */
+export async function cacheIncr(key: string, ttlSeconds = 3600): Promise<number> {
+  const fullKey = cacheKey(key);
+  const ttl = Math.min(Math.max(1, ttlSeconds), MAX_TTL_SECONDS);
+  try {
+    const c = await getClient();
+    if (c) {
+      const n = await c.incr(fullKey);
+      await c.expire(fullKey, ttl);
+      return n;
+    }
+    if (restUrl && restToken) {
+      const n = await restCommand<number>("INCR", fullKey);
+      if (n !== null) {
+        await restCommand("EXPIRE", fullKey, ttl);
+        return n;
+      }
+    }
+    return 0;
+  } catch {
+    return 0;
+  }
+}
+
 /** JSON cache helpers used by hot paths (settings, feed). */
 export async function cacheGet<T>(key: string): Promise<T | null> {
   const raw = await redisGetRaw(key);

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { extractKeywords, analyzeSentiment, extractEntities, summarizeText, stripHtml } from "@/lib/neural-text";
 import { createLogger } from "@/lib/logger";
 import { generateText } from "@/lib/ai-provider";
@@ -62,6 +63,21 @@ export interface TrainResult {
   signalsUpdated: number;
   lessons: string[];
 }
+
+export interface VisitAnalytics {
+  window: string;
+  totalViews: number;
+  uniqueVisitors: number;
+  sessions: number;
+  newVisitors: number;
+  returningVisitors: number;
+  topPosts: { id: string; title: string; slug: string; views: number; visitors: number }[];
+  topPages: { path: string; views: number; visitors: number }[];
+  countries: { country: string; views: number }[];
+  daily: { day: string; views: number; visitors: number }[];
+}
+
+const WINDOW_DAYS: Record<string, number> = { "24h": 1, "7d": 7, "30d": 30, "90d": 90 };
 
 export interface HiveSweepResult {
   postsScanned: number;
@@ -149,9 +165,33 @@ class HiveBrain {
     return 1;
   }
 
+  /**
+   * Ids this brain has already memorised, in ONE query.
+   *
+   * The previous shape asked the database "have I seen X?" once per post and
+   * once per comment (up to 180 round trips per sweep). Reading the metadata
+   * column once and building a set in memory makes a sweep O(1) queries for
+   * dedupe instead of O(n).
+   */
+  private async learnedIds(): Promise<Set<string>> {
+    const rows = await prisma.neuralMemory.findMany({
+      where: { source: "internal", category: { in: ["topic", "opinion", "entity"] } },
+      select: { metadata: true },
+      take: 4000,
+    });
+    const ids = new Set<string>();
+    for (const row of rows) {
+      const postId = /"postId":"([^"]+)"/.exec(row.metadata ?? "")?.[1];
+      const commentId = /"commentId":"([^"]+)"/.exec(row.metadata ?? "")?.[1];
+      if (postId) ids.add(`p:${postId}`);
+      if (commentId) ids.add(`c:${commentId}`);
+    }
+    return ids;
+  }
+
   async sweepInternal(): Promise<HiveSweepResult> {
     const startedAt = Date.now();
-    const [posts, comments] = await Promise.all([
+    const [posts, comments, seen] = await Promise.all([
       prisma.post.findMany({
         where: { status: "PUBLISHED" },
         orderBy: { createdAt: "desc" },
@@ -163,38 +203,201 @@ class HiveBrain {
         take: 120,
         select: { id: true, content: true, postId: true },
       }),
+      this.learnedIds(),
     ]);
 
+    const batch: Prisma.NeuralMemoryCreateManyInput[] = [];
     let postsLearned = 0;
     let commentsLearned = 0;
-    let memoriesCreated = 0;
 
     for (const post of posts) {
-      const created = await this.ingestPost(post);
-      if (created > 0) {
-        postsLearned += 1;
-        memoriesCreated += created;
+      if (seen.has(`p:${post.id}`)) continue;
+      const text = `${post.title} ${post.excerpt ?? ""} ${stripHtml(post.content).slice(0, 1800)}`;
+      if (text.trim().length < 20) continue;
+
+      const keywords = extractKeywords(text, 8);
+      const entities = extractEntities(text).slice(0, 3);
+      const sentiment = analyzeSentiment(text);
+      const summary = summarizeText(stripHtml(text), 2);
+      const baseTags = [
+        ...keywords.slice(0, 6).map((k) => k.keyword),
+        post.category?.name ?? post.category?.slug ?? "uncategorized",
+        "platform",
+      ];
+
+      batch.push({
+        source: "internal",
+        category: "topic",
+        content: `${post.title} — ${summary}${summary ? "." : ""} Sentiment: ${sentiment.sentiment} (${sentiment.score.toFixed(2)}).`,
+        tags: baseTags.slice(0, 12).join(","),
+        confidence: 0.8,
+        metadata: JSON.stringify({ postId: post.id, slug: post.slug, title: post.title, type: "post", sentiment: sentiment.sentiment }),
+        sourceUrl: `post:${post.slug}`,
+      });
+
+      for (const entity of entities) {
+        batch.push({
+          source: "internal",
+          category: "entity",
+          content: `${entity.value} (${entity.type}) — from post "${post.title}"`,
+          tags: [entity.type, entity.value.toLowerCase(), ...keywords.slice(0, 3).map((k) => k.keyword)].join(","),
+          confidence: 0.7,
+          metadata: JSON.stringify({ postId: post.id, type: "entity", entityType: entity.type }),
+          sourceUrl: `post:${post.slug}`,
+        });
       }
+      postsLearned += 1;
     }
 
     for (const comment of comments) {
-      const created = await this.ingestComment(comment);
-      if (created > 0) {
-        commentsLearned += 1;
-        memoriesCreated += created;
-      }
+      if (seen.has(`c:${comment.id}`)) continue;
+      const text = stripHtml(comment.content).slice(0, 1200);
+      if (text.trim().length < 2) continue;
+
+      const sentiment = analyzeSentiment(text);
+      const keywords = extractKeywords(text, 4);
+      const snippet = text.length > 120 ? `${text.slice(0, 120)}…` : text;
+
+      batch.push({
+        source: "internal",
+        category: "opinion",
+        content: `Comment sentiment ${sentiment.sentiment} (${sentiment.score.toFixed(2)}): "${snippet}"`,
+        tags: [...keywords.map((k) => k.keyword), sentiment.sentiment, "comment"].slice(0, 8).join(","),
+        confidence: 0.65,
+        metadata: JSON.stringify({ commentId: comment.id, postId: comment.postId, type: "comment", sentiment: sentiment.sentiment }),
+        sourceUrl: null,
+      });
+      commentsLearned += 1;
+    }
+
+    // One bulk insert instead of one statement per memory.
+    if (batch.length > 0) {
+      await prisma.neuralMemory.createMany({ data: batch });
     }
 
     const totalMemories = await prisma.neuralMemory.count();
-    this.log.info("sweep complete", { posts: posts.length, comments: comments.length, postsLearned, commentsLearned, memoriesCreated, totalMemories, elapsedMs: Date.now() - startedAt });
+    this.log.info("sweep complete", {
+      posts: posts.length,
+      comments: comments.length,
+      postsLearned,
+      commentsLearned,
+      memoriesCreated: batch.length,
+      totalMemories,
+      elapsedMs: Date.now() - startedAt,
+    });
 
     return {
       postsScanned: posts.length,
       commentsScanned: comments.length,
       postsLearned,
       commentsLearned,
-      memoriesCreated,
+      memoriesCreated: batch.length,
       totalMemories,
+    };
+  }
+
+  /**
+   * Traffic intelligence for the minds.
+   *
+   * "Unique visitor" is a distinct salted visitorHash, never an IP — see
+   * lib/visitor.ts. Each block is one aggregate query so a dashboard render
+   * costs four round trips regardless of how much history exists.
+   */
+  async getVisitAnalytics(window = "7d"): Promise<VisitAnalytics> {
+    const days = WINDOW_DAYS[window] ?? 7;
+    const since = new Date(Date.now() - days * DAY_MS);
+
+    const n = (v: unknown) => Number(v ?? 0);
+
+    const [totals, topPosts, topPages, countries, daily, firstSeen] = await Promise.all([
+      prisma.$queryRaw<{ views: bigint; visitors: bigint; sessions: bigint }[]>`
+        SELECT COUNT(*)::bigint AS views,
+               COUNT(DISTINCT "visitorHash")::bigint AS visitors,
+               COUNT(DISTINCT "sessionKey")::bigint AS sessions
+        FROM "PageView"
+        WHERE "createdAt" >= ${since}
+      `,
+      prisma.$queryRaw<{ id: string; title: string; slug: string; views: bigint; visitors: bigint }[]>`
+        SELECT p."id", p."title", p."slug",
+               COUNT(v."id")::bigint AS views,
+               COUNT(DISTINCT v."visitorHash")::bigint AS visitors
+        FROM "PageView" v
+        JOIN "Post" p ON p."id" = v."postId"
+        WHERE v."createdAt" >= ${since}
+        GROUP BY p."id", p."title", p."slug"
+        ORDER BY views DESC
+        LIMIT 12
+      `,
+      prisma.$queryRaw<{ path: string; views: bigint; visitors: bigint }[]>`
+        SELECT "path",
+               COUNT(*)::bigint AS views,
+               COUNT(DISTINCT "visitorHash")::bigint AS visitors
+        FROM "PageView"
+        WHERE "createdAt" >= ${since}
+        GROUP BY "path"
+        ORDER BY views DESC
+        LIMIT 12
+      `,
+      prisma.$queryRaw<{ country: string; views: bigint }[]>`
+        SELECT "country", COUNT(*)::bigint AS views
+        FROM "PageView"
+        WHERE "createdAt" >= ${since} AND "country" IS NOT NULL
+        GROUP BY "country"
+        ORDER BY views DESC
+        LIMIT 8
+      `,
+      prisma.$queryRaw<{ day: Date; views: bigint; visitors: bigint }[]>`
+        SELECT date_trunc('day', "createdAt") AS day,
+               COUNT(*)::bigint AS views,
+               COUNT(DISTINCT "visitorHash")::bigint AS visitors
+        FROM "PageView"
+        WHERE "createdAt" >= ${since}
+        GROUP BY day
+        ORDER BY day ASC
+      `,
+      // Visitors whose FIRST ever view falls inside the window are "new".
+      prisma.$queryRaw<{ new_visitors: bigint; returning_visitors: bigint }[]>`
+        WITH seen AS (
+          SELECT "visitorHash", MIN("createdAt") AS first_at
+          FROM "PageView"
+          WHERE "visitorHash" IS NOT NULL
+          GROUP BY "visitorHash"
+        ),
+        active AS (
+          SELECT DISTINCT "visitorHash" FROM "PageView" WHERE "createdAt" >= ${since}
+        )
+        SELECT
+          COUNT(*) FILTER (WHERE s.first_at >= ${since})::bigint AS new_visitors,
+          COUNT(*) FILTER (WHERE s.first_at < ${since})::bigint AS returning_visitors
+        FROM seen s
+        WHERE s."visitorHash" IN (SELECT "visitorHash" FROM active)
+      `,
+    ]);
+
+    const t = totals[0];
+    const fs = firstSeen[0];
+
+    return {
+      window,
+      totalViews: n(t?.views),
+      uniqueVisitors: n(t?.visitors),
+      sessions: n(t?.sessions),
+      newVisitors: n(fs?.new_visitors),
+      returningVisitors: n(fs?.returning_visitors),
+      topPosts: topPosts.map((r) => ({
+        id: r.id,
+        title: r.title,
+        slug: r.slug,
+        views: n(r.views),
+        visitors: n(r.visitors),
+      })),
+      topPages: topPages.map((r) => ({ path: r.path, views: n(r.views), visitors: n(r.visitors) })),
+      countries: countries.map((r) => ({ country: r.country, views: n(r.views) })),
+      daily: daily.map((r) => ({
+        day: new Date(r.day).toISOString().slice(0, 10),
+        views: n(r.views),
+        visitors: n(r.visitors),
+      })),
     };
   }
 
