@@ -64,3 +64,25 @@ export function coverSrc(
 export function thumbUrl(opts: ThumbOptions): string {
   return coverSrc(null, opts);
 }
+
+/**
+ * Cover URL for a stored post, resolved by id instead of by value.
+ *
+ * WHY: several covers are stored as base64 `data:` URIs (multi-megabyte rows —
+ * one is 4 MB). Selecting that column pulled megabytes through Postgres,
+ * Prisma, Redis and finally the HTML/RSC payload on EVERY feed render, and
+ * `og:image` pointed at `https://site/data:image/jpeg;base64,…`, which no
+ * social crawler will fetch — that is why link previews failed to attach.
+ *
+ * `/api/thumb/post/<id>` streams the real cover (or paints the branded
+ * fallback when there is none) with long-lived cache headers, so feeds, OG
+ * tags, social cards and the image optimizer all deal with a short URL.
+ */
+export function postCoverSrc(postId: string): string {
+  return `/api/thumb/post/${postId}`;
+}
+
+/** True for inline base64/percent-encoded image payloads stored in the DB. */
+export function isInlineImage(value: string | null | undefined): boolean {
+  return typeof value === "string" && value.startsWith("data:image/");
+}

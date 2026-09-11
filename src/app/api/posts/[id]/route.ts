@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { postCoverSrc } from "@/lib/thumb";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { slugify } from "@/lib/utils";
@@ -34,6 +35,10 @@ export async function GET(
         },
         _count: { select: { comments: true, likes: true } },
       },
+      // The stored cover can be a 2–4 MB base64 data URI. Handing that to the
+      // editor put megabytes into React state and localStorage and then posted
+      // them straight back on the next save; the thumb route serves it instead.
+      omit: { coverImage: true },
     });
 
     if (!post) {
@@ -50,6 +55,7 @@ export async function GET(
     return NextResponse.json({
       post: {
         ...post,
+        coverImage: postCoverSrc(post.id),
         viewCount: post.status === "PUBLISHED" ? post.viewCount + 1 : post.viewCount,
       },
     });
@@ -116,7 +122,11 @@ export async function PUT(
     if (title !== undefined) updateData.title = String(title).trim().slice(0, 300);
     if (content !== undefined) updateData.content = String(content).trim();
     if (excerpt !== undefined) updateData.excerpt = excerpt ? String(excerpt).trim().slice(0, 500) : null;
-    if (coverImage !== undefined) updateData.coverImage = coverImage || null;
+    // Never write a derived /api/thumb URL back over the stored cover — that
+    // would erase the original image (the thumb route would resolve itself).
+    const derivedCover =
+      typeof coverImage === "string" && coverImage.startsWith("/api/thumb/");
+    if (coverImage !== undefined && !derivedCover) updateData.coverImage = coverImage || null;
     if (categoryId !== undefined) updateData.categoryId = categoryId || null;
     if (featured !== undefined) updateData.featured = Boolean(featured);
 

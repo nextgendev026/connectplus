@@ -4,7 +4,7 @@ import Script from "next/script";
 import nextDynamic from "next/dynamic";
 import { prisma } from "@/lib/prisma";
 import { cn, estimateReadTime, timeAgo } from "@/lib/utils";
-import { coverSrc } from "@/lib/thumb";
+import { coverSrc, postCoverSrc } from "@/lib/thumb";
 import { auth } from "@/lib/auth";
 import { rankFeed } from "@/lib/feed-ranker";
 import { cacheGet, cacheSet } from "@/lib/redis";
@@ -50,26 +50,92 @@ function formatViews(count: number): string {
   return String(count);
 }
 
-/** Serve the home feed from a 24h Redis snapshot when the database is
- * unreachable (network blip / pooler outage) instead of hard-erroring the
- * page. Fresh fetches continuously refresh the snapshot. An in-memory
- * last-known-good mirror is the final tier so the page still renders when
- * BOTH the database and Redis are unreachable from this process. */
+/** Feed-pool data layer. The pool (posts + hero + categories + tags +
+ * creators) is user-independent — personalization is applied afterwards in
+ * `rankFeed` — so it is safe to share across visitors.
+ *
+ * Three tiers, cheapest first:
+ *   1. Redis pool snapshot (stale-while-revalidate, 60s freshness) — the five
+ *      heavy queries below take 15-25s against a shared free-tier Postgres, so
+ *      serving them from Redis keeps the home page fast AND keeps the DB from
+ *      being hammered on every render. `feed:version` (bumped on publish)
+ *      invalidates instantly, so new stories still appear immediately.
+ *   2. Live DB fetch, which refreshes the snapshot at every tier.
+ *   3. 24h Redis emergency snapshot + an in-process last-known-good mirror, so
+ *      the page still renders when the DB (or both DB and Redis) is down.
+ */
 const FALLBACK_KEY = "feed:home:fallback";
+const FRESH_MS = 60_000;
+const POOL_TTL_SECONDS = 60 * 60 * 6;
+interface PoolSnapshot {
+  at: number;
+  value: unknown;
+}
 let memoryFeedCache: { at: number; value: unknown } | null = null;
 
-async function withFeedFallback<T extends unknown[]>(
-  pages: { [K in keyof T]: Promise<T[K]> }
+const DATE_KEYS = ["createdAt", "updatedAt", "publishedAt", "scheduledAt", "moderatedAt"];
+
+/** Redis stores the snapshot as JSON, so Dates come back as ISO strings — but
+ *  the feed components (HeroSlideshow, rankers) call Date methods on them.
+ *  Revive the known timestamp fields when serving a cached snapshot. */
+function reviveFeedDates<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => reviveFeedDates(item)) as unknown as T;
+  }
+  if (value && typeof value === "object" && !(value instanceof Date)) {
+    const out: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+    for (const [key, raw] of Object.entries(out)) {
+      if (typeof raw === "string" && DATE_KEYS.includes(key)) {
+        const parsed = new Date(raw);
+        if (!Number.isNaN(parsed.getTime())) out[key] = parsed;
+      } else if (raw && typeof raw === "object") {
+        out[key] = reviveFeedDates(raw);
+      }
+    }
+    return out as unknown as T;
+  }
+  return value;
+}
+
+async function fetchFeedPool<T extends unknown[]>(
+  pages: { [K in keyof T]: Promise<T[K]> },
+  key: string
 ): Promise<T> {
+  const result = await Promise.all(pages);
+  const snapshot: PoolSnapshot = { at: Date.now(), value: result };
+  memoryFeedCache = snapshot;
+  void cacheSet(key, snapshot, POOL_TTL_SECONDS).catch(() => {});
+  void cacheSet(FALLBACK_KEY, result, 60 * 60 * 24).catch(() => {});
+  return result;
+}
+
+async function withFeedFallback<T extends unknown[]>(
+  pages: { [K in keyof T]: Promise<T[K]> },
+  scope: string
+): Promise<T> {
+  let key = scope;
   try {
-    const result = await Promise.all(pages);
-    memoryFeedCache = { at: Date.now(), value: result };
-    void cacheSet(FALLBACK_KEY, result, 60 * 60 * 24).catch(() => {});
-    return result;
+    const version = (await cacheGet<number>("feed:version").catch(() => null)) ?? 0;
+    key = `${scope}:v${version}`;
+    const snapshot = await cacheGet<PoolSnapshot>(key).catch(() => null);
+    if (snapshot) {
+      // Fresh enough — serve the snapshot.
+      if (Date.now() - snapshot.at < FRESH_MS) return reviveFeedDates(snapshot.value as T);
+      // Stale: serve immediately and revalidate in the background so a slow
+      // query can never block a visitor (and the DB isn't hit per request).
+      void fetchFeedPool(pages, key).catch(() => {});
+      return reviveFeedDates(snapshot.value as T);
+    }
+  } catch {
+    // fall through to a live fetch
+  }
+
+  try {
+    return await fetchFeedPool(pages, key);
   } catch (err) {
     const cached = await cacheGet<T>(FALLBACK_KEY).catch(() => null);
-    if (cached !== null) return cached;
-    if (memoryFeedCache) return memoryFeedCache.value as T;
+    if (cached !== null) return reviveFeedDates(cached);
+    if (memoryFeedCache) return reviveFeedDates(memoryFeedCache.value as T);
     throw err;
   }
 }
@@ -559,9 +625,12 @@ export default async function HomeFeedPage({
     where.category = { slug: categoryFilter };
   }
 
-  const [posts, heroPostRows, allCategories, allTags, allCreators] = await withFeedFallback([
+  const [postRows, heroRows, allCategories, allTags, allCreators] = await withFeedFallback([
     prisma.post.findMany({
       where,
+      // The stored cover can be a multi-megabyte base64 data URI; selecting it
+      // here is what made feeds slow. /api/thumb/post/<id> serves it instead.
+      omit: { coverImage: true },
       include: {
         author: { select: { name: true, username: true, avatar: true } },
         category: { select: { name: true, slug: true } },
@@ -582,7 +651,6 @@ export default async function HomeFeedPage({
         title: true,
         slug: true,
         excerpt: true,
-        coverImage: true,
         viewCount: true,
         createdAt: true,
         category: { select: { name: true, slug: true } },
@@ -622,7 +690,12 @@ export default async function HomeFeedPage({
         _count: { select: { posts: true } },
       },
     }) as Promise<CreatorData[]>,
-  ]);
+  ], `feed:pool2:${categoryFilter ?? "all"}`);
+
+  // Swap the (omitted) stored cover for the small, cacheable thumb URL. This
+  // keeps 2–4 MB base64 rows out of the RSC payload entirely.
+  const posts = postRows.map((p) => ({ ...p, coverImage: postCoverSrc(p.id) }));
+  const heroPostRows = heroRows.map((p) => ({ ...p, coverImage: postCoverSrc(p.id) }));
 
   const categories = allCategories
     .sort((a, b) => b._count.posts - a._count.posts)

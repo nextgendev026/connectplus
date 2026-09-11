@@ -8,7 +8,7 @@ import { Clock, Eye, MessageCircle, ChevronRight, ExternalLink, Newspaper } from
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { formatDate, estimateReadTime } from "@/lib/utils";
-import { coverSrc } from "@/lib/thumb";
+import { postCoverSrc } from "@/lib/thumb";
 import { getSiteConfig } from "@/lib/settings";
 import { BookmarkButton } from "@/components/ui/BookmarkButton";
 import { FollowButton } from "@/components/ui/FollowButton";
@@ -51,10 +51,14 @@ const ARTICLE_INCLUDE = {
 
 // React cache() dedupes the post lookup across generateMetadata and the page
 // render, so a single article view pays one DB query for it instead of two.
+// `omit` keeps the stored cover column (which can be a multi-megabyte base64
+// data URI) out of the render payload; the cover is served by
+// /api/thumb/post/<id> instead, which is also what og:image points at.
 const getPost = cache((slug: string) =>
   prisma.post.findUnique({
     where: { slug },
     include: ARTICLE_INCLUDE,
+    omit: { coverImage: true },
   })
 );
 
@@ -85,11 +89,10 @@ export async function generateMetadata({ params }: ArticleParams): Promise<Metad
 
   const description =
     (post.excerpt ?? "").trim() || stripText(post.title) || "Read this story on connectPlus.";
-  const imageUrl = post.coverImage
-    ? post.coverImage.startsWith("http")
-      ? post.coverImage
-      : `${baseUrl.replace(/\/$/, "")}${post.coverImage}`
-    : `${baseUrl.replace(/\/$/, "")}${cfg?.ogImage ?? "/pwa-512.png"}`;
+  // Social crawlers must be able to FETCH the preview image. A stored base64
+  // data URI (several covers are 2–4 MB) produced og:image="https://site/data:…",
+  // which every platform rejects — that is why shared links arrived bare.
+  const imageUrl = `${baseUrl.replace(/\/$/, "")}${postCoverSrc(post.id)}`;
 
   return {
     title: post.title,
@@ -173,16 +176,19 @@ export default async function ArticlePage({ params }: ArticleParams) {
       status: "PUBLISHED",
     },
     include: { author: { select: { name: true } } },
+    omit: { coverImage: true },
     take: 3,
     orderBy: { createdAt: "desc" },
   });
+
+  const cover = postCoverSrc(post.id);
 
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "Article",
     headline: post.title,
     description: post.excerpt ?? undefined,
-    image: post.coverImage ?? undefined,
+    image: cover,
     datePublished: post.publishedAt?.toISOString() ?? post.createdAt.toISOString(),
     dateModified: post.updatedAt.toISOString(),
     author: {
@@ -214,12 +220,7 @@ export default async function ArticlePage({ params }: ArticleParams) {
       {/* Hero */}
       <div className="relative h-[46vh] min-h-[360px] overflow-hidden">
         <Image
-          src={coverSrc(post.coverImage, {
-            title: post.title,
-            category: post.category?.name,
-            author: post.author.name ?? post.author.username,
-            seed: post.slug,
-          })}
+          src={cover}
           alt={post.title}
           fill
           className="object-cover"
@@ -325,7 +326,7 @@ export default async function ArticlePage({ params }: ArticleParams) {
                     url={`/article/${post.slug}`}
                     title={post.title}
                     description={post.excerpt ?? undefined}
-                    image={post.coverImage}
+                    image={cover}
                   />
                 </div>
               </div>

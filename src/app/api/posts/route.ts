@@ -10,13 +10,17 @@ import { rankFeed } from "@/lib/feed-ranker";
 import type { FeedRankVariant } from "@/lib/experiments";
 import { autoTagPost } from "@/lib/auto-tag";
 import { findDuplicate } from "@/lib/neural-vector";
+import { postCoverSrc } from "@/lib/thumb";
 
+// NOTE: `coverImage` is deliberately absent — stored covers can be multi-MB
+// base64 data URIs, and selecting them bloated every feed response (and the
+// Redis body cache) by megabytes. Responses carry a small /api/thumb/post/<id>
+// URL instead (see LIST_COVER mapping in GET).
 const POST_SELECT = {
   id: true,
   title: true,
   slug: true,
   excerpt: true,
-  coverImage: true,
   viewCount: true,
   createdAt: true,
   author: { select: { id: true, name: true, username: true, avatar: true } },
@@ -166,7 +170,10 @@ export async function GET(request: NextRequest) {
       }),
       prisma.post.count({ where }),
     ]);
-    const enriched = await withSources(posts);
+    const enriched = (await withSources(posts)).map((post) => ({
+      ...post,
+      coverImage: postCoverSrc(post.id),
+    }));
 
     const body = JSON.stringify({
       posts: enriched,
@@ -302,7 +309,9 @@ export async function POST(request: NextRequest) {
         slug,
         content: content.trim(),
         excerpt: excerpt?.trim().slice(0, 500) || null,
-        coverImage: coverImage || null,
+        // A derived thumb URL is never a real cover; store nothing instead.
+        coverImage:
+          coverImage && !String(coverImage).startsWith("/api/thumb/") ? coverImage : null,
         authorId: userId,
         categoryId: categoryId || null,
         status: postStatus,
