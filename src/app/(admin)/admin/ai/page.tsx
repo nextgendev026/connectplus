@@ -17,6 +17,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import AgentControlPanel from "@/components/admin/AgentControlPanel";
 
 interface PipelineOverview {
   pipeline: {
@@ -196,6 +197,8 @@ export default function AiPipelinesPage() {
             You have read-only access. Pipeline execution (Run All Pipelines) requires the SUPER_ADMIN role.
           </div>
         )}
+
+        <AgentControlPanel canWrite={role === "SUPER_ADMIN" || role === "ADMIN"} />
 
         {runResult && (
           <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4">

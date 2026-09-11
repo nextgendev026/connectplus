@@ -16,6 +16,7 @@ import { LikeButton } from "@/components/ui/LikeButton";
 import { ArticleActions } from "@/components/ui/ArticleActions";
 import { CommentsSection } from "@/components/ui/CommentsSection";
 import { StyledContent } from "@/components/ui/StyledContent";
+import AdSlot from "@/components/ads/AdSlot";
 
 interface ArticleParams {
   params: Promise<{ slug: string }>;
@@ -269,6 +270,9 @@ export default async function ArticlePage({ params }: ArticleParams) {
       <div className="mx-auto max-w-4xl min-w-0 px-4 py-10 sm:px-6 lg:px-8">
         <div className="grid min-w-0 grid-cols-1 gap-12 lg:grid-cols-[1fr_280px]">
           <article className="min-w-0">
+            {/* Above-the-fold sponsor slot (renders only when a campaign is live) */}
+            <AdSlot slot="article-top" className="mb-8" />
+
             <div className="flex flex-wrap gap-2 mb-8">
               {post.tags.map((tag) => (
                 <span key={tag.id} className="rounded-full bg-surface-800 px-3 py-1 text-xs text-surface-300 hover:bg-surface-700 transition-colors cursor-pointer">
@@ -369,6 +373,9 @@ export default async function ArticlePage({ params }: ArticleParams) {
           {/* Sidebar */}
           <aside className="hidden lg:block">
             <div className="sticky top-24 space-y-6">
+              {/* Sponsored slot */}
+              <AdSlot slot="article-sidebar" />
+
               {/* Author Card */}
               <div className="rounded-2xl border border-surface-800 bg-surface-900/50 p-5">
                 <div className="flex items-center gap-3">

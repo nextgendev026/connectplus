@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import Script from "next/script";
@@ -7,6 +8,7 @@ import { cn, estimateReadTime, timeAgo } from "@/lib/utils";
 import { coverSrc, postCoverSrc } from "@/lib/thumb";
 import { auth } from "@/lib/auth";
 import { rankFeed } from "@/lib/feed-ranker";
+import AdSlot from "@/components/ads/AdSlot";
 import { cacheGet, cacheSet } from "@/lib/redis";
 import {
   Eye,
@@ -523,6 +525,9 @@ function TrendingSidebar({
         {/* Trending Topics — realtime, with thumbnails + refresh */}
         <TrendingTopics />
 
+        {/* Sponsored slot — only renders when a campaign is live */}
+        <AdSlot slot="feed-sidebar" />
+
         {/* Popular Writers */}
         <div className="rounded-2xl bg-surface-900/60 border border-surface-800/50 p-5 hover:border-surface-700/50 transition-colors">
           <div className="flex items-center gap-2 mb-4">
@@ -772,7 +777,12 @@ export default async function HomeFeedPage({
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 {feedPosts.map((post, i) => (
-                  <PostCard key={post.id} post={post} index={i + 1} />
+                  <Fragment key={post.id}>
+                    <PostCard post={post} index={i + 1} />
+                    {/* One leaderboard every few cards — renders only when a
+                        campaign is live, otherwise it collapses to nothing. */}
+                    {i === 1 ? <AdSlot slot="feed-inline" className="md:col-span-2" /> : null}
+                  </Fragment>
                 ))}
               </div>
             )}

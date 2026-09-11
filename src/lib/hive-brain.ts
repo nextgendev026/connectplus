@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { extractKeywords, analyzeSentiment, extractEntities, summarizeText, stripHtml } from "@/lib/neural-text";
 import { createLogger } from "@/lib/logger";
+import { generateText } from "@/lib/ai-provider";
 
 export interface HivePostInput {
   id: string;
@@ -442,6 +443,39 @@ class HiveBrain {
         0.75,
         { tags: ["rising", "detection"], category: "signal" }
       );
+    }
+
+    // ── LLM curriculum ────────────────────────────────────────────────────
+    // When an agent (OpenRouter free / OpenCode Zen / paid) is configured, ask
+    // it to distil the day's engagement into one durable editorial lesson. This
+    // is what lets the brain actually learn *how curation works* rather than
+    // only replaying counters. Silent no-op on the builtin provider.
+    try {
+      const aiLesson = await generateText({
+        system:
+          "You are the training mentor for an East African publishing platform. You teach its editorial brain how curation works. " +
+          "Reply with ONE compact lesson (max 90 words, no headings) in the form: " +
+          "OBSERVATION: … / WHY IT WORKED: … / RULE: … — concrete, specific, and actionable for an editor.",
+        user: [
+          `Platform snapshot for ${day}: ${stats} published posts, ${moderation} pending moderation.`,
+          top ? `Hottest item: "${top.title}" in ${top.categoryName ?? "uncategorized"} (velocity ${top.velocity.toFixed(1)}).` : "",
+          c ? `Most engaged category: ${c.name} (${c.posts} posts).` : "",
+          r ? `Rising item: "${r.title}" (${r.views} views in ${r.daysLive}d).` : "",
+          c ? `Top categories: ${engagement.categories.slice(0, 5).map((x) => x.name).join(", ")}.` : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        maxTokens: 260,
+      });
+
+      if (aiLesson) {
+        await apply("ai-curriculum", `Mentor lesson: ${aiLesson}`, 0.95, {
+          tags: ["curriculum", "mentor", "editorial"],
+          category: "lesson",
+        });
+      }
+    } catch (err) {
+      this.log.warn("ai curriculum lesson skipped", { error: err });
     }
 
     return { signalsCreated, signalsUpdated, lessons };

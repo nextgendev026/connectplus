@@ -1,13 +1,56 @@
 import { getSettings } from "@/lib/settings";
 import type { Intent } from "@/lib/neural-intent";
 
-export type AiProviderName = "builtin" | "openai" | "anthropic";
+export type AiProviderName = "builtin" | "openai" | "anthropic" | "openrouter" | "opencode";
 
 export interface AiConfig {
   provider: AiProviderName;
   apiKey: string;
   model: string;
 }
+
+/**
+ * OpenAI-compatible gateways. OpenRouter fronts hundreds of models (its `:free`
+ * tier costs nothing) and OpenCode Zen hosts curated coding/writing models.
+ * Both speak the same chat-completions shape as OpenAI, so one code path
+ * serves all three.
+ */
+type GatewayName = "openai" | "openrouter" | "opencode";
+
+const OPENAI_COMPATIBLE: Record<
+  GatewayName,
+  { baseUrl: string; defaultModel: string; extraHeaders?: Record<string, string> }
+> = {
+  openai: { baseUrl: "https://api.openai.com/v1", defaultModel: "gpt-4o-mini" },
+  openrouter: {
+    baseUrl: "https://openrouter.ai/api/v1",
+    defaultModel: "meta-llama/llama-3.3-70b-instruct:free",
+    extraHeaders: {
+      // OpenRouter asks for an identifying referer/title on free traffic.
+      "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL ?? "https://connectplusapp.vercel.app",
+      "X-Title": "connectPlus",
+    },
+  },
+  opencode: { baseUrl: "https://opencode.ai/zen/v1", defaultModel: "grok-code" },
+};
+
+/** Free-tier OpenRouter models the console offers out of the box. */
+export const OPENROUTER_FREE_MODELS = [
+  "meta-llama/llama-3.3-70b-instruct:free",
+  "deepseek/deepseek-chat-v3-0324:free",
+  "google/gemini-2.0-flash-exp:free",
+  "qwen/qwen-2.5-72b-instruct:free",
+  "mistralai/mistral-small-3.1-24b-instruct:free",
+] as const;
+
+/** Curated OpenCode Zen models. */
+export const OPENCODE_MODELS = [
+  "grok-code",
+  "qwen3-coder",
+  "claude-sonnet-4",
+  "gpt-5",
+  "kimi-k2",
+] as const;
 
 const CONTENT_INTENTS: Intent[] = [
   "write_content",
@@ -31,17 +74,38 @@ const CONTENT_INTENTS: Intent[] = [
 export async function getAiConfig(): Promise<AiConfig> {
   const settings = await getSettings().catch(() => ({} as Record<string, string>));
   const providerSetting = (settings.aiProvider || "").toLowerCase().trim();
-  const openaiKey = settings.openaiApiKey || process.env.OPENAI_API_KEY || "";
-  const anthropicKey = settings.anthropicApiKey || process.env.ANTHROPIC_API_KEY || "";
 
-  if (providerSetting === "openai" && openaiKey) {
-    return { provider: "openai", apiKey: openaiKey, model: process.env.OPENAI_MODEL ?? "gpt-4o-mini" };
+  const keys: Record<Exclude<AiProviderName, "builtin">, { key: string; model: string }> = {
+    openai: {
+      key: settings.openaiApiKey || process.env.OPENAI_API_KEY || "",
+      model: settings.openaiModel || process.env.OPENAI_MODEL || OPENAI_COMPATIBLE.openai.defaultModel,
+    },
+    anthropic: {
+      key: settings.anthropicApiKey || process.env.ANTHROPIC_API_KEY || "",
+      model: settings.anthropicModel || process.env.ANTHROPIC_MODEL || "claude-3-5-haiku-latest",
+    },
+    openrouter: {
+      key: settings.openrouterApiKey || process.env.OPENROUTER_API_KEY || "",
+      model: settings.openrouterModel || process.env.OPENROUTER_MODEL || OPENAI_COMPATIBLE.openrouter.defaultModel,
+    },
+    opencode: {
+      key: settings.opencodeApiKey || process.env.OPENCODE_API_KEY || "",
+      model: settings.opencodeModel || process.env.OPENCODE_MODEL || OPENAI_COMPATIBLE.opencode.defaultModel,
+    },
+  };
+
+  const isProvider = (value: string): value is Exclude<AiProviderName, "builtin"> => value in keys;
+
+  // An explicit console choice wins when it has a key.
+  if (isProvider(providerSetting) && keys[providerSetting].key) {
+    return { provider: providerSetting, apiKey: keys[providerSetting].key, model: keys[providerSetting].model };
   }
-  if (providerSetting === "anthropic" && anthropicKey) {
-    return { provider: "anthropic", apiKey: anthropicKey, model: process.env.ANTHROPIC_MODEL ?? "claude-3-5-haiku-latest" };
+
+  // Otherwise prefer a free gateway (OpenRouter → OpenCode) before paid ones.
+  for (const name of ["openrouter", "opencode", "openai", "anthropic"] as const) {
+    if (keys[name].key) return { provider: name, apiKey: keys[name].key, model: keys[name].model };
   }
-  if (openaiKey) return { provider: "openai", apiKey: openaiKey, model: process.env.OPENAI_MODEL ?? "gpt-4o-mini" };
-  if (anthropicKey) return { provider: "anthropic", apiKey: anthropicKey, model: process.env.ANTHROPIC_MODEL ?? "claude-3-5-haiku-latest" };
+
   return { provider: "builtin", apiKey: "", model: "" };
 }
 
@@ -64,12 +128,15 @@ export async function generateText(opts: {
 
   const maxTokens = opts.maxTokens ?? 600;
   try {
-    if (cfg.provider === "openai") {
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    // OpenAI, OpenRouter and OpenCode Zen all speak the chat-completions shape.
+    const gateway = cfg.provider in OPENAI_COMPATIBLE ? OPENAI_COMPATIBLE[cfg.provider as GatewayName] : null;
+    if (gateway) {
+      const res = await fetch(`${gateway.baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${cfg.apiKey}`,
+          ...(gateway.extraHeaders ?? {}),
         },
         body: JSON.stringify({
           model: cfg.model,

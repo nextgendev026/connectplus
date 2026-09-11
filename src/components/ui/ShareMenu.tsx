@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Share2,
   Link2,
@@ -37,7 +38,6 @@ function LinkedInBrand({ className }: { className?: string }) {
   );
 }
 
-
 interface ShareMenuProps {
   url: string;
   title: string;
@@ -68,6 +68,19 @@ function domainOf(url: string): string {
   }
 }
 
+/** True on phones — the menu becomes a bottom sheet there instead of a popover. */
+function useIsMobile(): boolean {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 639px)");
+    const update = () => setIsMobile(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  return isMobile;
+}
+
 export function ShareMenu({
   url,
   title,
@@ -80,6 +93,9 @@ export function ShareMenu({
   const [copied, setCopied] = useState(false);
   const [nativeCopied, setNativeCopied] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  // `isMobile` is false until the media query is read on the client, so the
+  // portal below can never run during SSR — no extra mounted flag needed.
+  const isMobile = useIsMobile();
 
   const absoluteUrl = buildAbsolute(url);
   const text = `${title}${hashtags.length ? " " + hashtags.slice(0, 2).map((h) => `#${h.replace(/^#/, "")}`).join(" ") : ""}`;
@@ -87,8 +103,9 @@ export function ShareMenu({
   const encodedUrl = encodeURIComponent(absoluteUrl);
   const shareDescription = description || "Read this story on connectPlus";
 
+  // Close on outside click / Escape (desktop popover only; the sheet has its own scrim).
   useEffect(() => {
-    if (!open) return;
+    if (!open || isMobile) return;
     const onPointerDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
@@ -101,7 +118,22 @@ export function ShareMenu({
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, isMobile]);
+
+  // Escape + body scroll lock while the mobile sheet is up.
+  useEffect(() => {
+    if (!open || !isMobile) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = previous;
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, isMobile]);
 
   const copy = useCallback(async () => {
     try {
@@ -121,14 +153,10 @@ export function ShareMenu({
   const nativeShare = async () => {
     if (typeof navigator !== "undefined" && navigator.share) {
       try {
-        await navigator.share({
-          title,
-          text: shareDescription,
-          url: absoluteUrl,
-        });
+        await navigator.share({ title, text: shareDescription, url: absoluteUrl });
         setOpen(false);
       } catch {
-        // user cancelled — keep menu open
+        // user cancelled — keep the menu open
       }
     } else {
       setNativeCopied(true);
@@ -137,17 +165,30 @@ export function ShareMenu({
     }
   };
 
+  /**
+   * Social endpoints live on other origins and several browsers drop a plain
+   * `target=_blank` when the menu unmounts in the same tick. Opening an
+   * explicitly sized popup is what reliably lands the composer, with a direct
+   * navigation fallback when the popup is blocked.
+   */
+  const go = useCallback((href: string, event: React.MouseEvent) => {
+    event.preventDefault();
+    const win = window.open(href, "_blank", "noopener,noreferrer,width=640,height=700");
+    if (!win) window.location.href = href;
+    setTimeout(() => setOpen(false), 150);
+  }, []);
+
   const targets: ShareTarget[] = [
     {
       label: "Post to X",
-      href: `https://twitter.com/intent/tweet?text=${encodedText}&url=${encodedUrl}`,
+      href: `https://x.com/intent/post?text=${encodedText}&url=${encodedUrl}`,
       icon: XBrand,
       color: "text-surface-100",
       hover: "hover:bg-surface-100 hover:text-black",
     },
     {
       label: "Share on Facebook",
-      href: `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}&quote=${encodedText}`,
+      href: `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}&quote=${encodedText}&display=popup`,
       icon: FacebookBrand,
       color: "text-[#1877F2]",
       hover: "hover:bg-[#1877F2]/15",
@@ -182,6 +223,91 @@ export function ShareMenu({
     },
   ];
 
+  const panelBody = (
+    <>
+      {/* SEO preview card — the exact components crawlers read */}
+      <div className="border-b border-surface-800 bg-surface-900/70 p-4">
+        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-surface-500">
+          <Link2 className="h-3 w-3 text-brand-400" />
+          Link preview
+          <span className="ml-auto rounded-full bg-surface-800 px-2 py-0.5 normal-case tracking-normal text-surface-400">
+            {domainOf(absoluteUrl)}
+          </span>
+        </div>
+        <div className="mt-3 flex gap-3">
+          {image ? (
+            <div className="h-16 w-24 shrink-0 overflow-hidden rounded-lg border border-surface-700">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={image} alt="" className="h-full w-full object-cover" />
+            </div>
+          ) : (
+            <div className="flex h-16 w-24 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-brand-600/40 via-brand-500/20 to-accent-coral/30 text-2xl">
+              🦁
+            </div>
+          )}
+          <div className="min-w-0">
+            <p className="line-clamp-2 text-xs font-semibold leading-snug text-surface-50">{title}</p>
+            <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-surface-400">{shareDescription}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Share targets */}
+      <div className="grid grid-cols-2 gap-1 p-2">
+        {targets.map((t) => (
+          <a
+            key={t.label}
+            href={t.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => go(t.href, e)}
+            className={cn(
+              "flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-medium text-surface-300 transition-colors",
+              t.hover
+            )}
+          >
+            <t.icon className={cn("h-4 w-4", t.color)} />
+            {t.label}
+          </a>
+        ))}
+        <button
+          onClick={copy}
+          className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-medium text-surface-300 transition-colors hover:bg-brand-500/15"
+        >
+          {copied ? <Check className="h-4 w-4 text-brand-400" /> : <Link2 className="h-4 w-4 text-brand-400" />}
+          {copied ? "Copied!" : "Copy link"}
+        </button>
+      </div>
+
+      {/* Native share / close */}
+      <div className="flex items-center gap-2 border-t border-surface-800 bg-surface-900/60 px-3 py-2">
+        <button
+          onClick={nativeShare}
+          className="btn-gradient flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-white"
+        >
+          {nativeCopied ? (
+            <>
+              <Check className="h-3.5 w-3.5" /> Link copied
+            </>
+          ) : (
+            <>
+              <Share2 className="h-3.5 w-3.5" /> More options
+            </>
+          )}
+        </button>
+        {!isMobile ? (
+          <button
+            onClick={() => setOpen(false)}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-surface-500 transition-colors hover:bg-surface-800 hover:text-surface-50"
+            aria-label="Close share menu"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        ) : null}
+      </div>
+    </>
+  );
+
   return (
     <div className="relative" ref={ref}>
       <button
@@ -194,101 +320,50 @@ export function ShareMenu({
         <Share2 className="h-4 w-4" />
       </button>
 
-      {open && (
+      {open && !isMobile ? (
         <div
           className={cn(
             "absolute bottom-full z-50 mb-2 w-[min(92vw,22rem)] overflow-hidden rounded-2xl border border-surface-700 bg-surface-900 shadow-2xl animate-scale-in",
             align === "right" ? "right-0" : "left-0"
           )}
         >
-          {/* SEO preview card — the exact components crawlers read */}
-          <div className="border-b border-surface-800 bg-surface-900/70 p-4">
-            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-surface-500">
-              <Link2 className="h-3 w-3 text-brand-400" />
-              Link preview
-              <span className="ml-auto rounded-full bg-surface-800 px-2 py-0.5 normal-case tracking-normal text-surface-400">
-                {domainOf(absoluteUrl)}
-              </span>
-            </div>
-            <div className="mt-3 flex gap-3">
-              {image ? (
-                <div className="h-16 w-24 shrink-0 overflow-hidden rounded-lg border border-surface-700">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={image} alt="" className="h-full w-full object-cover" />
-                </div>
-              ) : (
-                <div className="flex h-16 w-24 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-brand-600/40 via-brand-500/20 to-accent-coral/30 text-2xl">
-                  🦁
-                </div>
-              )}
-              <div className="min-w-0">
-                <p className="line-clamp-2 text-xs font-semibold leading-snug text-surface-50">
-                  {title}
-                </p>
-                <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-surface-400">
-                  {shareDescription}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Share targets */}
-          <div className="grid grid-cols-2 gap-1 p-2">
-            {targets.map((t) => (
-              <a
-                key={t.label}
-                href={t.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => setTimeout(() => setOpen(false), 150)}
-                className={cn(
-                  "flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-medium text-surface-300 transition-colors",
-                  t.hover
-                )}
-              >
-                <t.icon className={cn("h-4 w-4", t.color)} />
-                {t.label}
-              </a>
-            ))}
-            <button
-              onClick={copy}
-              className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-medium text-surface-300 transition-colors hover:bg-brand-500/15"
-            >
-              {copied ? (
-                <Check className="h-4 w-4 text-brand-400" />
-              ) : (
-                <Link2 className="h-4 w-4 text-brand-400" />
-              )}
-              {copied ? "Copied!" : "Copy link"}
-            </button>
-          </div>
-
-          {/* Native share / close */}
-          <div className="flex items-center gap-2 border-t border-surface-800 bg-surface-900/60 px-3 py-2">
-            <button
-              onClick={nativeShare}
-              className="btn-gradient flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-white"
-            >
-              {nativeCopied ? (
-                <>
-                  <Check className="h-3.5 w-3.5" /> Link copied
-                </>
-              ) : (
-                <>
-                  <Share2 className="h-3.5 w-3.5" /> More options
-                </>
-              )}
-            </button>
-            <button
-              onClick={() => setOpen(false)}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-surface-500 transition-colors hover:bg-surface-800 hover:text-surface-50"
-              aria-label="Close share menu"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
+          {panelBody}
         </div>
-      )}
+      ) : null}
+
+      {open && isMobile
+        ? createPortal(
+            <div className="fixed inset-0 z-[120]">
+              <button
+                aria-label="Close share menu"
+                onClick={() => setOpen(false)}
+                className="absolute inset-0 h-full w-full bg-black/60 backdrop-blur-[2px]"
+              />
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-label="Share this story"
+                className="absolute inset-x-0 bottom-0 max-h-[88vh] overflow-y-auto overscroll-contain rounded-t-3xl border-t border-surface-700 bg-surface-900 pb-[max(env(safe-area-inset-bottom),0.5rem)] shadow-2xl animate-slide-up"
+              >
+                <div className="sticky top-0 z-10 flex items-center justify-between border-b border-surface-800 bg-surface-900/95 px-4 py-3 backdrop-blur">
+                  <div className="flex items-center gap-2">
+                    <span className="mx-auto absolute left-1/2 top-1.5 h-1 w-10 -translate-x-1/2 rounded-full bg-surface-700" />
+                    <p className="text-sm font-semibold text-surface-100">Share this story</p>
+                  </div>
+                  <button
+                    onClick={() => setOpen(false)}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-surface-400 transition-colors hover:bg-surface-800 hover:text-surface-50"
+                    aria-label="Close share menu"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                {panelBody}
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }

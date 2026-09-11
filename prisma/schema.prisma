@@ -259,6 +259,34 @@ model RssArticle {
   @@index([publishedAt])
 }
 
+/// Manually-injected advertising. Admins create creatives in the console and
+/// the app renders the best match for each slot — no third-party script, no
+/// client-side auction, so it costs no egress beyond the creative itself.
+model Ad {
+  id          String    @id @default(cuid())
+  name        String
+  /// Placement key: feed-inline | article-top | article-inline | article-sidebar | radio-hero
+  slot        String    @default("feed-inline")
+  /// image = trackable click-through; html = raw embed (network scripts)
+  format      String    @default("image")
+  imageUrl    String?
+  html        String?
+  targetUrl   String?
+  sponsor     String?
+  /// Higher weight wins more often when several ads share a slot.
+  weight      Int       @default(1)
+  isActive    Boolean   @default(true)
+  startsAt    DateTime?
+  endsAt      DateTime?
+  impressions Int       @default(0)
+  clicks      Int       @default(0)
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([slot, isActive])
+}
+
 /// Key-value platform settings powering the Admin Settings & Integrations
 /// console (site identity, SEO, analytics integrations, API keys, feature
 /// flags). Values are strings; booleans use "true"/"false".
