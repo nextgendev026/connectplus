@@ -1,10 +1,15 @@
 import Link from "next/link";
 import { pickAd, recordImpression, type AdCreative } from "@/lib/ads";
 import { cn } from "@/lib/utils";
+import ThirdPartyAdSlot from "./ThirdPartyAdSlot";
 
 /**
- * In-house ad slot. Renders nothing when the slot is unmonetised, so pages
- * never show an empty frame. Impressions are counted server-side on render.
+ * Ad slot with two tiers, in-house first:
+ *   1. An in-house creative (first-party, ~zero third-party egress).
+ *   2. A configured third-party network slot (AdSense / Meta / MGAN / custom)
+ *      as a fallback, so a placement keeps earning when no direct campaign is
+ *      live. Third-party slots mount client-side and self-track impressions.
+ * Renders nothing when neither exists, so pages never show an empty frame.
  */
 export default async function AdSlot({
   slot,
@@ -16,7 +21,7 @@ export default async function AdSlot({
   label?: string | null;
 }) {
   const ad = await pickAd(slot).catch(() => null);
-  if (!ad) return null;
+  if (!ad) return <ThirdPartyAdSlot slot={slot} className={className} />;
 
   recordImpression(ad.id);
 

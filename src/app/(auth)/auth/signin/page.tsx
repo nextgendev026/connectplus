@@ -6,6 +6,7 @@ import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import ConnectPlusMark from "@/components/ui/ConnectPlusMark";
+import { OAuthButtons } from "@/components/auth/OAuthButtons";
 import {
   Mail,
   MailWarning,
@@ -195,6 +196,11 @@ export default function SignInPage() {
               )}
             </button>
           </form>
+
+          {/* Social sign-in — renders only when the provider is configured. */}
+          <div className="mt-6">
+            <OAuthButtons callbackUrl="/" />
+          </div>
 
           {/* Footer */}
           <p className="text-center text-xs text-surface-500 mt-6">

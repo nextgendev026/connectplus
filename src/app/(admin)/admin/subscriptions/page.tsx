@@ -11,6 +11,7 @@ import {
   XCircle,
   Star,
   Zap,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +28,45 @@ interface Plan {
   sortOrder: number;
 }
 
+interface Stats {
+  totals: { active: number; cancelling: number; mrr: number; arr: number };
+  byStatus: { status: string; count: number }[];
+  byPlan: {
+    planId: string;
+    displayName: string;
+    audience: string;
+    tier: string;
+    billingCycle: string;
+    count: number;
+    perMonth: number;
+  }[];
+}
+
+function StatCard({
+  label,
+  value,
+  hint,
+  icon: Icon,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  icon: typeof Users;
+}) {
+  return (
+    <div className="rounded-2xl border border-surface-200/70 bg-white p-4 dark:border-surface-800 dark:bg-surface-900">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium uppercase tracking-wider text-surface-500">
+          {label}
+        </span>
+        <Icon className="h-4 w-4 text-brand-500" />
+      </div>
+      <p className="mt-2 text-2xl font-bold text-surface-900 dark:text-surface-50">{value}</p>
+      {hint ? <p className="mt-0.5 text-[11px] text-surface-500">{hint}</p> : null}
+    </div>
+  );
+}
+
 const TIER_COLORS: Record<string, string> = {
   free: "bg-surface-200/70 text-surface-600 dark:bg-surface-800 dark:text-surface-300",
   pro: "bg-brand-500/15 text-brand-600 dark:bg-brand-500/20 dark:text-brand-400",
@@ -41,6 +81,7 @@ const TIER_ICONS: Record<string, typeof Star> = {
 
 export default function SubscriptionsPage() {
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [audience, setAudience] = useState<"all" | "reader" | "writer">("all");
@@ -49,10 +90,14 @@ export default function SubscriptionsPage() {
     try {
       setLoading(true);
       const url = audience === "all" ? "/api/subscription/plans" : `/api/subscription/plans?audience=${audience}`;
-      const res = await fetch(url, { cache: "no-store" });
+      const [res, statsRes] = await Promise.all([
+        fetch(url, { cache: "no-store" }),
+        fetch("/api/admin/subscriptions", { cache: "no-store" }),
+      ]);
       if (!res.ok) throw new Error(`Failed to load plans (${res.status})`);
       const data = await res.json();
       setPlans(data.plans ?? []);
+      if (statsRes.ok) setStats(await statsRes.json());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load plans");
     } finally {
@@ -88,6 +133,36 @@ export default function SubscriptionsPage() {
             <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
           </button>
         </div>
+
+        {/* Subscriber metrics */}
+        {stats && (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard
+              label="Active members"
+              value={String(stats.totals.active)}
+              hint={`${stats.totals.cancelling} cancelling at period end`}
+              icon={Users}
+            />
+            <StatCard
+              label="MRR"
+              value={`$${stats.totals.mrr.toFixed(2)}`}
+              hint="Monthly recurring revenue"
+              icon={CreditCard}
+            />
+            <StatCard
+              label="ARR"
+              value={`$${stats.totals.arr.toFixed(2)}`}
+              hint="Annualised run rate"
+              icon={BarChart3}
+            />
+            <StatCard
+              label="Paid plans"
+              value={String(stats.byPlan.filter((p) => p.perMonth > 0).reduce((n, p) => n + p.count, 0))}
+              hint="Across reader + writer tiers"
+              icon={Crown}
+            />
+          </div>
+        )}
 
         {/* Audience filter */}
         <div className="flex gap-2">

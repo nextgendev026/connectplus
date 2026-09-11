@@ -7,7 +7,7 @@ import { useSession, signOut } from "next-auth/react";
 import { useState } from "react";
 import {
   Search, Menu, X, PenLine, Shield, LogOut, User, Settings,
-  Globe, Sun, Moon, Home, Flame, LayoutGrid, Radio,
+  Globe, Sun, Moon, Home, Flame, LayoutGrid, Radio, Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/components/providers/ThemeContext";
@@ -20,6 +20,7 @@ const NAV_LINKS = [
   { href: "/trending", label: "Trending", icon: Flame },
   { href: "/categories", label: "Categories", icon: LayoutGrid },
   { href: "/radio", label: "Radio", icon: Radio },
+  { href: "/pricing", label: "Pricing", icon: Sparkles },
 ];
 
 export default function Navbar() {

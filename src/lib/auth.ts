@@ -1,7 +1,9 @@
 import NextAuth from "next-auth";
 import type { DefaultSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import { compare } from "bcryptjs";
+import Google from "next-auth/providers/google";
+import { compare, hash } from "bcryptjs";
+import { randomUUID } from "crypto";
 import { prisma } from "./prisma";
 
 declare module "next-auth" {
@@ -23,8 +25,77 @@ declare module "next-auth" {
   }
 }
 
+/** Google sign-in is wired only when its credentials are present, so a fork
+ *  without them still builds and the button simply stays hidden. */
+export const googleEnabled = Boolean(
+  process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+);
+
+/** Turn a Google profile into a local user row.
+ *
+ * Existing accounts are matched by email and LINKED rather than duplicated, so
+ * someone who signed up with a password can later use Google (and vice-versa)
+ * without ending up with two accounts and a split history. */
+async function provisionOAuthUser(profile: {
+  email?: string | null;
+  name?: string | null;
+  image?: string | null;
+}) {
+  const email = profile.email?.toLowerCase();
+  if (!email) return null;
+
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing) {
+    const data: Record<string, unknown> = {};
+    // All accounts are treated as verified on this deployment; also backfill
+    // the Google avatar/name when the local row has none.
+    if (!existing.emailVerified) data.emailVerified = new Date();
+    if (!existing.avatar && profile.image) data.avatar = profile.image;
+    if (!existing.name && profile.name) data.name = profile.name;
+    if (Object.keys(data).length) {
+      return prisma.user.update({ where: { id: existing.id }, data });
+    }
+    return existing;
+  }
+
+  // Derive a unique username from the email local part.
+  const base =
+    (email.split("@")[0] || "reader").replace(/[^a-z0-9_]/gi, "").slice(0, 20) ||
+    "reader";
+  let username = base;
+  for (let i = 0; i < 6; i++) {
+    const clash = await prisma.user.findUnique({ where: { username } });
+    if (!clash) break;
+    username = `${base}${Math.floor(Math.random() * 9000) + 1000}`;
+  }
+
+  return prisma.user.create({
+    data: {
+      email,
+      username,
+      name: profile.name ?? base,
+      avatar: profile.image ?? null,
+      // OAuth-only account: store an unguessable hash so credentials sign-in
+      // can never match, while the non-null password invariant holds.
+      password: await hash(randomUUID(), 12),
+      role: "USER",
+      emailVerified: new Date(),
+    },
+  });
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [
+    ...(googleEnabled
+      ? [
+          Google({
+            clientId: process.env.GOOGLE_CLIENT_ID,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+            // Accounts are already linked by email in provisionOAuthUser.
+            allowDangerousEmailAccountLinking: true,
+          }),
+        ]
+      : []),
     Credentials({
       name: "credentials",
       credentials: {
@@ -41,6 +112,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         });
 
         if (!user) {
+          throw new Error("Invalid credentials");
+        }
+
+        // OAuth-only rows carry a random hash that can never match; guard before
+        // compare so a missing/blank hash can never throw or be bypassed.
+        if (!user.password || !user.password.startsWith("$2")) {
           throw new Error("Invalid credentials");
         }
 
@@ -81,7 +158,25 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     strategy: "jwt",
   },
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, account }) {
+      // OAuth first sign-in: resolve (or create) the local row and key the JWT
+      // to ITS id, never the raw provider profile id.
+      if (account?.provider === "google" && user) {
+        const dbUser = await provisionOAuthUser({
+          email: user.email,
+          name: user.name,
+          image: (user as { image?: string | null }).image ?? null,
+        }).catch(() => null);
+        if (dbUser) {
+          token.id = dbUser.id;
+          token.role = dbUser.role;
+          token.username = dbUser.username;
+          token.avatar = dbUser.avatar ?? null;
+          token.emailVerified = dbUser.emailVerified ?? null;
+          token.roleFetchedAt = Date.now();
+          return token;
+        }
+      }
       if (user) {
         token.id = user.id;
         token.role = user.role;

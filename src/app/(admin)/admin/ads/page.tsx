@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ThirdPartyAdsPanel from "@/components/admin/ThirdPartyAdsPanel";
 import {
   Megaphone,
   Plus,
@@ -491,6 +492,9 @@ export default function AdminAdsPage() {
           ))
         )}
       </section>
+
+      {/* Programmatic fallback: AdSense / Meta / MGID / custom tags per placement */}
+      <ThirdPartyAdsPanel />
     </div>
   );
 }

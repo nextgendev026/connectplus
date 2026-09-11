@@ -7,6 +7,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { SettingsForm } from "@/components/settings/SettingsForm";
 import { VerifiedWriterCard } from "@/components/settings/VerifiedWriterCard";
+import { SubscriptionManager } from "@/components/subscription/SubscriptionManager";
 
 export const dynamic = "force-dynamic";
 
@@ -65,6 +66,16 @@ export default async function SettingsPage() {
         />
 
         <div className="h-6" />
+
+        <section className="rounded-2xl border border-surface-800/60 bg-surface-900/30 p-6 mb-6">
+          <div className="mb-4">
+            <h2 className="text-sm font-semibold text-surface-50">Membership</h2>
+            <p className="mt-1 text-xs text-surface-500">
+              Your reader and writer plans. Cancel or reactivate any time.
+            </p>
+          </div>
+          <SubscriptionManager />
+        </section>
 
         <SettingsForm
           user={{
