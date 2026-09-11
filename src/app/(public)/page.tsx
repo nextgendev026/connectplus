@@ -104,8 +104,15 @@ async function fetchFeedPool<T extends unknown[]>(
   const result = await Promise.all(pages);
   const snapshot: PoolSnapshot = { at: Date.now(), value: result };
   memoryFeedCache = snapshot;
-  void cacheSet(key, snapshot, POOL_TTL_SECONDS).catch(() => {});
-  void cacheSet(FALLBACK_KEY, result, 60 * 60 * 24).catch(() => {});
+  // AWAIT these on the cold path. Fire-and-forget writes are dropped when a
+  // serverless invocation freezes after the response, which left every Vercel
+  // request re-running the heavy queries (10s+ home page) while local dev
+  // looked fine because the process stayed alive. Two small Redis writes are
+  // ~20ms and they are the whole point of this cache.
+  await Promise.all([
+    cacheSet(key, snapshot, POOL_TTL_SECONDS).catch(() => {}),
+    cacheSet(FALLBACK_KEY, result, 60 * 60 * 24).catch(() => {}),
+  ]);
   return result;
 }
 
