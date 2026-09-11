@@ -10,6 +10,8 @@ import {
   ExternalLink,
   Download,
   CheckCircle,
+  CheckCircle2,
+  ImageIcon,
   Loader2,
   AlertTriangle,
   X,
@@ -34,7 +36,24 @@ interface RssFeed {
   lastPolled: string | null;
   pollInterval: number;
   createdAt: string;
+  /** Fetch health written by the poll pipeline (see src/lib/rss-poll.ts). */
+  lastStatus: string | null;
+  lastError: string | null;
+  lastItemCount: number | null;
+  lastNewArticles: number | null;
+  lastDurationMs: number | null;
+  consecutiveFailures: number;
+  httpEtag: string | null;
   _count?: { articles: number };
+}
+
+interface PipelineProgress {
+  action: "poll" | "thumbnails";
+  running: boolean;
+  index: number;
+  total: number;
+  label: string;
+  log: { name: string; status: string; newArticles: number }[];
 }
 
 interface RssArticle {
@@ -73,6 +92,7 @@ export default function RssAdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [pollingFeedId, setPollingFeedId] = useState<string | null>(null);
   const [pollingAll, setPollingAll] = useState(false);
+  const [progress, setProgress] = useState<PipelineProgress | null>(null);
   const [importingId, setImportingId] = useState<string | null>(null);
   const [importCategoryFilter, setImportCategoryFilter] = useState<string>("");
   const [articleSearch, setArticleSearch] = useState("");
@@ -80,6 +100,7 @@ export default function RssAdminPage() {
   const [addForm, setAddForm] = useState({ name: "", url: "", category: "", description: "" });
   const [addLoading, setAddLoading] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  const [recovering, setRecovering] = useState(false);
 
   const stats: FeedStats = {
     totalFeeds: feeds.length,
@@ -139,18 +160,95 @@ export default function RssAdminPage() {
     fetchArticles();
   }, [importCategoryFilter, fetchArticles]);
 
+  /**
+   * Drives the ingestion pipeline through its streaming endpoint so the console
+   * can paint real progress instead of a spinner that lies. The old flow called
+   * a fire-and-forget trigger: the button said "Polling…" for one round trip and
+   * reported success even when the queue accepted the event and never ran it.
+   */
+  async function runPipeline(action: "poll" | "thumbnails", feedId?: string) {
+    const params = new URLSearchParams({ action });
+    if (feedId) params.set("feedId", feedId);
+    setError(null);
+    setProgress({ action, running: true, index: 0, total: 0, label: "Starting…", log: [] });
+
+    try {
+      const res = await fetch(`/api/rss/stream?${params.toString()}`, {
+        headers: { Accept: "application/x-ndjson" },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}) as { error?: string });
+        throw new Error(body.error ?? `Pipeline failed (${res.status})`);
+      }
+      if (!res.body) throw new Error("No progress stream available");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let event: {
+            type: string;
+            index?: number;
+            total?: number;
+            name?: string;
+            status?: string;
+            newArticles?: number;
+            message?: string;
+          };
+          try {
+            event = JSON.parse(line);
+          } catch {
+            continue;
+          }
+
+          if (event.type === "error") throw new Error(event.message ?? "Pipeline failed");
+          if (event.type === "start") {
+            setProgress((prev) => (prev ? { ...prev, total: event.total ?? 0 } : prev));
+          } else if (event.type === "feed" || event.type === "item") {
+            setProgress((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    index: event.index ?? prev.index,
+                    total: event.total || prev.total,
+                    label: event.name ?? prev.label,
+                    log: [
+                      {
+                        name: event.name ?? "feed",
+                        status: event.status ?? "OK",
+                        newArticles: event.newArticles ?? 0,
+                      },
+                      ...prev.log,
+                    ].slice(0, 8),
+                  }
+                : prev
+            );
+          }
+        }
+      }
+
+      await Promise.all([fetchFeeds(), fetchArticles()]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Pipeline failed");
+    } finally {
+      setProgress((prev) => (prev ? { ...prev, running: false } : prev));
+      window.setTimeout(() => setProgress(null), 5000);
+    }
+  }
+
   async function handlePollAll() {
     setPollingAll(true);
     try {
-      const res = await fetch("/api/rss/poll", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      if (!res.ok) throw new Error("Poll failed");
-      await Promise.all([fetchFeeds(), fetchArticles()]);
-    } catch (err) {
-      console.error(err);
+      await runPipeline("poll");
     } finally {
       setPollingAll(false);
     }
@@ -159,17 +257,18 @@ export default function RssAdminPage() {
   async function handlePollFeed(feedId: string) {
     setPollingFeedId(feedId);
     try {
-      const res = await fetch("/api/rss/poll", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ feedId }),
-      });
-      if (!res.ok) throw new Error("Poll failed");
-      await Promise.all([fetchFeeds(), fetchArticles()]);
-    } catch (err) {
-      console.error(err);
+      await runPipeline("poll", feedId);
     } finally {
       setPollingFeedId(null);
+    }
+  }
+
+  async function handleRecoverThumbnails() {
+    setRecovering(true);
+    try {
+      await runPipeline("thumbnails");
+    } finally {
+      setRecovering(false);
     }
   }
 
@@ -290,7 +389,7 @@ export default function RssAdminPage() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <button
               onClick={() => fetchFeeds().then(fetchArticles)}
               disabled={loading}
@@ -376,14 +475,80 @@ export default function RssAdminPage() {
               ))}
             </div>
 
+            {/* Live pipeline progress — real per-feed events streamed from
+                /api/rss/stream, so a slow or failing feed is visible while it
+                runs instead of after the fact. */}
+            {progress && (
+              <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-4 sm:p-5">
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                  <div className="flex items-center gap-2 text-sm font-medium text-surface-100">
+                    {progress.running ? (
+                      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-orange-400" />
+                    ) : (
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                    )}
+                    <span>
+                      {progress.action === "poll" ? "Polling feeds" : "Recovering thumbnails"}
+                    </span>
+                    <span className="text-xs font-normal text-surface-500 tabular-nums">
+                      {progress.total ? `${progress.index}/${progress.total}` : "…"}
+                    </span>
+                  </div>
+                  <span className="max-w-full truncate text-xs text-surface-400 sm:max-w-[18rem]">
+                    {progress.label}
+                  </span>
+                </div>
+                <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-surface-800">
+                  <div
+                    className={cn(
+                      "h-full rounded-full transition-all duration-300",
+                      progress.running
+                        ? "bg-gradient-to-r from-orange-400 to-brand-500"
+                        : "bg-emerald-500/70"
+                    )}
+                    style={{
+                      width: progress.total
+                        ? `${Math.min(100, Math.round((progress.index / progress.total) * 100))}%`
+                        : "15%",
+                    }}
+                  />
+                </div>
+                {progress.log.length > 0 && (
+                  <ul className="mt-3 grid gap-1 sm:grid-cols-2">
+                    {progress.log.map((row, i) => (
+                      <li
+                        key={`${row.name}-${i}`}
+                        className="flex items-center justify-between gap-2 rounded-md bg-surface-800/40 px-2.5 py-1.5 text-xs"
+                      >
+                        <span className="truncate text-surface-200">{row.name}</span>
+                        <span
+                          className={cn(
+                            "shrink-0 font-medium tabular-nums",
+                            row.status === "OK" || row.status === "NOT_MODIFIED"
+                              ? "text-emerald-400"
+                              : row.status === "EMPTY" || row.status === "NONE"
+                                ? "text-surface-400"
+                                : "text-orange-400"
+                          )}
+                        >
+                          {row.status}
+                          {row.newArticles > 0 ? ` +${row.newArticles}` : ""}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
             {/* Feed Sources Panel */}
             <div className="rounded-xl bg-surface-900/50 border border-surface-800 overflow-hidden">
-              <div className="flex items-center justify-between border-b border-surface-800 px-6 py-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-800 px-4 py-4 sm:px-6">
                 <div className="flex items-center gap-2">
                   <Rss className="h-5 w-5 text-orange-400" />
                   <h2 className="type-h2 text-surface-50">Feed Sources</h2>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={handlePollAll}
                     disabled={pollingAll}
@@ -396,6 +561,23 @@ export default function RssAdminPage() {
                   >
                     <RefreshCw className={cn("h-3.5 w-3.5", pollingAll && "animate-spin")} />
                     {pollingAll ? "Polling..." : "Poll All"}
+                  </button>
+                  <button
+                    onClick={handleRecoverThumbnails}
+                    disabled={recovering}
+                    title="Fetch og:image for imported stories that have no thumbnail"
+                    className={cn(
+                      "flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors",
+                      recovering
+                        ? "bg-surface-800 text-surface-400 cursor-not-allowed"
+                        : "bg-cyan-400/10 border border-cyan-400/20 text-cyan-300 hover:bg-cyan-400/20"
+                    )}
+                  >
+                    <ImageIcon className={cn("h-3.5 w-3.5", recovering && "animate-pulse")} />
+                    <span className="hidden sm:inline">
+                      {recovering ? "Recovering..." : "Recover thumbnails"}
+                    </span>
+                    <span className="sm:hidden">Thumbs</span>
                   </button>
                   <button
                     onClick={() => setShowAddModal(true)}
@@ -423,22 +605,22 @@ export default function RssAdminPage() {
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-surface-800">
-                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-400">
+                        <th className="px-3 py-3 text-left text-xs font-medium text-surface-400 sm:px-5">
                           Feed
                         </th>
-                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-400">
+                        <th className="hidden px-5 py-3 text-left text-xs font-medium text-surface-400 md:table-cell">
                           Category
                         </th>
-                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-400">
+                        <th className="px-3 py-3 text-left text-xs font-medium text-surface-400 sm:px-5">
                           Articles
                         </th>
-                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-400">
+                        <th className="hidden px-5 py-3 text-left text-xs font-medium text-surface-400 sm:table-cell">
                           Last Polled
                         </th>
-                        <th className="px-5 py-3 text-left text-xs font-medium text-surface-400">
+                        <th className="px-3 py-3 text-left text-xs font-medium text-surface-400 sm:px-5">
                           Status
                         </th>
-                        <th className="px-5 py-3 text-right text-xs font-medium text-surface-400">
+                        <th className="px-3 py-3 text-right text-xs font-medium text-surface-400 sm:px-5">
                           Actions
                         </th>
                       </tr>
@@ -449,7 +631,7 @@ export default function RssAdminPage() {
                           key={feed.id}
                           className="transition-colors hover:bg-surface-800/30"
                         >
-                          <td className="px-5 py-3.5">
+                          <td className="px-3 py-3.5 sm:px-5">
                             <div className="min-w-0">
                               <p className="truncate text-sm font-medium text-surface-50">
                                 {feed.name}
@@ -457,9 +639,43 @@ export default function RssAdminPage() {
                               <p className="truncate text-xs text-surface-500 max-w-[300px]">
                                 {feed.url}
                               </p>
+                              {/* Fetch health — a feed that fails silently used to look fine here. */}
+                              {feed.lastStatus && (
+                                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                  <span
+                                    className={cn(
+                                      "rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                                      feed.lastStatus === "OK" || feed.lastStatus === "NOT_MODIFIED"
+                                        ? "bg-emerald-500/10 text-emerald-400"
+                                        : feed.lastStatus === "EMPTY"
+                                          ? "bg-surface-800 text-surface-400"
+                                          : "bg-orange-500/10 text-orange-400"
+                                    )}
+                                  >
+                                    {feed.lastStatus}
+                                  </span>
+                                  {typeof feed.lastNewArticles === "number" && (
+                                    <span className="text-[10px] text-surface-500 tabular-nums">
+                                      {feed.lastNewArticles} new
+                                      {feed.lastItemCount ? ` / ${feed.lastItemCount} items` : ""}
+                                      {feed.lastDurationMs ? ` · ${(feed.lastDurationMs / 1000).toFixed(1)}s` : ""}
+                                    </span>
+                                  )}
+                                  {feed.consecutiveFailures > 1 && (
+                                    <span className="text-[10px] font-medium text-red-400">
+                                      {feed.consecutiveFailures} consecutive failures
+                                    </span>
+                                  )}
+                                  {feed.lastError && (
+                                    <span className="max-w-[16rem] truncate text-[10px] text-red-400" title={feed.lastError}>
+                                      {feed.lastError}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           </td>
-                          <td className="px-5 py-3.5">
+                          <td className="hidden px-5 py-3.5 md:table-cell">
                             {feed.category ? (
                               <span className="inline-flex rounded-full bg-surface-800 px-2 py-0.5 type-caption text-surface-200">
                                 {feed.category}
@@ -468,13 +684,13 @@ export default function RssAdminPage() {
                               <span className="text-xs text-surface-600">-</span>
                             )}
                           </td>
-                          <td className="px-5 py-3.5 text-sm font-medium text-surface-50 tabular-nums">
+                          <td className="px-3 py-3.5 text-sm font-medium text-surface-50 tabular-nums sm:px-5">
                             {feed._count?.articles ?? 0}
                           </td>
-                          <td className="px-5 py-3.5 text-xs font-medium text-surface-300">
+                          <td className="hidden px-5 py-3.5 text-xs font-medium text-surface-300 sm:table-cell">
                             {feed.lastPolled ? timeAgo(feed.lastPolled) : "Never"}
                           </td>
-                          <td className="px-5 py-3.5">
+                          <td className="px-3 py-3.5 sm:px-5">
                             <button
                               onClick={() => handleToggleActive(feed)}
                               className="flex items-center gap-1.5"
@@ -494,7 +710,7 @@ export default function RssAdminPage() {
                               </span>
                             </button>
                           </td>
-                          <td className="px-5 py-3.5 text-right">
+                          <td className="px-3 py-3.5 text-right sm:px-5">
                             <div className="flex items-center justify-end gap-1">
                               <button
                                 onClick={() => handlePollFeed(feed.id)}

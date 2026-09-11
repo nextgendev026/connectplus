@@ -224,6 +224,18 @@ model RssFeed {
   isActive    Boolean  @default(true)
   lastPolled  DateTime?
   pollInterval Int     @default(3600)
+  /// Fetch health, surfaced in the admin console so a dead or throttled feed
+  /// is visible instead of silently importing nothing.
+  lastStatus          String? // OK | EMPTY | HTTP_ERROR | PARSE_ERROR | TIMEOUT | SKIPPED
+  lastError           String?
+  lastItemCount       Int?
+  lastNewArticles     Int?
+  lastDurationMs      Int?
+  consecutiveFailures Int     @default(0)
+  /// Conditional-GET validators: sending these back avoids re-downloading an
+  /// unchanged feed (the single biggest egress saver on a polling pipeline).
+  httpEtag         String?
+  httpLastModified String?
   articles    RssArticle[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
