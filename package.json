@@ -19,6 +19,7 @@
     "db:promote-admin": "node scripts/promote-superadmin.ts",
     "db:feed-mind": "node scripts/feed-the-mind.ts",
     "db:ensure": "ts-node --project scripts/tsconfig.script.json scripts/ensure-settings.ts",
+    "cronjob:sync": "node scripts/cronjob-sync.mjs",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate",
     "db:migrate:deploy": "prisma migrate deploy",

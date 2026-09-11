@@ -1,6 +1,5 @@
 import { prisma } from "@/lib/prisma";
 import { inngest } from "@/lib/inngest";
-import { pollFeeds } from "@/lib/rss-poll";
 import { hiveBrain } from "@/lib/hive-brain";
 import { autoTagPost } from "@/lib/auto-tag";
 import { createPublishNotifications } from "@/lib/notifications";
@@ -10,14 +9,15 @@ import { redisIncr } from "@/lib/redis";
 const log = createLogger("inngest");
 
 /**
- * Publishes stories whose scheduledAt time has arrived. Runs every five
- * minutes via Inngest cron (robust on serverless, no Vercel cron dependency).
+ * Publishes stories whose scheduledAt time has arrived. Scheduled every five
+ * minutes by cron-job.org (/api/cron?trigger=publish-scheduled) and fired as
+ * an Inngest event when cron-job.org's inline run fails.
  */
 export const publishScheduled = inngest.createFunction(
   {
     id: "publish-scheduled",
     name: "Publish scheduled stories",
-    triggers: [{ cron: "*/5 * * * *" }],
+    triggers: [{ event: "publish-scheduled" }],
     // Never overlap runs; retry transient DB blips.
     concurrency: 1,
     retries: 3,
@@ -121,8 +121,9 @@ export const publishScheduled = inngest.createFunction(
 );
 
 /**
- * Polls all active RSS feeds. Triggered manually from the admin panel or by
- * the Inngest hourly cron.
+ * Polls all active RSS feeds. Triggered by cron-job.org hourly
+ * (/api/cron?trigger=rss-poll), manually from the admin panel, or as an
+ * Inngest fallback event.
  *
  * Each feed runs as its OWN step: if a source hangs or a serverless window
  * ends mid-run, Inngest resumes from the next feed instead of losing the
@@ -132,9 +133,10 @@ export const rssPoll = inngest.createFunction(
   {
     id: "rss-poll",
     name: "Poll RSS feeds",
-    // Re-poll on the hour; per-feed lastPolled intervals throttle actual fetches.
-    // One run at a time + a cap keeps outbound egress and Postgres writes flat.
-    triggers: [{ cron: "0 * * * *" }, { event: "rss-poll" }],
+    // cron-job.org owns the hourly cadence; per-feed lastPolled intervals
+    // throttle actual fetches. One run at a time + a cap keeps outbound egress
+    // and Postgres writes flat.
+    triggers: [{ event: "rss-poll" }],
     concurrency: 1,
     retries: 2,
   },
@@ -204,7 +206,9 @@ export const rssPollFeed = inngest.createFunction(
 
 /**
  * Nightly deep-learning pass: sweeps the platform for new memories, trains the
- * hive brain, and ingests unlearned RSS articles.
+ * hive brain, and ingests unlearned RSS articles. Scheduled nightly by
+ * cron-job.org (/api/cron?trigger=hive-sweep); runs via this event as the
+ * Inngest fallback when the inline run fails.
  */
 export const hiveSweep = inngest.createFunction(
   {
@@ -212,7 +216,7 @@ export const hiveSweep = inngest.createFunction(
     name: "Nightly hive & neural training",
     // Deep pass at 01:00 UTC — lowest-traffic window — never stacked, DB-heavy
     // steps run serially via step.run already.
-    triggers: [{ cron: "0 1 * * *" }],
+    triggers: [{ event: "hive-sweep" }],
     concurrency: 1,
     retries: 2,
   },
@@ -262,7 +266,7 @@ export const embedPosts = inngest.createFunction(
     name: "Index semantic embeddings",
     // Batches at most 400 posts/run; single concurrency keeps pgvector writes
     // and embedding egress predictable.
-    triggers: [{ cron: "0 3 * * *" }, { event: "embed-posts" }],
+    triggers: [{ event: "embed-posts" }],
     concurrency: 1,
     retries: 2,
   },
@@ -286,7 +290,7 @@ export const radioStatusSweep = inngest.createFunction(
     name: "Refresh radio station metadata",
     // Every 15 min — plenty for song/listener metadata; a single sweep hits
     // each upstream once with a timeout, keeping free-tier egress flat.
-    triggers: [{ cron: "*/15 * * * *" }, { event: "radio-status-sweep" }],
+    triggers: [{ event: "radio-status-sweep" }],
     concurrency: 1,
     retries: 2,
   },
@@ -310,7 +314,7 @@ export const statusWatchdog = inngest.createFunction(
   {
     id: "status-watchdog",
     name: "Status watchdog alerts",
-    triggers: [{ cron: "*/5 * * * *" }],
+    triggers: [{ event: "status-watchdog" }],
     concurrency: 1,
     retries: 2,
   },
@@ -415,7 +419,7 @@ export const thumbnailRecovery = inngest.createFunction(
   {
     id: "thumbnail-recovery",
     name: "Recover missing thumbnails",
-    triggers: [{ cron: "0 */6 * * *" }, { event: "recover-thumbnails" }],
+    triggers: [{ event: "recover-thumbnails" }],
     concurrency: 1,
     retries: 2,
   },

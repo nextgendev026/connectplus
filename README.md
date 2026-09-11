@@ -110,11 +110,13 @@ Open [http://localhost:3000](http://localhost:3000).
 | `SUPABASE_ANON_KEY` | Public anon key |
 | `SUPABASE_STORAGE_BUCKET` | Storage bucket name (default `uploads`) |
 | `REDIS_URL` | Redis Cloud connection string |
-| `INNGEST_SIGN_KEY` / `INNGEST_EVENT_KEY` | Inngest cloud queue keys |
+| `INNGEST_SIGN_KEY` / `INNGEST_EVENT_KEY` | Inngest cloud queue keys (setup fallback for cron jobs) |
 | `OPENROUTER_API_KEY` | OpenRouter API key (free models available) |
 | `OPENCODE_API_KEY` | OpenCode Zen API key |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | Optional paid AI providers |
-| `CRON_SECRET` | Bearer secret for the `/api/rss/cron` Vercel Cron trigger |
+| `CRON_SECRET` | Shared secret the `/api/cron` and `/api/rss/cron` triggers verify (Bearer / `x-cron-secret`) |
+| `CRONJOB_TOKEN` | cron-job.org API key — schedules the heavy jobs via `/api/cron` (`npm run cronjob:sync`) |
+| `APP_URL` | Deployment base URL cron-job.org should hit (default `https://connectplusapp.vercel.app`) |
 | `RATE_LIMIT_<KEY>` / `RATE_LIMIT_DEFAULT` | Optional rate-limit overrides |
 | `LOG_LEVEL` | `debug` / `info` / `warn` / `error` for server logging |
 
