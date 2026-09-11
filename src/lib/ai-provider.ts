@@ -34,23 +34,99 @@ const OPENAI_COMPATIBLE: Record<
   opencode: { baseUrl: "https://opencode.ai/zen/v1", defaultModel: "grok-code" },
 };
 
-/** Free-tier OpenRouter models the console offers out of the box. */
+/** Free-tier OpenRouter models — these cost $0 with no credit card. */
 export const OPENROUTER_FREE_MODELS = [
   "meta-llama/llama-3.3-70b-instruct:free",
   "deepseek/deepseek-chat-v3-0324:free",
+  "google/gemma-3-27b-it:free",
   "google/gemini-2.0-flash-exp:free",
   "qwen/qwen-2.5-72b-instruct:free",
   "mistralai/mistral-small-3.1-24b-instruct:free",
+  "microsoft/phi-4-reasoning-plus:free",
+  "nvidia/llama-3.1-nemotron-ultra-253b-v1:free",
 ] as const;
 
-/** Curated OpenCode Zen models. */
+/** OpenCode Zen models — free ones have "-free" suffix and require session context; paid models work via API with credits. */
 export const OPENCODE_MODELS = [
-  "grok-code",
-  "qwen3-coder",
-  "claude-sonnet-4",
-  "gpt-5",
-  "kimi-k2",
+  "deepseek-v4-flash",
+  "glm-5.3-flash",
+  "kimi-k2.5",
+  "qwen3.5-plus",
+  "minimax-m2.5",
+  "gemini-3.5-flash",
 ] as const;
+
+/** Models confirmed working via OpenCode Zen API (paid tier). */
+export const OPENCODE_PAID_MODELS = [
+  "deepseek-v4-flash",
+  "glm-5.3-flash",
+  "glm-5.3",
+  "kimi-k2.5",
+  "kimi-k2.6",
+  "qwen3.5-plus",
+  "qwen3.6-plus",
+  "minimax-m2.5",
+  "minimax-m2.7",
+  "gemini-3.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3-flash",
+  "claude-sonnet-4",
+  "claude-haiku-4-5",
+  "gpt-5",
+  "gpt-5.4-mini",
+] as const;
+
+/**
+ * Fetch available models from OpenRouter (free ones end with :free).
+ * Falls back to static list when the API is unreachable.
+ */
+export async function fetchOpenRouterFreeModels(): Promise<string[]> {
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/models", {
+      signal: AbortSignal.timeout(10_000),
+      headers: {
+        "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL ?? "https://connectplusapp.vercel.app",
+        "X-Title": "connectPlus",
+      },
+    });
+    if (!res.ok) return [...OPENROUTER_FREE_MODELS];
+    const data = await res.json();
+    const models: string[] = data?.data
+      ?.filter((m: { id: string; pricing?: { prompt: string; completion: string } }) => {
+        const isFree = m.id.endsWith(":free") || (m.pricing && parseFloat(m.pricing.prompt) === 0 && parseFloat(m.pricing.completion) === 0);
+        return isFree;
+      })
+      .map((m: { id: string }) => m.id)
+      .slice(0, 30) ?? [];
+    return models.length > 0 ? models : [...OPENROUTER_FREE_MODELS];
+  } catch {
+    return [...OPENROUTER_FREE_MODELS];
+  }
+}
+
+/**
+ * Fetch available models from OpenCode Zen API.
+ * Falls back to static list when the API is unreachable.
+ */
+export async function fetchOpenCodeModels(): Promise<string[]> {
+  try {
+    const key = process.env.OPENCODE_API_KEY || "";
+    if (!key) return [...OPENCODE_MODELS];
+    const res = await fetch("https://opencode.ai/zen/v1/models", {
+      signal: AbortSignal.timeout(10_000),
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    if (!res.ok) return [...OPENCODE_MODELS];
+    const data = await res.json();
+    const models: string[] = data?.data
+      ?.map((m: { id: string }) => m.id)
+      .filter((id: string) => !id.includes("contributor-free")) // exclude environment-locked free models
+      .slice(0, 30) ?? [];
+    return models.length > 0 ? models : [...OPENCODE_MODELS];
+  } catch {
+    return [...OPENCODE_MODELS];
+  }
+}
 
 const CONTENT_INTENTS: Intent[] = [
   "write_content",

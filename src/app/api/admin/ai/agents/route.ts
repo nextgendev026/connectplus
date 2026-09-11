@@ -2,15 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getSettings, updateSettings, settingDef } from "@/lib/settings";
 import {
-  OPENCODE_MODELS,
   OPENROUTER_FREE_MODELS,
+  OPENCODE_PAID_MODELS,
+  fetchOpenRouterFreeModels,
+  fetchOpenCodeModels,
   type AiProviderName,
 } from "@/lib/ai-provider";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const PROVIDERS: {
+/** Build provider list with dynamically-fetched models. */
+async function buildProviders(): Promise<{
   name: Exclude<AiProviderName, "builtin">;
   label: string;
   keySetting: string;
@@ -18,44 +21,50 @@ const PROVIDERS: {
   defaultModel: string;
   models: string[];
   note: string;
-}[] = [
-  {
-    name: "openrouter",
-    label: "OpenRouter",
-    keySetting: "openrouterApiKey",
-    modelSetting: "openrouterModel",
-    defaultModel: OPENROUTER_FREE_MODELS[0],
-    models: [...OPENROUTER_FREE_MODELS],
-    note: "Free tier — models suffixed :free cost nothing.",
-  },
-  {
-    name: "opencode",
-    label: "OpenCode Zen",
-    keySetting: "opencodeApiKey",
-    modelSetting: "opencodeModel",
-    defaultModel: OPENCODE_MODELS[0],
-    models: [...OPENCODE_MODELS],
-    note: "Curated coding/writing models from opencode.ai/zen.",
-  },
-  {
-    name: "openai",
-    label: "OpenAI",
-    keySetting: "openaiApiKey",
-    modelSetting: "openaiModel",
-    defaultModel: "gpt-4o-mini",
-    models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
-    note: "Paid.",
-  },
-  {
-    name: "anthropic",
-    label: "Anthropic",
-    keySetting: "anthropicApiKey",
-    modelSetting: "anthropicModel",
-    defaultModel: "claude-3-5-haiku-latest",
-    models: ["claude-3-5-haiku-latest", "claude-3-5-sonnet-latest"],
-    note: "Paid.",
-  },
-];
+}[]> {
+  const [orModels, ocModels] = await Promise.all([
+    fetchOpenRouterFreeModels(),
+    fetchOpenCodeModels(),
+  ]);
+  return [
+    {
+      name: "openrouter",
+      label: "OpenRouter (Free)",
+      keySetting: "openrouterApiKey",
+      modelSetting: "openrouterModel",
+      defaultModel: orModels[0] || OPENROUTER_FREE_MODELS[0],
+      models: orModels,
+      note: `Free tier — ${orModels.length} models available, all :free cost nothing.`,
+    },
+    {
+      name: "opencode",
+      label: "OpenCode Zen",
+      keySetting: "opencodeApiKey",
+      modelSetting: "opencodeModel",
+      defaultModel: ocModels[0] || OPENCODE_PAID_MODELS[0],
+      models: ocModels.length > 0 ? ocModels : [...OPENCODE_PAID_MODELS],
+      note: `Zen API — ${ocModels.length} models. Free-tier models require OpenCode session; paid models work via API.`,
+    },
+    {
+      name: "openai",
+      label: "OpenAI",
+      keySetting: "openaiApiKey",
+      modelSetting: "openaiModel",
+      defaultModel: "gpt-4o-mini",
+      models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
+      note: "Paid — requires OpenAI credits.",
+    },
+    {
+      name: "anthropic",
+      label: "Anthropic",
+      keySetting: "anthropicApiKey",
+      modelSetting: "anthropicModel",
+      defaultModel: "claude-3-5-haiku-latest",
+      models: ["claude-3-5-haiku-latest", "claude-3-5-sonnet-latest"],
+      note: "Paid — requires Anthropic credits.",
+    },
+  ];
+}
 
 async function requireAdmin() {
   const session = await auth();
@@ -73,10 +82,11 @@ export async function GET() {
 
   const settings = await getSettings().catch(() => ({} as Record<string, string>));
   const active = (settings.aiProvider || "builtin").toLowerCase();
+  const providers = await buildProviders();
 
   return NextResponse.json({
     active: active === "builtin" ? "builtin" : active,
-    providers: PROVIDERS.map((p) => {
+    providers: providers.map((p) => {
       const key = settings[p.keySetting] || "";
       return {
         name: p.name,
@@ -103,7 +113,8 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
   const action = body?.action === "save" ? "save" : "test";
   const provider = typeof body?.provider === "string" ? body.provider : "";
-  const def = PROVIDERS.find((p) => p.name === provider);
+  const providers = await buildProviders();
+  const def = providers.find((p) => p.name === provider);
   if (!def) return NextResponse.json({ error: "Unknown provider" }, { status: 400 });
 
   const settings = await getSettings().catch(() => ({} as Record<string, string>));
