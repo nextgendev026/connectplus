@@ -45,9 +45,18 @@ function createClient(): Redis | null {
   const c = new Redis(process.env.REDIS_URL, {
     lazyConnect: true,
     maxRetriesPerRequest: 1,
-    connectTimeout: 2000,
-    enableOfflineQueue: false,
+    connectTimeout: 3000,
+    // CRITICAL: the offline queue must stay ENABLED. With it disabled, any
+    // command issued while the socket is still connecting is rejected
+    // immediately ("Stream isn't writeable") — and because a request typically
+    // makes two cache calls (version + payload), the SECOND one always failed
+    // on a cold instance. That silently disabled the whole cache on serverless:
+    // no snapshot was ever written and every render re-ran the heavy queries.
+    // Bounded retries + a 3s connect timeout keep a dead Redis fast to fail.
+    enableOfflineQueue: true,
+    enableReadyCheck: true,
     keepAlive: 30_000,
+    retryStrategy: (times) => (times > 5 ? null : Math.min(times * 200, 1000)),
   });
   c.on("error", () => {
     /* handled by the circuit breaker; never crash the build */
@@ -55,19 +64,28 @@ function createClient(): Redis | null {
   return c;
 }
 
+/** Shared in-flight connect so concurrent first calls cannot race: the second
+ *  caller used to issue commands mid-handshake and give up on Redis entirely. */
+let connecting: Promise<void> | null = null;
+
 async function getClient(): Promise<Redis | null> {
   if (client === null) return null;
   if (client === undefined) {
     client = canUseRedis() ? createClient() : null;
     if (client) {
-      try {
-        await client.connect();
-      } catch {
-        client = null;
-      }
+      const c = client;
+      connecting = c
+        .connect()
+        .then(() => undefined)
+        .catch(() => {
+          client = null;
+        });
+      await connecting;
+      connecting = null;
     }
   }
   if (!client) return null;
+  if (client.status === "ready") return client;
   try {
     await client.ping();
     return client;
