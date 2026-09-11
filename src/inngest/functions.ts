@@ -379,6 +379,38 @@ export const statusDailySnapshot = inngest.createFunction(
 );
 
 /**
+ * Thumbnail recovery: finds syndicated posts that ended up without a cover and
+ * re-derives one (in-content image first, then OpenGraph). Previously this only
+ * ran when an admin clicked a button, so a feed that shipped no image left a
+ * permanent gap in the feed.
+ *
+ * Cadence + batch size are deliberately modest: 20 items four times a day is
+ * enough to drain a backlog without ever spiking egress against external sites.
+ */
+export const thumbnailRecovery = inngest.createFunction(
+  {
+    id: "thumbnail-recovery",
+    name: "Recover missing thumbnails",
+    triggers: [{ cron: "0 */6 * * *" }, { event: "recover-thumbnails" }],
+    concurrency: 1,
+    retries: 2,
+  },
+  async ({ step }) => {
+    const summary = await step.run("recover", async () => {
+      const { recoverMissingThumbnails } = await import("@/lib/rss-poll");
+      return recoverMissingThumbnails({ limit: 20 });
+    });
+
+    if (summary.recovered > 0) {
+      await step.run("invalidate-feed", async () => {
+        await redisIncr("feed:version").catch(() => {});
+      });
+    }
+    return summary;
+  }
+);
+
+/**
  * Manual deep-learning trigger exposed to admins.
  */
 export const neuralLearn = inngest.createFunction(
@@ -408,6 +440,7 @@ export const functions = [
   embedPosts,
   neuralLearn,
   radioStatusSweep,
+  thumbnailRecovery,
   statusWatchdog,
   statusDailySnapshot,
 ];

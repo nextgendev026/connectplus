@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { coverSrc } from "@/lib/thumb";
 
-export const revalidate = 120;
-export const dynamic = "force-static";
+// `force-static` prerendered one body at build time, so ?limit / ?refresh were
+// ignored and the sidebar could never bust its own cache. The CDN's
+// s-maxage=120 (+ stale-while-revalidate) in vercel.json gives the same
+// caching without freezing the query params.
+export const dynamic = "force-dynamic";
 
 /**
  * GET /api/trending/topics

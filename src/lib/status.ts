@@ -291,6 +291,10 @@ export async function fetchCronRuns(): Promise<CronRun[]> {
   const watched = [
     { fnId: "radio-status-sweep", name: "Radio metadata sweep" },
     { fnId: "rss-poll", name: "RSS poll" },
+    { fnId: "thumbnail-recovery", name: "Thumbnail recovery" },
+    { fnId: "publish-scheduled", name: "Scheduled publishing" },
+    { fnId: "embed-posts", name: "Semantic index" },
+    { fnId: "hive-sweep", name: "Nightly brain training" },
     { fnId: "status-watchdog", name: "Status watchdog" },
     { fnId: "status-daily-snapshot", name: "Daily status snapshot" },
   ];

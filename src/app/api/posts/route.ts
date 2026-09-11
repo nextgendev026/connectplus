@@ -50,8 +50,11 @@ async function withSources<T extends { id: string }>(posts: T[]) {
   });
 }
 
-export const revalidate = 60;
-export const dynamic = "force-static";
+// This route reads query params (page/category/tag/search) and the session, so
+// it must render per request — `force-static` froze the first render and made
+// every filtered or "load more" request return the same body. Egress is kept
+// flat by the Redis body cache below plus the CDN s-maxage in vercel.json.
+export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   try {
@@ -143,7 +146,7 @@ export async function GET(request: NextRequest) {
         where: baseWhere,
         orderBy: { createdAt: "desc" },
         take: 50,
-        include: POST_SELECT,
+        select: POST_SELECT,
       });
       const { posts: ranked, variant } = await rankFeed(pool, authorId);
       const total = ranked.length;
@@ -166,7 +169,7 @@ export async function GET(request: NextRequest) {
         skip,
         take: limit,
         orderBy: { createdAt: "desc" },
-        include: POST_SELECT,
+        select: POST_SELECT,
       }),
       prisma.post.count({ where }),
     ]);
