@@ -5,6 +5,9 @@ import { seedNeuralMind } from "./seed-neural.ts";
 const prisma = new PrismaClient();
 
 const CATEGORIES = [
+  // `news` carries syndicated media-house coverage; the RSS intake layer routes
+  // politics/government/courts there when no topical category clearly wins.
+  { name: "News", slug: "news", icon: "📰" },
   { name: "Technology", slug: "technology", icon: "💻" },
   { name: "Culture", slug: "culture", icon: "🎭" },
   { name: "Business", slug: "business", icon: "💼" },
@@ -569,10 +572,19 @@ async function main() {
   const rssFeeds = [
     { name: "BBC Africa", url: "http://feeds.bbci.co.uk/news/world/africa/rss.xml", siteUrl: "https://bbc.co.uk/africa", description: "BBC Africa News", category: "News" },
     { name: "TechCabal", url: "https://techcabal.com/feed/", siteUrl: "https://techcabal.com", description: "Africa's leading tech publication", category: "Technology" },
+    // Kenyan media houses. Mirrored in scripts/setup-kenyan-feeds.mjs, which is
+    // the idempotent way to add them to an already-seeded database. Publishers
+    // that block automated readers (nation.africa, citizen.digital,
+    // the-star.co.ke, tuko) are left out on purpose.
+    { name: "The Standard", url: "https://www.standardmedia.co.ke/rss/kenya.php", siteUrl: "https://www.standardmedia.co.ke", description: "Standard Group — national news, business, county and sport", category: "News" },
+    { name: "NTV Kenya", url: "https://ntvkenya.co.ke/feed/", siteUrl: "https://ntvkenya.co.ke", description: "Nation Media Group television — breaking news and analysis", category: "News" },
+    { name: "Capital FM Kenya", url: "https://www.capitalfm.co.ke/news/feed/", siteUrl: "https://www.capitalfm.co.ke", description: "Capital FM newsroom — national news, business and lifestyle", category: "News" },
+    { name: "Kahawa Tungu", url: "https://kahawatungu.com/feed/", siteUrl: "https://kahawatungu.com", description: "Kenyan politics, current affairs and business", category: "News" },
+    { name: "Nairobi Leo", url: "https://nairobileo.co.ke/feed/", siteUrl: "https://nairobileo.co.ke", description: "Nairobi Leo — city news, entertainment and lifestyle", category: "News" },
     { name: "Disrupt Africa", url: "https://disrupt-africa.com/feed/", siteUrl: "https://disrupt-africa.com", description: "African tech startup news", category: "Technology" },
     { name: "Nairobi Wire", url: "https://nairobiwire.com/feed/", siteUrl: "https://nairobiwire.com", description: "Nairobi's digital newsroom", category: "News" },
-    { name: "KBC Kenya", url: "https://www.kbc.co.ke/feed/", siteUrl: "https://www.kbc.co.ke", description: "Kenya Broadcasting Corporation", category: "News" },
-    { name: "Ghafla Kenya", url: "https://www.ghafla.co.ke/feed/", siteUrl: "https://www.ghafla.co.ke", description: "Kenyan entertainment news", category: "Entertainment" },
+    { name: "KBC", url: "https://www.kbc.co.ke/feed/", siteUrl: "https://www.kbc.co.ke", description: "Kenya Broadcasting Corporation — public broadcaster", category: "News" },
+    { name: "Ghafla Kenya", url: "https://www.ghafla.co.ke/feed/", siteUrl: "https://www.ghafla.co.ke", description: "Kenyan entertainment, celebrity and music news", category: "Entertainment" },
     { name: "Michuzi Blog (TZ)", url: "https://michuzijr.blogspot.com/feeds/posts/default", siteUrl: "https://michuzijr.blogspot.com", description: "Tanzania's leading news blog", category: "News" },
     { name: "Nile Post Uganda", url: "https://nilepost.co.ug/feed/", siteUrl: "https://nilepost.co.ug", description: "Ugandan news and analysis", category: "News" },
     { name: "SoftPower Uganda", url: "https://softpower.ug/feed/", siteUrl: "https://softpower.ug", description: "Ugandan journalism", category: "News" },

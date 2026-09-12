@@ -2,6 +2,7 @@ import Parser from "rss-parser";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { autoTagPost } from "@/lib/auto-tag";
+import { evaluateFeedItem, type CategoryGuess } from "@/lib/rss-intelligence";
 import { createLogger } from "@/lib/logger";
 import { redisIncr } from "@/lib/redis";
 
@@ -134,6 +135,12 @@ export interface FeedSummary {
   itemCount?: number;
   durationMs?: number;
   error?: string;
+  /** Items the intake layer dropped this cycle, by reason. */
+  filtered?: Record<string, number>;
+  /** Imported items the moderation scanner flagged for review. */
+  flagged?: number;
+  /** Imported items per category slug. */
+  categories?: Record<string, number>;
 }
 
 export interface PollSummary {
@@ -248,6 +255,8 @@ export interface DueFeed {
   id: string;
   name: string;
   url: string;
+  /** The publisher's beat ("News", "Business") — used as a routing hint. */
+  category?: string | null;
   httpEtag?: string | null;
   httpLastModified?: string | null;
   consecutiveFailures?: number;
@@ -284,6 +293,7 @@ export async function listDueFeeds(feedId?: string): Promise<DueFeed[]> {
       id: true,
       name: true,
       url: true,
+      category: true,
       pollInterval: true,
       lastPolled: true,
       httpEtag: true,
@@ -305,12 +315,42 @@ export async function listDueFeeds(feedId?: string): Promise<DueFeed[]> {
       id: feed.id,
       name: feed.name,
       url: feed.url,
+      category: feed.category,
       httpEtag: feed.httpEtag,
       httpLastModified: feed.httpLastModified,
       consecutiveFailures: feed.consecutiveFailures,
     });
   }
   return due;
+}
+
+/**
+ * Category lookup for the intake layer. Categories change rarely, so the map is
+ * cached per serverless instance instead of costing a query per feed per cycle.
+ */
+const CATEGORY_CACHE_MS = 5 * 60 * 1000;
+let categoryCache: { at: number; bySlug: Map<string, string> } | null = null;
+
+async function resolveCategoryIds(): Promise<Map<string, string>> {
+  if (categoryCache && Date.now() - categoryCache.at < CATEGORY_CACHE_MS) {
+    return categoryCache.bySlug;
+  }
+  const rows = await prisma.category
+    .findMany({ select: { id: true, slug: true } })
+    .catch(() => [] as { id: string; slug: string }[]);
+  const bySlug = new Map(rows.map((c) => [c.slug.toLowerCase(), c.id]));
+  categoryCache = { at: Date.now(), bySlug };
+  return bySlug;
+}
+
+/**
+ * Map a classification onto a real category row. A missed slug returns null so
+ * the story still publishes (unfiled) rather than failing the import — the
+ * admin console already has a home for uncategorised content.
+ */
+function categoryIdFor(guess: CategoryGuess | null, bySlug: Map<string, string>): string | null {
+  if (!guess) return null;
+  return bySlug.get(guess.slug) ?? bySlug.get(guess.name.toLowerCase()) ?? null;
 }
 
 /**
@@ -411,11 +451,21 @@ export async function pollSingleFeed(
     // Postgres that alone pushed a full cycle past seven minutes — beyond any
     // serverless budget.
     let ogLookupsUsed = 0;
+    const filtered: Record<string, number> = {};
+    let flagged = 0;
+    const categoryCounts: Record<string, number> = {};
     const prepared: {
       article: Prisma.RssArticleCreateManyInput;
       title: string;
       text: string;
+      categoryId: string | null;
+      moderationStatus: "APPROVED" | "FLAGGED";
     }[] = [];
+
+    // The combined mind's intake pass: every item is judged before it can
+    // become a story. Imports used to bypass the scanner entirely and arrive
+    // APPROVED with no category at all.
+    const categoryIds = await resolveCategoryIds();
 
     for (const item of items) {
       const articleUrl = item.link || item.guid;
@@ -424,15 +474,38 @@ export async function pollSingleFeed(
 
       const content = item["content:encoded"] || item.content || item.contentSnippet || "";
       const summaryText = item.contentSnippet || item.summary || stripHtml(content).slice(0, 500);
+      const titleText = item.title || "Untitled";
+
+      const verdict = evaluateFeedItem({
+        title: titleText,
+        url: articleUrl,
+        summary: typeof summaryText === "string" ? summaryText : "",
+        content: typeof content === "string" ? content : "",
+        feedCategory: feed.category ?? null,
+        source: feed.name,
+      });
+
+      if (!verdict.keep) {
+        const reason = verdict.reason ?? "filtered";
+        filtered[reason] = (filtered[reason] ?? 0) + 1;
+        continue;
+      }
+
+      const moderationStatus = verdict.moderation.suggested === "FLAGGED" ? "FLAGGED" : "APPROVED";
+      if (moderationStatus === "FLAGGED") flagged += 1;
+      const categoryId = categoryIdFor(verdict.category, categoryIds);
+      const slugKey = verdict.category?.slug ?? "uncategorised";
+      categoryCounts[slugKey] = (categoryCounts[slugKey] ?? 0) + 1;
 
       const allowNetwork = ogLookupsUsed < MAX_OG_LOOKUPS_PER_POLL;
       if (allowNetwork) ogLookupsUsed++;
       const imageUrl = await resolveImage(allowNetwork, item);
-      const titleText = item.title || "Untitled";
 
       prepared.push({
         title: titleText,
-        text: `${titleText} ${summaryText ?? ""}`,
+        text: verdict.text,
+        categoryId,
+        moderationStatus,
         article: {
           feedId: feed.id,
           title: titleText,
@@ -444,6 +517,13 @@ export async function pollSingleFeed(
           publishedAt: item.pubDate ? new Date(item.pubDate) : null,
         },
       });
+    }
+
+    summary.filtered = filtered;
+    summary.flagged = flagged;
+    summary.categories = categoryCounts;
+    if (Object.keys(filtered).length > 0) {
+      log.info("intake filtered feed items", { feed: feed.name, filtered });
     }
 
     try {
@@ -470,7 +550,8 @@ export async function pollSingleFeed(
               content: (source?.article.content ?? "").slice(0, 3000),
               coverImage: a.imageUrl ?? null,
               status: "PUBLISHED",
-              moderationStatus: "APPROVED",
+              moderationStatus: source?.moderationStatus ?? "APPROVED",
+              categoryId: source?.categoryId ?? null,
               authorId: defaultAuthorId,
               source: feed.name,
               sourceUrl: a.url,
