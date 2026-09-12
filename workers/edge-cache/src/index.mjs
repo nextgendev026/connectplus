@@ -28,6 +28,26 @@ const IMMUTABLE_EXT =
   /\.(?:js|mjs|css|woff2?|ttf|otf|png|jpe?g|webp|avif|gif|svg|ico|txt|xml|map)$/i;
 const IMMUTABLE_TTL = 60 * 60 * 24 * 365;
 
+/**
+ * Files served from the app root (`/favicon.ico`, the PWA icons, `/sw.js`,
+ * `/robots.txt`, `/sitemap.xml`, `/feed.xml`) match the extension rule above
+ * but are NOT content-hashed — their URLs survive a redeploy, so an immutable
+ * TTL pins the old bytes for a year. That is exactly how a freshly fixed
+ * favicon keeps showing the framework default to every reader while the
+ * origin serves the brand mark. An hour keeps them nearly free and still lets
+ * a repainted logo or regenerated sitemap land on its own.
+ */
+const ROOT_TTL = 60 * 60;
+
+/**
+ * Cache-key version. The Cache API has no purge hook, so the only way to stop
+ * serving an entry stored under a bad policy is to ask for a different key:
+ * bump this and every entry is refetched. v2 drops the year-long root-file
+ * entries (`/favicon.ico` among them) created before root files were carved
+ * out of the immutable rule.
+ */
+const CACHE_VERSION = "2";
+
 /** Anonymous HTML: short TTL so breaking news still lands fast. */
 const HTML_TTL = 60;
 
@@ -61,6 +81,9 @@ const isNever = (pathname) => NEVER_CACHE.some((re) => re.test(pathname));
 const isImmutable = (pathname) =>
   IMMUTABLE_PREFIXES.some((p) => pathname.startsWith(p)) || IMMUTABLE_EXT.test(pathname);
 
+/** A file at the app root (one path segment) — never content-hashed. */
+const isRootFile = (pathname) => /^\/[^/]+$/.test(pathname);
+
 /**
  * The optimizer and the cover route negotiate a format from `Accept`, and the
  * Cache API keys on the URL alone (it ignores Vary). Without this the first
@@ -76,6 +99,9 @@ function variantKey(request) {
 
 /** TTL for a path, or 0 when this proxy should not cache it at all. */
 function ttlFor(pathname, response) {
+  // Checked before the immutable rule: a root file with a "static" extension
+  // is still mutable, and a year is far too long to be wrong about.
+  if (isRootFile(pathname) && IMMUTABLE_EXT.test(pathname)) return ROOT_TTL;
   // Covers and generated thumbnails are content-addressed and immutable.
   if (pathname.startsWith("/api/thumb")) return IMMUTABLE_TTL;
   // Image optimizer output: one immutable artifact per url+width+quality+format.
@@ -130,9 +156,9 @@ export default {
     }
 
     const varies = url.pathname.startsWith("/_next/image") || url.pathname.startsWith("/api/thumb");
-    const keyUrl = varies
-      ? `${url.toString()}${url.search ? "&" : "?"}__edge=${variantKey(request)}`
-      : url.toString();
+    const separator = url.search ? "&" : "?";
+    const variant = varies ? variantKey(request) : "std";
+    const keyUrl = `${url.toString()}${separator}__edge=${variant}&v=${CACHE_VERSION}`;
     const cacheKey = new Request(keyUrl, { method: "GET" });
     const cached = await caches.default.match(cacheKey);
     if (cached) {

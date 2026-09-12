@@ -29,6 +29,7 @@ cover requests are answered at the edge, not re-fetched and re-resized.
 | `/_next/image` | 30 days | one entry per url+width+quality+**format** |
 | `/api/thumb/*` | 1 year | content-addressed covers |
 | `/_next/static/*`, `/fonts/*`, images, css, js | 1 year | immutable build output |
+| `/favicon.ico`, `/icon-*.png`, `/apple-touch-icon.png`, `/sw.js`, `/robots.txt`, `/sitemap.xml`, `/feed.xml` | 1h | root files — their URLs never change, so they must not be pinned |
 | `/api/trending/topics` | 120s | identical for every anonymous reader |
 | `/api/posts/check` | 30s | |
 | `/api/subscription/plans` | 600s | |
@@ -56,6 +57,15 @@ Two details worth keeping:
    WebP caller.
 2. **HTML TTL is short (60s).** That keeps the cache useful for traffic spikes
    while still letting breaking news land quickly.
+3. **Root files get an hour, not a year.** `/favicon.ico`, the PWA icons, the
+   service worker, `robots.txt` and the sitemap all match the "static
+   extension" rule but are not content-hashed. Treating them as immutable is
+   how a fixed favicon keeps showing the old bytes: the origin serves the new
+   mark, the edge keeps handing out the cached one for 365 days.
+4. **`CACHE_VERSION` in `src/index.mjs` is the purge lever.** The Cache API has
+   no purge endpoint, so an entry stored under a bad policy can only be
+   dropped by changing its key. Bump the version whenever the caching rules
+   change and every entry is refetched on the next request.
 
 ## Deploy
 

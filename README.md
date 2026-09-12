@@ -163,8 +163,11 @@ and **Fluid Active CPU** flat.
 - **Deploy:** `CLOUDFLARE_API_TOKEN=… CLOUDFLARE_ACCOUNT_ID=… node scripts/deploy-worker.mjs`
   (no wrangler install required; `wrangler.toml` is there if you prefer it)
 - **What is cached:** anonymous HTML (60s), read-only API JSON (30–600s), covers,
-  optimised images and static assets (immutable). AVIF and WebP are cached as
-  separate variants so the first caller can't poison the other format.
+  optimised images and static assets (immutable). Root files that are not
+  content-hashed — `/favicon.ico`, the PWA icons, `/sw.js`, `robots.txt`, the
+  sitemap — get an hour instead, so a fixed icon actually reaches readers.
+  AVIF and WebP are cached as separate variants so the first caller can't
+  poison the other format.
 - **Safety model:** any request carrying `Cookie` or `Authorization`, plus any
   response carrying `Set-Cookie`, is passed through and never stored — a
   signed-in reader can never be served another visitor's HTML.
