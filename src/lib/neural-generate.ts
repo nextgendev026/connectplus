@@ -433,38 +433,106 @@ export function pickVariant(templates: string[], seed: string): string {
 }
 
 /**
- * Continue writing: drafts a flowing next paragraph anchored to the last
- * sentence's topic/keywords so it reads like a natural extension.
+ * Words that make bad subjects once a generator promotes them into a heading or
+ * topic slot. `extractKeywords` scores by rarity (IDF with no frequency floor),
+ * so a word the draft mentions exactly once — "adopts", "new", "reflect" — can
+ * outrank the actual topic. That is how a published article ended up carrying
+ * "## The momentum behind Adopts" above a paragraph about nothing in
+ * particular.
+ */
+const WEAK_SUBJECTS = new Set([
+  "adopt", "adopts", "adopted", "new", "said", "says", "say", "also", "many", "much",
+  "more", "most", "make", "makes", "made", "take", "takes", "took", "get", "gets", "got",
+  "use", "used", "using", "like", "liked", "one", "two", "three", "first", "last", "next",
+  "now", "still", "very", "just", "even", "back", "look", "looks", "looked", "thing",
+  "things", "way", "ways", "time", "times", "year", "years", "day", "days", "week",
+  "weeks", "month", "months", "today", "true", "truth", "right", "wrong", "close",
+  "closer", "different", "reflect", "reflects", "size", "small", "large", "good", "bad",
+  "best", "worst", "happen", "happens", "need", "needs", "want", "wants", "know", "knows",
+  "see", "sees", "think", "thinks", "find", "finds", "give", "gives",
+  // Comparatives, quantifiers and discourse words: they read as subjects to an
+  // extractor that only counts words, and as nonsense in a headline.
+  "better", "worse", "bigger", "biggest", "smaller", "smallest", "faster", "fastest",
+  "slower", "harder", "easier", "higher", "highest", "lower", "lowest", "early",
+  "earlier", "late", "later", "recent", "recently", "latest", "current", "former",
+  "latter", "various", "several", "certain", "likely", "possible", "available", "able",
+  "unable", "going", "coming", "told", "noted", "added", "according", "however",
+  "therefore", "meanwhile", "despite", "although", "because", "since", "while", "again",
+  "other", "others", "another", "same", "such", "own", "whole", "entire", "half",
+  "number", "numbers", "amount", "total", "less", "least", "lot", "lots", "kind",
+  "kinds", "type", "types", "sort", "case", "cases", "point", "points", "idea",
+  "ideas", "problem", "problems", "question", "questions", "answer", "answers", "fact",
+  "facts", "end", "start", "beginning", "middle", "result", "results", "level", "levels",
+  "rate", "rates", "term", "terms", "area", "areas", "place", "places", "home",
+  "house", "car", "cars", "road", "roads", "people", "person", "man", "woman",
+]);
+
+/**
+ * Pick the subject a generated paragraph leans on: a named place or
+ * organization first (the strongest top signal there is), then the first
+ * non-filler keyword. Falls back to the caller's generic phrase so a thin draft
+ * gets plain prose instead of a heading assembled from a random word.
+ */
+function pickSubject(text: string, fallback: string, taken: Set<string>): string {
+  const named = extractEntities(text).find(
+    (e) => e.value.length >= 4 && !taken.has(e.value.toLowerCase())
+  );
+  if (named) {
+    taken.add(named.value.toLowerCase());
+    return named.value;
+  }
+
+  const keyword = extractKeywords(text, 12)
+    .map((k) => k.keyword)
+    .find((k) => k.length >= 4 && !WEAK_SUBJECTS.has(k) && !taken.has(k));
+  if (keyword) {
+    taken.add(keyword);
+    return keyword;
+  }
+
+  return fallback;
+}
+
+/**
+ * Continue writing: drafts a flowing next paragraph anchored to the named
+ * entities and keywords of the draft so it reads like a natural extension.
  */
 export function continueText(rawContent: string): { continuation: string; heading?: string } {
   const text = stripHtml(rawContent).trim();
-  const kws = extractKeywords(text, 4).map((k) => k.keyword);
   const entities = extractEntities(text);
   const lastSentence =
     text.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 10).pop()?.trim() ?? text;
-  const topic = kws[0] ?? entities[0]?.value?.split(" ")[0] ?? "the story";
-  const second = kws[1] ?? (entities[1]?.value?.split(" ")[0] ?? "the community");
-  const place = entities.find((e) => e.type === "place")?.value ?? "across East Africa";
 
+  const taken = new Set<string>();
+  const topic = pickSubject(text, "this story", taken);
+  const second = pickSubject(text, "the community", taken);
+  const place = entities.find((e) => e.type === "place")?.value ?? "East Africa";
+  const kws = extractKeywords(text, 4).map((k) => k.keyword);
+
+  // Templates stay noun-agnostic: `${topic}` and `${second}` may resolve to a
+  // place, a person, a plural group or the generic fallback, so nothing may
+  // assume a preposition or a plural verb agreement.
   const openers = [
-    `What makes this worth watching is what comes next. The momentum around ${topic} is not slowing down — ${second} are paying attention in new ways, and ${place} is already feeling the shift.`,
-    `Dig deeper and the picture sharpens. Beyond the headlines, ${topic} is reshaping how ${second} think about the future — and the ripple effects are just beginning to show ${place}.`,
-    `The bigger question is where this leads. If the energy behind ${topic} keeps building, ${second} will have to respond — and ${place} stands to gain the most from what happens next.`,
+    `What makes this worth watching is what comes next. The momentum around ${topic} is not slowing down, and the people closest to it are already changing how ${place} talks about ${second}.`,
+    `Dig deeper and the picture sharpens. Beyond the headlines, ${topic} is reshaping the conversation — and the ripple effects are only just beginning to show in ${place}.`,
+    `The bigger question is where this leads. If the energy behind ${topic} keeps building, someone will have to respond — and ${place} stands to gain the most from what happens next.`,
   ];
 
   const continuations = [
-    `Take the numbers: engagement around ${topic} keeps climbing week after week. Creators who lean into ${second} are seeing real returns, and the pattern is consistent enough to plan around. The smart play is to document the change while it is happening, not after.`,
+    `Take the numbers: engagement around ${topic} keeps climbing week after week. Creators who lean into ${topic} are seeing real returns, and the pattern is consistent enough to plan around. The smart play is to document the change while it is happening, not after.`,
     `For anyone following closely, the signal is clear: ${topic} is becoming a defining theme for ${place}. The question is no longer whether it matters, but who will own the conversation first. That is an opportunity worth acting on.`,
     `Look at the way the story has already moved. What started as a niche interest is now part of the everyday conversation in ${place}. The next chapter belongs to whoever brings fresh angles on ${topic} — and there is still room for a genuinely new voice.`,
   ];
 
   const heading = pickVariant(
-    [
-      `## Why ${capitalize(topic)} matters more than ever`,
-      `## The momentum behind ${capitalize(topic)}`,
-      `## What ${capitalize(second)} should watch next`,
-      `## Where ${capitalize(topic)} goes from here`,
-    ],
+    topic === "this story"
+      ? [`## What comes next`, `## The bigger picture`, `## Where this goes from here`]
+      : [
+          `## Why ${capitalize(topic)} matters more than ever`,
+          `## The momentum behind ${capitalize(topic)}`,
+          `## What comes next for ${capitalize(topic)}`,
+          `## Where ${capitalize(topic)} goes from here`,
+        ],
     text.slice(-80)
   );
 
@@ -527,7 +595,7 @@ export function composeDraft(rawTopic: string): { draft: string; headline: strin
     `For all the momentum, the conversation is still missing depth. Most coverage recycles press releases instead of reporting on the ground. That is where the opportunity lives — original, specific, human stories about ${topic} in ${place}.`,
     "",
     `## Where it goes next`,
-    `Watch the next six months. If the current trajectory holds, ${topic} will move from a niche interest to a mainstream talking point ${place}. The creators who start documenting it now will own the narrative.`,
+    `Watch the next six months. If the current trajectory holds, ${topic} will move from a niche interest to a mainstream talking point in ${place}. The creators who start documenting it now will own the narrative.`,
     "",
     `*What is your experience with ${topic}? Share your story in the comments — the best perspectives come from readers like you.*`,
   ].join("\n");

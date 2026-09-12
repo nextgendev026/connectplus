@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import type Stripe from "stripe";
-import { getStripe, stripeConfigured, periodWindow } from "@/lib/stripe";
+import { getStripe, stripeConfigured } from "@/lib/stripe";
+import {
+  mapStripeStatus,
+  subscriptionPeriod,
+  invoiceSubscriptionId,
+  invoicePeriod,
+  isUniqueViolation,
+} from "@/lib/stripe-sync";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -39,10 +46,17 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const seen = await prisma.stripeEvent.findUnique({ where: { eventId: event.id } });
-  if (seen) return NextResponse.json({ received: true, duplicate: true });
-
-  await prisma.stripeEvent.create({ data: { eventId: event.id, type: event.type } });
+  // Claim the event by inserting it. Creating first (and treating the unique
+  // violation as "already handled") is race-free, where the old
+  // read-then-create could let two deliveries of the same event run the
+  // handler concurrently and double-apply a plan change.
+  try {
+    await prisma.stripeEvent.create({ data: { eventId: event.id, type: event.type } });
+  } catch (err) {
+    if (isUniqueViolation(err)) return NextResponse.json({ received: true, duplicate: true });
+    console.error("Webhook ledger write failed:", event.type, event.id, err);
+    return NextResponse.json({ error: "Could not record event" }, { status: 500 });
+  }
 
   try {
     await handleEvent(stripe, event);
@@ -53,51 +67,6 @@ export async function POST(request: NextRequest) {
     console.error("Webhook handler failed:", event.type, event.id, err);
     return NextResponse.json({ error: "Webhook handler failed" }, { status: 500 });
   }
-}
-
-function mapStatus(status: Stripe.Subscription.Status): string {
-  if (status === "active") return "active";
-  if (status === "trialing") return "trialing";
-  if (status === "past_due" || status === "unpaid") return "past_due";
-  return "cancelled";
-}
-
-/**
- * Current billing window for a subscription. This API generation exposes the
- * period as `billing_cycle_anchor` (start) + `billing_schedules[].bill_until`
- * (end) instead of `current_period_start/end`; falls back to a cycle derived
- * window so the webhook never needs to know our billing-cycle metadata.
- */
-function subscriptionPeriod(
-  sub: Stripe.Subscription | null | undefined,
-  fallbackCycle: "monthly" | "yearly"
-): { start: Date; end: Date } {
-  if (sub) {
-    const startSec = sub.billing_cycle_anchor ?? sub.start_date ?? null;
-    const endSec =
-      sub.billing_schedules?.[0]?.bill_until?.timestamp ??
-      (sub.billing_schedules?.[0]?.bill_until as unknown as
-        | { timestamp?: number }
-        | undefined)?.timestamp ??
-      null;
-    if (startSec || endSec) {
-      const start = startSec ? new Date(startSec * 1000) : new Date();
-      const end = endSec ? new Date(endSec * 1000) : periodWindow(fallbackCycle, start).end;
-      return { start, end };
-    }
-  }
-  return periodWindow(fallbackCycle, new Date());
-}
-
-/** Link an invoice back to its originating subscription. */
-function invoiceSubscriptionId(inv: Stripe.Invoice): string | undefined {
-  const top = inv as unknown as { subscription?: string | null };
-  if (top.subscription) return top.subscription;
-  const line = inv.lines.data[0];
-  const parent = line?.parent as unknown as
-    | { subscription_details?: { subscription?: string | null } }
-    | undefined;
-  return parent?.subscription_details?.subscription ?? undefined;
 }
 
 async function findPlanByPrice(priceId?: string | null) {
@@ -130,7 +99,7 @@ async function handleEvent(stripe: Stripe, event: Stripe.Event): Promise<void> {
       await prisma.userSubscription.upsert({
         where: { userId_planId: { userId, planId } },
         update: {
-          status: stripeSub ? mapStatus(stripeSub.status) : "active",
+          status: stripeSub ? mapStripeStatus(stripeSub.status) : "active",
           billingCycle,
           currentPeriodStart: window.start,
           currentPeriodEnd: window.end,
@@ -143,7 +112,7 @@ async function handleEvent(stripe: Stripe, event: Stripe.Event): Promise<void> {
         create: {
           userId,
           planId,
-          status: stripeSub ? mapStatus(stripeSub.status) : "active",
+          status: stripeSub ? mapStripeStatus(stripeSub.status) : "active",
           billingCycle,
           currentPeriodStart: window.start,
           currentPeriodEnd: window.end,
@@ -168,12 +137,29 @@ async function handleEvent(stripe: Stripe, event: Stripe.Event): Promise<void> {
     case "invoice.paid": {
       const obj = data.object as Stripe.Invoice;
       const subscriptionId = invoiceSubscriptionId(obj);
-      if (subscriptionId) {
+      if (!subscriptionId) break;
+
+      // A successful charge is the moment to resynchronise from the source of
+      // truth. Re-reading the subscription restores a status/window that a
+      // missed `customer.subscription.updated` would otherwise leave stale —
+      // without it, a lapsed `past_due` account could stay locked out (or keep
+      // access) until the next portal visit.
+      const stripeSub = await stripe.subscriptions.retrieve(subscriptionId).catch(() => null);
+      if (stripeSub) {
+        await syncSubscription(stripeSub);
+      } else {
+        const period = invoicePeriod(obj);
         await prisma.userSubscription.updateMany({
           where: { stripeSubscriptionId: subscriptionId },
-          data: { usageThisPeriod: 0, updatedAt: new Date() },
+          data: { status: "active", ...(period ?? {}), updatedAt: new Date() },
         });
       }
+
+      // The new billing window means a fresh usage allowance.
+      await prisma.userSubscription.updateMany({
+        where: { stripeSubscriptionId: subscriptionId },
+        data: { usageThisPeriod: 0, updatedAt: new Date() },
+      });
       break;
     }
 
@@ -196,7 +182,7 @@ async function handleEvent(stripe: Stripe, event: Stripe.Event): Promise<void> {
 
 async function syncSubscription(obj: Stripe.Subscription): Promise<void> {
   const subscriptionId = String(obj.id);
-  const status = mapStatus(obj.status);
+  const status = mapStripeStatus(obj.status);
   const billingCycle =
     obj.metadata?.billingCycle === "yearly" ? "yearly" : "monthly";
   const window = subscriptionPeriod(obj, billingCycle);

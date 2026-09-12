@@ -169,9 +169,19 @@ async function cancel(userId: string, body: Record<string, unknown>): Promise<Ne
   if (!sub) return NextResponse.json({ error: "Subscription not found" }, { status: 404 });
 
   if (sub.stripeSubscriptionId && stripeConfigured()) {
-    await getStripe()!.subscriptions.update(sub.stripeSubscriptionId, {
-      cancel_at_period_end: true,
-    });
+    try {
+      await getStripe()!.subscriptions.update(sub.stripeSubscriptionId, {
+        cancel_at_period_end: true,
+      });
+    } catch (err) {
+      // Never record a local cancellation Stripe refused: telling a member
+      // they cancelled while billing continues is the worst failure here.
+      console.error("Stripe cancel failed:", sub.stripeSubscriptionId, err);
+      return NextResponse.json(
+        { error: "Stripe couldn't schedule the cancellation — please try again." },
+        { status: 502 }
+      );
+    }
   }
 
   const updated = await prisma.userSubscription.update({
@@ -194,9 +204,17 @@ async function reactivate(userId: string, body: Record<string, unknown>): Promis
   if (!sub) return NextResponse.json({ error: "Subscription not found" }, { status: 404 });
 
   if (sub.stripeSubscriptionId && stripeConfigured()) {
-    await getStripe()!.subscriptions.update(sub.stripeSubscriptionId, {
-      cancel_at_period_end: false,
-    });
+    try {
+      await getStripe()!.subscriptions.update(sub.stripeSubscriptionId, {
+        cancel_at_period_end: false,
+      });
+    } catch (err) {
+      console.error("Stripe reactivate failed:", sub.stripeSubscriptionId, err);
+      return NextResponse.json(
+        { error: "Stripe couldn't resume the subscription — please try again." },
+        { status: 502 }
+      );
+    }
   }
 
   const updated = await prisma.userSubscription.update({

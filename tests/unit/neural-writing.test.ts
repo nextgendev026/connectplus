@@ -51,6 +51,30 @@ describe("writing brain — continueText", () => {
     expect(lower).toMatch(/agritech|logistics|farmers|middlemen/);
   });
 
+  it("never promotes a filler word into the subject it names", () => {
+    // The real (published) failure: a rarity-weighted keyword extractor picked
+    // "adopts" out of this sentence and the article ran "## The momentum behind
+    // Adopts" above a paragraph of nothing.
+    const draft =
+      "As the UN adopts a new world map to reflect Africa's true size, let's take a closer look at what different maps get right and wrong.";
+    const r = continueText(draft);
+    expect(r.heading).not.toMatch(/Adopts|Reflect|Different|World\b/);
+    expect(r.continuation).not.toMatch(/behind adopts/i);
+    // The named place is the strongest signal in that draft.
+    expect(r.continuation).toMatch(/Africa/);
+  });
+
+  it("falls back to plain prose instead of naming a random word", () => {
+    const r = continueText("It was new and better than the old one, and many said so again and again.");
+    expect(r.heading).toMatch(/^## /);
+    expect(r.heading).not.toMatch(/\b(?:New|Many|Better|Again|Old)\b/);
+  });
+
+  it("keeps the region default a noun rather than a prepositional phrase", () => {
+    const r = continueText("Traders in the market say supply has improved since the rains came.");
+    expect(r.continuation).not.toMatch(/and across East Africa stands/);
+  });
+
   it("produces different continuations for different drafts", () => {
     const a = continueText("Solar microgrids are lighting up rural schools across East Africa. Adoption doubled this year.");
     const b = continueText("Kampala's food scene is exploding with new restaurants every month. Chefs are going global.");

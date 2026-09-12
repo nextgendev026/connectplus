@@ -38,6 +38,39 @@ const CITIES = new Set([
   "gisenyi","huye","musanze","jimma","hawassa","bahir dar","dire dawa","harar",
 ]);
 
+/**
+ * Countries and regions, matched with word boundaries. The city list answers
+ * "where in the region", but an article about Kenya, Rwanda or East Africa as
+ * a whole used to yield no place at all — which pushed generated copy onto its
+ * "across East Africa" default and produced subjects built from filler words.
+ */
+const REGIONS = new Set([
+  "kenya","uganda","tanzania","rwanda","burundi","ethiopia","somalia","sudan",
+  "south sudan","djibouti","eritrea","egypt","nigeria","ghana","south africa",
+  "africa","east africa","west africa","north africa","zambia","zimbabwe","botswana",
+  "namibia","malawi","mozambique","angola","cameroon","senegal","ivory coast",
+  "congo","drc","morocco","tunisia","algeria","libya","mali","niger","chad",
+  "europe","asia","america","the americas","middle east","gulf","diaspora",
+]);
+
+/** Longest first, so "South Sudan" claims the match before "Sudan". */
+const PLACE_NAMES = [...new Set([...CITIES, ...REGIONS])].sort((a, b) => b.length - a.length);
+
+const placePatterns = new Map<string, RegExp>();
+
+/** Word-boundary matcher, so "Mali" never matches inside "Malindi". */
+function placePattern(place: string): RegExp {
+  const cached = placePatterns.get(place);
+  if (cached) return cached;
+  const pattern = new RegExp(`\\b${place.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+  placePatterns.set(place, pattern);
+  return pattern;
+}
+
+function titleCaseName(name: string): string {
+  return name.split(" ").map((w) => w.slice(0, 1).toUpperCase() + w.slice(1)).join(" ");
+}
+
 const ORG_KEYWORDS = ["ministry","department","university","institute","bank","corporation","company","limited","foundation","authority","commission","council","agency","organization","association","forum","summit","conference","initiative","program","project"];
 
 const PERSON_PREFIXES = ["mr","mrs","ms","dr","prof","ceo","cto","mp","minister","president","governor","director","chief","head","senator"];
@@ -77,11 +110,14 @@ export function extractEntities(text: string): { type: "place" | "organization" 
   const seen = new Set<string>();
   const lower = text.toLowerCase();
 
-  for (const city of CITIES) {
-    if (lower.includes(city) && !seen.has(city)) {
-      seen.add(city);
-      entities.push({ type: "place", value: city.split(" ").map(w => w.slice(0, 1).toUpperCase() + w.slice(1)).join(" ") });
-    }
+  for (const place of PLACE_NAMES) {
+    if (seen.has(place)) continue;
+    // A name already inside a longer match ("Africa" in "East Africa") is the
+    // same mention, not a second place.
+    if ([...seen].some((matched) => matched.includes(place))) continue;
+    if (!placePattern(place).test(lower)) continue;
+    seen.add(place);
+    entities.push({ type: "place", value: titleCaseName(place) });
   }
 
   const words = text.split(/\s+/);

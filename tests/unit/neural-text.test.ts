@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   extractKeywords,
+  extractEntities,
   analyzeSentiment,
   summarizeText,
   stripHtml,
@@ -22,6 +23,25 @@ describe("extractKeywords", () => {
   it("respects topN", () => {
     const text = "one two three four five six seven eight nine ten eleven";
     expect(extractKeywords(text, 5)).toHaveLength(5);
+  });
+});
+
+describe("extractEntities", () => {
+  it("recognises countries and regions as places, not just cities", () => {
+    const places = extractEntities("Kenya and South Sudan are both in East Africa.")
+      .filter((e) => e.type === "place")
+      .map((e) => e.value);
+    expect(places).toContain("Kenya");
+    expect(places).toContain("South Sudan");
+    expect(places).toContain("East Africa");
+  });
+
+  it("does not match a place name inside a longer word", () => {
+    const places = extractEntities("Malindi traders want the county government to act.")
+      .filter((e) => e.type === "place")
+      .map((e) => e.value);
+    expect(places).toContain("Malindi");
+    expect(places).not.toContain("Mali");
   });
 });
 
