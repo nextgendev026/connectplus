@@ -60,6 +60,31 @@ export function useTrackedLocation(opts: { watch?: boolean; ttlMs?: number } = {
     setTrackedLocation(loc);
   }, []);
 
+  // Declared before `acquire` because acquire references it in both its success
+  // and error callbacks; declaring it later left a by-reference lookup that the
+  // React compiler rules flag as an access-before-declaration hazard.
+  const fallback = useCallback(async (done: (loc: TrackedLocation) => void) => {
+    try {
+      const res = await fetch("/api/weather?meta=1", { signal: AbortSignal.timeout(8000) });
+      if (res.ok) {
+        const data = (await res.json()) as { coords?: { lat: number; lon: number }; place?: string | null };
+        if (data.coords && typeof data.coords.lat === "number" && typeof data.coords.lon === "number") {
+          done({
+            lat: data.coords.lat,
+            lon: data.coords.lon,
+            source: "ip",
+            place: data.place ?? null,
+            ts: Date.now(),
+          });
+          return;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    done({ lat: -1.2864, lon: 36.8172, source: "default", place: "Nairobi", ts: Date.now() });
+  }, []);
+
   const acquire = useCallback(async () => {
     // 1. Persisted + fresh?
     const saved = getTrackedLocation();
@@ -93,29 +118,7 @@ export function useTrackedLocation(opts: { watch?: boolean; ttlMs?: number } = {
     }
     // 3. IP fallback (no prompt, ~30 min TTL enforced by the server).
     fallback(persist);
-  }, [persist, ttlMs]);
-
-  const fallback = useCallback(async (done: (loc: TrackedLocation) => void) => {
-    try {
-      const res = await fetch("/api/weather?meta=1", { signal: AbortSignal.timeout(8000) });
-      if (res.ok) {
-        const data = (await res.json()) as { coords?: { lat: number; lon: number }; place?: string | null };
-        if (data.coords && typeof data.coords.lat === "number" && typeof data.coords.lon === "number") {
-          done({
-            lat: data.coords.lat,
-            lon: data.coords.lon,
-            source: "ip",
-            place: data.place ?? null,
-            ts: Date.now(),
-          });
-          return;
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-    done({ lat: -1.2864, lon: 36.8172, source: "default", place: "Nairobi", ts: Date.now() });
-  }, []);
+  }, [persist, ttlMs, fallback]);
 
   // Listen for updates from other components (weather widget GPS grant etc).
   useEffect(() => {

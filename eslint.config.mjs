@@ -1,11 +1,15 @@
 import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
+import reactHooks from "eslint-plugin-react-hooks";
 
 export default defineConfig([
   ...nextVitals,
   ...nextTs,
   {
+    // Plugins are resolved per config object for files that the Next presets do
+    // not cover (e.g. .mjs/.cjs tooling), so register react-hooks here too.
+    plugins: { "react-hooks": reactHooks },
     rules: {
       // The React-19 compiler-era rules flag patterns that are standard in this
       // codebase: the ThemeProvider hydration mount gate, and data-fetch-on-mount
@@ -19,6 +23,14 @@ export default defineConfig([
       // Underscore-prefixed parameters (e.g. `_request` in route handlers) are
       // intentionally unused per TS convention.
       "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
+    },
+  },
+  {
+    // Ad-hoc node tooling under scripts/ runs through node/ts-node directly and
+    // leans on CommonJS `require`, which the app-facing TS rule set forbids.
+    files: ["scripts/**/*.{js,cjs,mjs,ts}"],
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
     },
   },
   globalIgnores([
