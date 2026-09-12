@@ -1,0 +1,25 @@
+# Cloudflare Worker: edge cache proxy in front of the Vercel deployment.
+#
+# Sized for the Workers *free* plan: 100k requests/day, 10ms CPU per request.
+# No KV, no Durable Objects, no R2 bindings — the Cache API is free and is all
+# this worker uses, so it adds no line items to the bill.
+#
+# Deploy without wrangler installed:
+#   CLOUDFLARE_API_TOKEN=... node scripts/deploy-worker.mjs
+#
+# Or with wrangler:
+#   npx wrangler deploy --config workers/edge-cache/wrangler.toml
+
+name = "connectplus-edge"
+main = "src/index.mjs"
+compatibility_date = "2026-09-01"
+
+# Served at https://connectplus-edge.<your-subdomain>.workers.dev
+workers_dev = true
+
+[vars]
+# The Vercel origin this worker fronts. Change here, or override per-environment.
+ORIGIN = "https://connectplusapp.vercel.app"
+
+[observability]
+enabled = true

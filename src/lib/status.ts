@@ -51,6 +51,7 @@ const SERVICE_META: Record<string, { name: string; description: string; critical
   forex: { name: "Forex Rates", description: "open.er-api.com — daily reference rates" },
   weather: { name: "Weather Service", description: "Open-Meteo — forecasts and GPS weather" },
   inngest: { name: "Background Jobs", description: "Inngest — cron sweeps, scheduled publishing, RSS polling" },
+  edge: { name: "Edge Cache", description: "Cloudflare Workers — anonymous HTML, API and image caching in front of the origin" },
 };
 
 export function serviceBase(id: string) {
@@ -139,6 +140,37 @@ async function checkWeather(): Promise<{ status: ServiceStatus; detail: string }
   return { status: "operational", detail: `Open-Meteo reachable (${Date.now() - started}ms)` };
 }
 
+/**
+ * Cloudflare edge cache worker.
+ *
+ * When EDGE_URL is configured the anonymous cache in front of the origin is
+ * what most readers actually hit, so it belongs on the status page next to the
+ * database and Redis. Unset means traffic still reaches the origin directly
+ * (a valid local/dev state), which is reported as unconfigured rather than
+ * down so the page does not cry wolf during development.
+ */
+async function checkEdge(): Promise<{ status: ServiceStatus; detail: string }> {
+  const edgeUrl = process.env.EDGE_URL?.replace(/\/+$/, "");
+  if (!edgeUrl) {
+    return { status: "unconfigured", detail: "EDGE_URL not set — traffic reaches the origin directly" };
+  }
+  const started = Date.now();
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT);
+    const res = await fetch(`${edgeUrl}/__edge`, { signal: controller.signal, redirect: "manual" });
+    clearTimeout(timer);
+    if (!res.ok) return { status: "down", detail: `Edge worker answered ${res.status}` };
+    const body = (await res.json().catch(() => null)) as { origin?: string } | null;
+    return {
+      status: "operational",
+      detail: `Worker answering (${Date.now() - started}ms) → origin ${body?.origin ?? "unknown"}`,
+    };
+  } catch {
+    return { status: "down", detail: "Edge worker unreachable" };
+  }
+}
+
 export function checkInngest(): { status: ServiceStatus; detail: string } {
   const eventKey = Boolean(process.env.INNGEST_EVENT_KEY);
   const signKey = Boolean(process.env.INNGEST_SIGN_KEY ?? process.env.INNGEST_SIGNING_KEY);
@@ -156,15 +188,16 @@ export function checkInngest(): { status: ServiceStatus; detail: string } {
 /* ------------------------------------------------------------------ */
 
 export async function runChecks(): Promise<Omit<StatusResponse, "crons" | "history">> {
-  const [database, redis, radio, forex, weather] = await Promise.all([
+  const [database, redis, radio, forex, weather, edge] = await Promise.all([
     wrap("database", checkDatabase),
     wrap("redis", checkRedis),
     wrap("radio", checkRadio),
     wrap("forex", checkForex),
     wrap("weather", checkWeather),
+    wrap("edge", checkEdge),
   ]);
   const inngest = { ...serviceBase("inngest"), ...checkInngest(), latencyMs: null as number | null };
-  const services = [database, redis, radio, forex, weather, inngest];
+  const services = [database, redis, radio, forex, weather, inngest, edge];
 
   const criticalDown = services.some((s) => s.critical && s.status === "down");
   const anyDown = services.some((s) => s.status === "down");

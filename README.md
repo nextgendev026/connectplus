@@ -13,6 +13,7 @@ Full-stack social blogging platform built with Next.js 16 (App Router), Prisma O
 - **Streams:** RSS parsing via `rss-parser`
 - **Background Jobs:** Inngest (serverless cron — RSS poll, status watchdog, thumbnail recovery, scheduled publishing, nightly training)
 - **Cache:** Redis (Cloud) with in-memory fallback
+- **Edge Cache:** Cloudflare Workers fronting the origin — anonymous HTML, read-only API JSON and optimised images are answered at the edge (`workers/edge-cache`)
 - **Realtime Views:** Convex (article view counters, ad metrics offloaded from Supabase)
 - **AI Providers:** OpenRouter (free tier), OpenCode Zen, OpenAI, Anthropic — dynamically fetched model lists
 
@@ -149,6 +150,34 @@ Open [http://localhost:3000](http://localhost:3000).
 
 - **Vercel** — connect the repo; set all env vars in project settings. Inngest handles background jobs via cloud queue. Daily cron serves as a fallback floor.
 - **GitHub Actions** — typecheck, lint, unit tests, and build on every push/PR.
+
+### Cloudflare edge cache (free tier)
+
+Cloudflare sits in front of the Vercel deployment so anonymous traffic never
+reaches an origin function. On an edge HIT the Vercel function is not invoked
+and no bytes travel origin→edge, which is what keeps **Fast Origin Transfer**
+and **Fluid Active CPU** flat.
+
+- **Worker:** `workers/edge-cache` — deployed as `connectplus-edge` and served at
+  `https://connectplus-edge.connectplusapp.workers.dev`
+- **Deploy:** `CLOUDFLARE_API_TOKEN=… CLOUDFLARE_ACCOUNT_ID=… node scripts/deploy-worker.mjs`
+  (no wrangler install required; `wrangler.toml` is there if you prefer it)
+- **What is cached:** anonymous HTML (60s), read-only API JSON (30–600s), covers,
+  optimised images and static assets (immutable). AVIF and WebP are cached as
+  separate variants so the first caller can't poison the other format.
+- **Safety model:** any request carrying `Cookie` or `Authorization`, plus any
+  response carrying `Set-Cookie`, is passed through and never stored — a
+  signed-in reader can never be served another visitor's HTML.
+- **Observability:** set `EDGE_URL` and the worker shows up on `/status`
+  alongside the database, Redis and Inngest.
+- **Free-tier budget:** Workers free plan is 100k requests/day with a 10ms CPU
+  ceiling; the worker is a lookup plus a fetch and uses no KV, Durable Objects
+  or R2 bindings.
+
+> **R2 storage offload is not active yet.** R2 requires an activated
+> subscription on the Cloudflare account before even the first bucket can be
+> created, so uploads and covers still use Supabase Storage. `R2_*` vars are
+> declared in `.env.example` for the day it is switched on.
 
 ## Architecture
 
