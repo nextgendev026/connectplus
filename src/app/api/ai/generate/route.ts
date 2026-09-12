@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { generateHeadline, generateExcerpt, generateTopics, type GenerateType } from "@/lib/neural-generate";
+import { checkAiQuota, QuotaError } from "@/lib/plans";
 
 /**
  * On-device AI content generation (Phase 4): headline, excerpt, and topic
@@ -24,6 +25,18 @@ export async function POST(request: NextRequest) {
 
     if (!["headline", "excerpt", "topics"].includes(type)) {
       return NextResponse.json({ error: "Invalid generation type" }, { status: 400 });
+    }
+
+    // Quota: plans with a daily AI cap throttle on-device generations. Staff
+    // accounts are always exempt.
+    const role = (session.user as { role?: string }).role;
+    try {
+      await checkAiQuota(session.user.id, role);
+    } catch (err) {
+      if (err instanceof QuotaError) {
+        return NextResponse.json({ error: err.message, code: err.code }, { status: 403 });
+      }
+      throw err;
     }
 
     const result =

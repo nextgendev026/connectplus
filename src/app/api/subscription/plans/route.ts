@@ -32,6 +32,8 @@ export async function GET(request: NextRequest) {
       currency: p.currency,
       features: JSON.parse(p.features),
       limits: JSON.parse(p.limits),
+      stripePriceMonthlyId: p.stripePriceMonthlyId,
+      stripePriceYearlyId: p.stripePriceYearlyId,
     })),
   });
 }
@@ -52,16 +54,25 @@ export async function POST(request: NextRequest) {
   const plan = await prisma.subscriptionPlan.upsert({
     where: { name: body.name },
     update: {
-      displayName: body.displayName || body.name,
-      tier: body.tier,
-      audience: body.audience,
-      priceMonthly: body.priceMonthly ?? 0,
-      priceYearly: body.priceYearly ?? 0,
-      currency: body.currency || "USD",
-      features: JSON.stringify(body.features || []),
-      limits: JSON.stringify(body.limits || {}),
-      isActive: body.isActive !== false,
-      sortOrder: body.sortOrder ?? 0,
+      // Merge semantics: only fields the caller actually sends are replaced,
+      // so a partial update (e.g. just Stripe price ids) never wipes the
+      // plan's display settings, features or limits.
+      ...(body.displayName !== undefined ? { displayName: body.displayName || body.name } : {}),
+      ...(body.tier !== undefined ? { tier: body.tier } : {}),
+      ...(body.audience !== undefined ? { audience: body.audience } : {}),
+      ...(body.priceMonthly !== undefined ? { priceMonthly: body.priceMonthly ?? 0 } : {}),
+      ...(body.priceYearly !== undefined ? { priceYearly: body.priceYearly ?? 0 } : {}),
+      ...(body.currency !== undefined ? { currency: body.currency || "USD" } : {}),
+      ...(body.features !== undefined ? { features: JSON.stringify(body.features || []) } : {}),
+      ...(body.limits !== undefined ? { limits: JSON.stringify(body.limits || {}) } : {}),
+      ...(body.isActive !== undefined ? { isActive: body.isActive !== false } : {}),
+      ...(body.sortOrder !== undefined ? { sortOrder: body.sortOrder ?? 0 } : {}),
+      ...(body.stripePriceMonthlyId !== undefined
+        ? { stripePriceMonthlyId: body.stripePriceMonthlyId || null }
+        : {}),
+      ...(body.stripePriceYearlyId !== undefined
+        ? { stripePriceYearlyId: body.stripePriceYearlyId || null }
+        : {}),
       updatedAt: now,
     },
     create: {
@@ -76,6 +87,8 @@ export async function POST(request: NextRequest) {
       limits: JSON.stringify(body.limits || {}),
       isActive: body.isActive !== false,
       sortOrder: body.sortOrder ?? 0,
+      stripePriceMonthlyId: body.stripePriceMonthlyId || null,
+      stripePriceYearlyId: body.stripePriceYearlyId || null,
       createdAt: now,
       updatedAt: now,
     },

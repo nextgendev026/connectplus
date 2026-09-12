@@ -23,6 +23,7 @@ interface SubView {
     features: string[];
     limits: Record<string, number>;
   };
+  managedByStripe?: boolean;
 }
 
 /**
@@ -70,6 +71,28 @@ export function SubscriptionManager() {
       } else {
         await load();
       }
+    } catch {
+      setError("Network error — please try again.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function openBillingPortal(subscriptionId: string) {
+    setBusy(subscriptionId);
+    setError(null);
+    try {
+      const res = await fetch("/api/subscription/manage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "portal", subscriptionId }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || !d.portalUrl) {
+        setError(d?.error ?? "Could not open the billing portal.");
+        return;
+      }
+      window.location.assign(d.portalUrl);
     } catch {
       setError("Network error — please try again.");
     } finally {
@@ -159,6 +182,21 @@ export function SubscriptionManager() {
                 </div>
 
                 <div className="flex items-center gap-2">
+                  {s.managedByStripe && (
+                    <button
+                      type="button"
+                      disabled={busy === s.id}
+                      onClick={() => openBillingPortal(s.id)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-brand-500/40 bg-brand-500/10 px-3 py-2 text-[11px] font-semibold text-brand-300 hover:bg-brand-500/20 transition-colors disabled:opacity-60"
+                    >
+                      {busy === s.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      )}
+                      Manage billing
+                    </button>
+                  )}
                   {cancelling ? (
                     <button
                       type="button"

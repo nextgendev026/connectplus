@@ -20,6 +20,7 @@
     "db:feed-mind": "node scripts/feed-the-mind.ts",
     "db:ensure": "ts-node --project scripts/tsconfig.script.json scripts/ensure-settings.ts",
     "cronjob:sync": "node scripts/cronjob-sync.mjs",
+    "supabase:cron:install": "prisma db execute --file supabase/cron-maintenance.sql --schema prisma/schema.prisma",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate",
     "db:migrate:deploy": "prisma migrate deploy",
@@ -42,6 +43,7 @@
     "react-dom": "^19.0.0",
     "recharts": "^2.15.0",
     "rss-parser": "^3.13.0",
+    "stripe": "^22.6.2",
     "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {

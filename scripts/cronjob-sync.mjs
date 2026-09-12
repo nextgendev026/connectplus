@@ -59,12 +59,15 @@ const ALL = [-1];
 const every = (step) => Array.from({ length: Math.floor(60 / step) }, (_, i) => i * step);
 
 /** One entry per heavy job. Trigger names must match /api/cron. */
+// Schedules are tuned to keep the Vercel free tier within budget: the two
+// watchers stay every 5m (they are near-zero-cost single queries), while
+// anything touching the network (RSS, radios, thumbnails) is spaced wider.
 const JOBS = [
   { title: "connectPlus — publish scheduled stories", trigger: "publish-scheduled", minutes: every(5) },
   { title: "connectPlus — status watchdog", trigger: "status-watchdog", minutes: every(5) },
-  { title: "connectPlus — radio status sweep", trigger: "radio-sweep", minutes: every(15) },
-  { title: "connectPlus — RSS poll", trigger: "rss-poll", minutes: [0] },
-  { title: "connectPlus — recover thumbnails", trigger: "recover-thumbnails", hours: [0, 6, 12, 18], minutes: [0] },
+  { title: "connectPlus — radio status sweep", trigger: "radio-sweep", minutes: every(30) },
+  { title: "connectPlus — RSS poll", trigger: "rss-poll", hours: [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22], minutes: [0] },
+  { title: "connectPlus — recover thumbnails", trigger: "recover-thumbnails", hours: [0, 12], minutes: [0] },
   { title: "connectPlus — hive sweep", trigger: "hive-sweep", hours: [1], minutes: [0] },
   { title: "connectPlus — embed posts", trigger: "embed-posts", hours: [3], minutes: [0] },
 ];

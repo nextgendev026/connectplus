@@ -107,6 +107,24 @@ export const DEFAULT_POLL_INTERVAL_SECONDS = Number(
   process.env.RSS_POLL_INTERVAL_SECONDS ?? 3600
 );
 
+/** Per-run cap on feeds polled in a single cron cycle. When many feeds fall
+ * behind (say, after an outage) a run must not try to catch up everything at
+ * once — that is exactly what blows the function runtime and origin egress on
+ * a free tier. Remaining due feeds are picked up by later cycles. Bounded to
+ * [1, 100]; a manual `pollFeeds(feedId)` always ignores the cap. */
+const MAX_FEEDS_PER_POLL_RUN = Math.min(
+  Math.max(Number(process.env.RSS_POLL_MAX_FEEDS_PER_RUN ?? 10) || 10, 1),
+  100
+);
+
+/** Cap on network page-fetches in a single thumbnail-recovery run. Inline
+ * images (already stored in RssArticle.content) are free and always tried
+ * first; scraping the publisher page is what costs egress. */
+const MAX_THUMB_NETWORK_FETCHES = Math.min(
+  Math.max(Number(process.env.THUMB_RECOVERY_MAX_NETWORK ?? 12) || 12, 1),
+  50
+);
+
 export interface FeedSummary {
   feedId: string;
   feedName: string;
@@ -642,11 +660,20 @@ export async function pollFeeds(
     return { feedsPolled: 0, newArticles: 0, errors: 0, details: [] };
   }
 
+  const queue = feedId ? due : due.slice(0, MAX_FEEDS_PER_POLL_RUN);
+  if (queue.length < due.length) {
+    log.info("poll cycle capped", {
+      due: due.length,
+      polledThisRun: queue.length,
+      restLater: due.length - queue.length,
+    });
+  }
+
   const defaultAuthorId = await resolveDefaultAuthorId();
   const startedAt = Date.now();
   const details: FeedSummary[] = [];
 
-  for (const feed of due) {
+  for (const feed of queue) {
     // Stagger feed fetches 500ms apart so a poll cycle never spikes outbound
     // egress against all sources at once. Free tier friendly.
     if (details.length > 0) {
@@ -656,14 +683,14 @@ export async function pollFeeds(
     details.push(result);
     // Per-feed progress for the admin console's live loading bar (the stream
     // route forwards each event as it happens).
-    onProgress?.({ index: details.length, total: due.length, summary: result });
+    onProgress?.({ index: details.length, total: queue.length, summary: result });
   }
 
   const totalNewArticles = details.reduce((n, d) => n + d.newArticles, 0);
   const totalErrors = details.filter((d) => d.error).length;
 
   log.info("poll cycle finished", {
-    feedsConsidered: due.length,
+    feedsConsidered: queue.length,
     newArticles: totalNewArticles,
     errors: totalErrors,
     elapsedMs: Date.now() - startedAt,
@@ -680,7 +707,7 @@ export async function pollFeeds(
   }
 
   return {
-    feedsPolled: due.length,
+    feedsPolled: queue.length,
     newArticles: totalNewArticles,
     errors: totalErrors,
     details: details.map(({ feedName, newArticles, error, status, itemCount, durationMs }) => ({

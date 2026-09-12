@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
+import { checkStorageQuota, QuotaError } from "@/lib/plans";
 
 const ALLOWED_TYPES: Record<string, string> = {
   "image/jpeg": "jpg",
@@ -70,6 +71,18 @@ export async function POST(request: NextRequest) {
         { error: `File size exceeds ${Math.round(sizeLimit / 1024 / 1024)}MB limit for ${file.type.replace("image/", "")} files` },
         { status: 400 }
       );
+    }
+
+    // Quota: plans with a storageMb cap throttle new uploads against the
+    // bytes the member already owns in the bucket. Staff accounts are exempt.
+    const role = (session.user as { role?: string }).role;
+    try {
+      await checkStorageQuota(session.user.id, role, file.size);
+    } catch (err) {
+      if (err instanceof QuotaError) {
+        return NextResponse.json({ error: err.message, code: err.code }, { status: 403 });
+      }
+      throw err;
     }
 
     const bytes = await file.arrayBuffer();

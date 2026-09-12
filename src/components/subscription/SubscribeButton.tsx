@@ -48,6 +48,11 @@ export function SubscribeButton({
         setMessage(data?.error ?? "Could not start the subscription.");
         return;
       }
+      // Paid plans bounce to Stripe's hosted Checkout; free grants apply here.
+      if (data.checkoutUrl) {
+        window.location.href = data.checkoutUrl;
+        return;
+      }
       setState("done");
       setMessage(`${planName} is active.`);
       router.refresh();

@@ -11,6 +11,7 @@ import type { FeedRankVariant } from "@/lib/experiments";
 import { autoTagPost } from "@/lib/auto-tag";
 import { findDuplicate } from "@/lib/neural-vector";
 import { postCoverSrc } from "@/lib/thumb";
+import { checkPostsQuota, QuotaError } from "@/lib/plans";
 
 // NOTE: `coverImage` is deliberately absent — stored covers can be multi-MB
 // base64 data URIs, and selecting them bloated every feed response (and the
@@ -263,6 +264,20 @@ export async function POST(request: NextRequest) {
     }
 
     const postStatus = wantsPublish ? "PUBLISHED" : "DRAFT";
+
+    // Quota: plans with a monthly post cap throttle publishing only — pure
+    // drafting stays free. ADMIN / SUPER_ADMIN are always exempt.
+    if (wantsPublish || scheduleDate) {
+      const role = (session.user as { role?: string }).role;
+      try {
+        await checkPostsQuota(userId, role);
+      } catch (err) {
+        if (err instanceof QuotaError) {
+          return NextResponse.json({ error: err.message, code: err.code }, { status: 403 });
+        }
+        throw err;
+      }
+    }
 
     // Phase 2: run the self-contained moderation scanner.
     const risk = moderateContent(title.trim(), content);

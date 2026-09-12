@@ -117,6 +117,9 @@ Open [http://localhost:3000](http://localhost:3000).
 | `CRON_SECRET` | Shared secret the `/api/cron` and `/api/rss/cron` triggers verify (Bearer / `x-cron-secret`) |
 | `CRONJOB_TOKEN` | cron-job.org API key — schedules the heavy jobs via `/api/cron` (`npm run cronjob:sync`) |
 | `APP_URL` | Deployment base URL cron-job.org should hit (default `https://connectplusapp.vercel.app`) |
+| `RSS_POLL_MAX_FEEDS_PER_RUN` | Max feeds polled per cron cycle (default 10) — caps free-tier egress when feeds fall behind |
+| `THUMB_RECOVERY_MAX_NETWORK` | Max publisher page fetches per thumbnail-recovery run (default 12) |
+| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | Stripe API key + webhook signing secret (billing for paid plans) |
 | `RATE_LIMIT_<KEY>` / `RATE_LIMIT_DEFAULT` | Optional rate-limit overrides |
 | `LOG_LEVEL` | `debug` / `info` / `warn` / `error` for server logging |
 
@@ -132,6 +135,8 @@ Open [http://localhost:3000](http://localhost:3000).
 - `npm run db:seed` — seed creators + content
 - `npm run db:promote-admin` — promote all ADMIN accounts to SUPER_ADMIN
 - `npm run db:feed-mind` — seed the Neural Mind knowledge base
+- `npm run cronjob:sync` — push `/api/cron` schedules to cron-job.org (`scripts/cronjob-sync.mjs`)
+- `npm run supabase:cron:install` — apply the DB-only maintenance jobs (`supabase/cron-maintenance.sql`) to Supabase pg_cron, so pruning runs inside Postgres instead of on Vercel
 
 ## Database Seeding
 

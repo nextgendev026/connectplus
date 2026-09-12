@@ -450,6 +450,8 @@ model SubscriptionPlan {
   limits        String   @db.Text // JSON object: { postsPerMonth, storageMb, aiRequests, ... }
   isActive      Boolean  @default(true)
   sortOrder     Int      @default(0)
+  stripePriceMonthlyId String? // Stripe Price for monthly billing (paid plans)
+  stripePriceYearlyId  String? // Stripe Price for yearly billing (paid plans)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   subscriptions UserSubscription[]
@@ -478,6 +480,14 @@ model UserSubscription {
   @@unique([userId, planId])
   @@index([userId])
   @@index([status])
+}
+
+/// Idempotency ledger for Stripe webhook deliveries.
+model StripeEvent {
+  id         String   @id @default(cuid())
+  eventId    String   @unique
+  type       String
+  handledAt  DateTime @default(now())
 }
 
 /// Third-party ad slot configuration — allows admins to inject Google AdSense,
