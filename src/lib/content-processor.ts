@@ -63,7 +63,7 @@ function safeAttr(name: string, value: string): string | null {
  * Convert raw HTML (from RSS) into a safe HTML string via an allow-list,
  * preserving useful structure (headings, lists, quotes, links, images).
  */
-export function sanitizeHtml(html: string): string {
+export function sanitizeHtml(html: string, inlineText = false): string {
   // Pre-strip unsafe blocks (and their entire content): comments, and any
   // element in SKIP_TAGS, both self-closing and paired, so script/style bodies
   // never leak back into the output as text.
@@ -79,7 +79,11 @@ export function sanitizeHtml(html: string): string {
   let textPart = "";
   const pushText = () => {
     if (textPart) {
-      result += escapeHtml(textPart);
+      // Bodies that mix HTML with markdown emphasis (cross-posted feeds, AI
+      // summaries) would otherwise leak literal ** markers onto the page, so
+      // when the caller spotted those markers the text runs get inline
+      // markdown too.
+      result += inlineText ? inlineMarkdown(textPart) : escapeHtml(textPart);
       textPart = "";
     }
   };
@@ -156,10 +160,199 @@ function inlineMarkdown(text: string): string {
   return out;
 }
 
+/* ------------------------------------------------------------------ */
+/* Light markdown (composer + AI writer bodies)                        */
+/* ------------------------------------------------------------------ */
+
+const RE_HEADING = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
+const RE_THEMATIC_BREAK = /^ {0,3}(?:[-*_]\s*){3,}$/;
+const RE_BULLET = /^ {0,3}[-*+]\s+(.*)$/;
+const RE_ORDERED = /^ {0,3}\d+[.)]\s+(.*)$/;
+const RE_QUOTE = /^ {0,3}>\s?(.*)$/;
+const RE_FENCE = /^ {0,3}(?:```|~~~)\s*[\w+-]*\s*$/;
+
+/**
+ * Inline-render a run of source lines, honouring markdown hard breaks (two
+ * trailing spaces or a backslash). A bare newline is a soft wrap, so it stays
+ * collapsed whitespace exactly like markdown says it should.
+ */
+function renderInlineLines(lines: string[]): string {
+  return lines
+    .map((line) => {
+      const hardBreak = /(?: {2,}|\\)$/.test(line);
+      const bare = line.replace(/(?: {2,}|\\)$/, "");
+      return `${inlineMarkdown(bare)}${hardBreak ? "<br />" : ""}`;
+    })
+    .join("\n");
+}
+
+/**
+ * Split a single source line on headings the writer glued onto the end of a
+ * paragraph ("… get wrong. ## The momentum behind Adopts"). Returns the parts
+ * in order, each tagged with its heading level (0 = ordinary text), or null
+ * when the line has no such marker. Only two-or-more hashes count: a lone `#`
+ * is a hashtag, not a heading.
+ */
+function splitInlineHeadings(line: string): { level: number; text: string }[] | null {
+  const marker = /\s(#{2,6})\s+(?=\S)/g;
+  if (!marker.test(line)) return null;
+  const parts: { level: number; text: string }[] = [];
+  let last = 0;
+  marker.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = marker.exec(line)) !== null) {
+    parts.push({ level: 0, text: line.slice(last, m.index) });
+    parts.push({ level: (m[1] ?? "##").length, text: "" });
+    last = m.index + m[0].length;
+  }
+  parts.push({ level: 0, text: line.slice(last) });
+  // Fold each heading's following text into the heading itself.
+  const folded: { level: number; text: string }[] = [];
+  for (const part of parts) {
+    const previous = folded[folded.length - 1];
+    if (previous && previous.level > 0 && previous.text === "") {
+      previous.text = part.text;
+    } else {
+      folded.push({ ...part });
+    }
+  }
+  return folded.filter((part) => part.text.trim() !== "");
+}
+
+/**
+ * Render a light-markdown body into block HTML.
+ *
+ * Deliberately line-based instead of split-on-blank-lines. The AI writer emits
+ * `### Heading  ` followed by its paragraph, and lists that share a run with
+ * the text around them; treating each blank-line chunk as one opaque block left
+ * those markers visible on the published page ("### Introduction" and
+ * "- **FinTech hubs:**" as literal text). Blocks open and close as the lines
+ * call for them, so a heading or bullet mid-run becomes real markup.
+ */
+export function markdownToHtml(markdown: string): string {
+  const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
+  const blocks: string[] = [];
+  let paragraph: string[] = [];
+  let quote: string[] = [];
+  let list: { ordered: boolean; items: string[] } | null = null;
+  let fence: string[] | null = null;
+
+  const endParagraph = () => {
+    if (paragraph.length === 0) return;
+    blocks.push(`<p>${renderInlineLines(paragraph)}</p>`);
+    paragraph = [];
+  };
+  const endQuote = () => {
+    if (quote.length === 0) return;
+    blocks.push(`<blockquote>${renderInlineLines(quote)}</blockquote>`);
+    quote = [];
+  };
+  const endList = () => {
+    if (!list) return;
+    const tag = list.ordered ? "ol" : "ul";
+    blocks.push(`<${tag}>${list.items.map((item) => `<li>${item}</li>`).join("")}</${tag}>`);
+    list = null;
+  };
+  const endAll = () => {
+    endParagraph();
+    endQuote();
+    endList();
+  };
+
+  const flushFence = () => {
+    if (!fence) return;
+    blocks.push(`<pre><code>${escapeHtml(fence.join("\n"))}</code></pre>`);
+    fence = null;
+  };
+
+  for (const line of lines) {
+    // Inside a fenced block nothing is markup until the closing fence.
+    if (fence) {
+      if (RE_FENCE.test(line)) flushFence();
+      else fence.push(line);
+      continue;
+    }
+
+    if (line.trim() === "") {
+      endAll();
+      continue;
+    }
+
+    if (RE_FENCE.test(line)) {
+      endAll();
+      fence = [];
+      continue;
+    }
+
+    const heading = RE_HEADING.exec(line);
+    if (heading) {
+      const level = (heading[1] ?? "#").length;
+      endAll();
+      blocks.push(`<h${level}>${inlineMarkdown(heading[2] ?? "")}</h${level}>`);
+      continue;
+    }
+
+    // Before the list rules: `- - -` is a rule, not a bullet.
+    if (RE_THEMATIC_BREAK.test(line)) {
+      endAll();
+      blocks.push("<hr />");
+      continue;
+    }
+
+    const bullet = RE_BULLET.exec(line);
+    const ordered = bullet ? null : RE_ORDERED.exec(line);
+    if (bullet || ordered) {
+      endParagraph();
+      endQuote();
+      const isOrdered = Boolean(ordered);
+      if (list && list.ordered !== isOrdered) endList();
+      if (!list) list = { ordered: isOrdered, items: [] };
+      list.items.push(inlineMarkdown((bullet ? bullet[1] : ordered?.[1]) ?? ""));
+      continue;
+    }
+
+    const quoted = RE_QUOTE.exec(line);
+    if (quoted) {
+      endParagraph();
+      endList();
+      quote.push(quoted[1] ?? "");
+      continue;
+    }
+
+    // A plain line starts a new paragraph. Any open quote/list is closed here
+    // so blocks keep their source order instead of flushing out of sequence.
+    endQuote();
+    endList();
+
+    const mixed = splitInlineHeadings(line);
+    if (mixed) {
+      for (const part of mixed) {
+        if (part.level > 0) {
+          endParagraph();
+          blocks.push(`<h${part.level}>${inlineMarkdown(part.text.trim())}</h${part.level}>`);
+        } else {
+          paragraph.push(part.text.trim());
+        }
+      }
+      continue;
+    }
+
+    paragraph.push(line);
+  }
+
+  // An unterminated fence still renders as code rather than vanishing.
+  flushFence();
+  endAll();
+
+  return blocks.join("\n\n");
+}
+
 /**
  * Process article content into clean HTML.
- * - If the content contains HTML tags, it sanitizes and returns it directly.
- * - Otherwise it treats the text as light markdown/plain paragraphs.
+ * - Bodies containing HTML tags are sanitized (RSS `content:encoded`).
+ * - Everything else is rendered as light markdown (composer + AI writer).
+ * Either way the result is safe to inject and already styled by the prose CSS,
+ * so a published article never shows its raw source.
  * Extracts a plain-text version and other stats in the same pass.
  */
 export function processContent(content: string): ProcessedContent {
@@ -174,45 +367,11 @@ export function processContent(content: string): ProcessedContent {
   // actually see a known tag.
   const looksLikeHtml = /<(p|div|h[1-6]|ul|ol|blockquote|img|figure|table|pre|br|strong|em|a|span)[\s>]/i.test(trimmed);
 
-  let html: string;
-  if (looksLikeHtml) {
-    html = sanitizeHtml(trimmed);
-  } else {
-    // Plain text / light markdown -> paragraph blocks
-    const blocks = trimmed.split(/\n{2,}/);
-    html = blocks
-      .map((block) => {
-        const b = block.trim();
-        if (!b) return "";
-        const header = b.match(/^(#{1,6})\s+(.+)$/);
-        if (header) {
-          const level = (header[1] ?? "#").length;
-          return `<h${level}>${inlineMarkdown(header[2] ?? "")}</h${level}>`;
-        }
-        if (/^[-*]\s+/.test(b)) {
-          const items = b
-            .split(/\n/)
-            .filter((l) => /^[-*]\s+/.test(l.trim()))
-            .map((l) => `<li>${inlineMarkdown(l.trim().replace(/^[-*]\s+/, ""))}</li>`)
-            .join("");
-          return `<ul>${items}</ul>`;
-        }
-        if (/^\d+\.\s+/.test(b)) {
-          const items = b
-            .split(/\n/)
-            .filter((l) => /^\d+\.\s+/.test(l.trim()))
-            .map((l) => `<li>${inlineMarkdown(l.trim().replace(/^\d+\.\s+/, ""))}</li>`)
-            .join("");
-          return `<ol>${items}</ol>`;
-        }
-        if (/^>\s+/.test(b)) {
-          return `<blockquote>${inlineMarkdown(b.replace(/^>\s+/, ""))}</blockquote>`;
-        }
-        return `<p>${inlineMarkdown(b)}</p>`;
-      })
-      .filter(Boolean)
-      .join("\n\n");
-  }
+  // HTML bodies can still carry markdown emphasis (cross-posted feeds, AI
+  // summaries): those text runs get inline markdown so the markers never show.
+  const htmlHasMarkdown = /\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\//.test(trimmed);
+
+  const html = looksLikeHtml ? sanitizeHtml(trimmed, htmlHasMarkdown) : markdownToHtml(trimmed);
 
   const text = stripText(html);
   return {
@@ -232,4 +391,17 @@ function stripText(html: string): string {
 export function excerptFromHtml(html: string, maxLength = 160): string {
   const text = stripText(html);
   return text.length <= maxLength ? text : `${text.slice(0, maxLength).trimEnd()}…`;
+}
+
+/**
+ * Plain-text excerpt from a stored excerpt or body that may be markdown or
+ * HTML. Feed cards, meta descriptions and share text render this, and the AI
+ * writer stores markdown excerpts ("## Discover Kenya's Top Tourism Attraction
+ * Sites  \n\nKenya isn't just…", "- **Route groups** …") which otherwise reach
+ * the card as literal markers.
+ */
+export function plainExcerpt(source: string | null | undefined, maxLength = 200): string {
+  const raw = (source ?? "").trim();
+  if (!raw) return "";
+  return excerptFromHtml(processContent(raw).html, maxLength);
 }

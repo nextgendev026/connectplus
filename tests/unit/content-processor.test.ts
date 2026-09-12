@@ -70,3 +70,63 @@ describe("processContent", () => {
     expect(hasImages).toBe(false);
   });
 });
+
+/**
+ * The AI writer publishes markdown where a heading or list item shares a
+ * blank-line run with the prose around it (`### Heading  ` then its paragraph,
+ * bullets followed by the next section). That shape used to publish literal
+ * `### Introduction` and `- **FinTech hubs:**` text on the article page.
+ */
+describe("processContent — AI-writer markdown bodies", () => {
+  const body = [
+    "## Investing in Blockchain in Kenya  ",
+    "",
+    "### Introduction  ",
+    "Kenya's tech ecosystem is booming, and **blockchain** is one of the fastest-growing sectors.",
+    "",
+    "### 1. Grasp the Local Landscape  ",
+    "- **FinTech hubs:** Nairobi hosts dozens of platforms.  ",
+    "- **Agritech:** Projects like **Twiga Foods** use it for traceability.",
+    "",
+    "> A quoted line",
+    "",
+    "1. First step",
+    "2. Second step",
+    "",
+    "```ts",
+    "const literal = '**not bold**';",
+    "```",
+    "",
+    "---",
+  ].join("\n");
+
+  it("renders headings, lists and quotes that share a run with their text", () => {
+    const { html } = processContent(body);
+    expect(html).toContain("<h2>Investing in Blockchain in Kenya</h2>");
+    expect(html).toContain("<h3>Introduction</h3>");
+    expect(html).toContain("<strong>blockchain</strong>");
+    expect(html).toContain("<h3>1. Grasp the Local Landscape</h3>");
+    expect(html).toContain("<ul><li><strong>FinTech hubs:</strong>");
+    expect(html).toContain("<ol><li>First step</li><li>Second step</li></ol>");
+    expect(html).toContain("<blockquote>A quoted line</blockquote>");
+    expect(html).toContain("<hr />");
+  });
+
+  it("never leaks raw markdown markers outside code blocks", () => {
+    const { html } = processContent(body);
+    expect(html).not.toContain("###");
+    expect(html).toContain("<pre><code>const literal = &#39;**not bold**&#39;;</code></pre>");
+  });
+
+  it("honours hard breaks and leaves soft wraps collapsed", () => {
+    const { html } = processContent("line one  \nline two\nline three");
+    expect(html).toContain("line one<br />");
+    expect(html).toContain("line two\nline three");
+  });
+
+  it("renders markdown emphasis inside an HTML body instead of leaking it", () => {
+    const { html } = processContent("<p>Read **the guide** now.</p>");
+    expect(html).toContain("<strong>the guide</strong>");
+    expect(html).not.toContain("**");
+  });
+});
