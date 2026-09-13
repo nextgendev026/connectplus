@@ -12,6 +12,7 @@ import {
   Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import LiveScoresStrip from "@/components/sports/LiveScoresStrip";
 
 interface PostLite {
   id: string;
@@ -289,6 +290,15 @@ export function RadioHeroInsights() {
           </span>
         </div>
         <ForexPanel />
+
+        {/*
+          Live scores sit directly under Forex & Markets, in the same column and
+          therefore the same width — so the panel lands between the Latest
+          Stories widget (to its left) and the weather column (to its right)
+          without competing with either. It renders nothing when nothing is
+          live, so an empty sports feed closes up the column silently.
+        */}
+        <LiveScoresStrip />
       </div>
     </div>
   );

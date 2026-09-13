@@ -26,7 +26,6 @@ import { RadioPlayerBar } from "@/components/radio/RadioPlayerBar";
 import { StationThumb } from "@/components/radio/StationThumb";
 import { WeatherWidget } from "@/components/weather/WeatherWidget";
 import { RadioHeroInsights } from "@/components/radio/RadioHeroInsights";
-import LiveScoresStrip from "@/components/sports/LiveScoresStrip";
 
 function EqualizerBars({ isPlaying }: { isPlaying: boolean }) {
   return (
@@ -416,13 +415,6 @@ export default function RadioPage() {
 
           <WeatherWidget />
         </div>
-
-        {/*
-          Live scores sit directly under the market exchange so a reader who came
-          for the dial can see what is being played right now without leaving the
-          page — the full board is one tap away.
-        */}
-        <LiveScoresStrip />
 
         {/* Recently played */}
         {recentStations.length > 0 && (
