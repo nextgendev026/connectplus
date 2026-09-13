@@ -813,21 +813,28 @@ export async function getIntegrations(): Promise<IntegrationsReport> {
       description:
         '"Continue with Google" on the sign-in and sign-up pages. The first OAuth sign-in provisions a local account and links to an existing one by email.',
       status,
+      // The button is deliberately always rendered now — before credentials
+      // exist it shows a disabled, clearly-labelled "not configured" state — so
+      // this must NOT claim it is hidden, which is what it used to say.
       detail: configured
         ? `Client ${clientId.slice(0, 14)}… configured — callback ${redirectUri}`
-        : "Not configured — the Google button is hidden on /auth/signin and /auth/signup",
+        : "Not configured — the Google button still renders on /auth/signin and /auth/signup, disabled, and says so",
       latencyMs: null,
       verdict: verdictFor(status),
       fields: [
         field("Client ID", "GOOGLE_CLIENT_ID", {
-          hint: "Both the client ID and secret must be set before the button appears.",
+          hint: "Set both the client ID and secret to enable the button; until then it renders disabled.",
         }),
         field("Client secret", "GOOGLE_CLIENT_SECRET", { secret: true }),
         {
+          // Informational, not a credential: nothing here is "set" in the
+          // environment. Marking this required made the console report a
+          // missing variable that an operator cannot actually fill in, which
+          // inflated the "needs attention" count with something unhideable.
           label: "Authorized redirect URI",
           present: configured && Boolean(origin),
           value: redirectUri,
-          required: true,
+          required: false,
           hint: "Register this exact URI on the OAuth client; without it Google returns redirect_uri_mismatch.",
         },
       ],
@@ -836,7 +843,7 @@ export async function getIntegrations(): Promise<IntegrationsReport> {
         { label: "Sign-in page", href: "/auth/signin" },
       ],
       notes:
-        "The button asks /api/auth/providers what is configured, so it appears as soon as the env vars exist — set them in Vercel (and .env.local for dev) and restart; no UI change is needed afterwards.",
+        "The button asks /api/auth/providers what is configured and enables itself as soon as the env vars exist — set them in Vercel (and .env.local for dev) and restart. No UI change is needed afterwards, and while they are missing the button renders disabled with an explanation rather than disappearing.",
     });
   }
 

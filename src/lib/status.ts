@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { redisAvailable, redisSetEx, redisGetRaw, cacheGet, cacheSet } from "@/lib/redis";
+import { redisAvailable, redisSetEx, redisGetRaw, cacheGet, cacheSet, redisProbeError } from "@/lib/redis";
 import { STATIONS } from "@/lib/radio-stations";
 
 export type ServiceStatus = "operational" | "degraded" | "down" | "unconfigured";
@@ -78,7 +78,11 @@ export async function checkRedis(): Promise<{ status: ServiceStatus; detail: str
   await redisSetEx(probeKey, 10, "ok");
   const roundtrip = await redisGetRaw(probeKey);
   if (roundtrip !== "ok") {
-    return { status: "down", detail: "Probe write/read failed" };
+    // The cache layer swallows its own errors by design, so the reason has to
+    // come from a dedicated probe. "Probe write/read failed" alone told an
+    // operator nothing; the server's own text names the actual cause.
+    const reason = await redisProbeError().catch(() => null);
+    return { status: "down", detail: reason ?? "Probe write/read failed" };
   }
   const feedVersion = await cacheGet<number>("feed:version").catch(() => null);
   return { status: "operational", detail: `Round-trip OK — feed version ${feedVersion ?? 0}` };

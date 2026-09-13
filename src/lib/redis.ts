@@ -40,6 +40,79 @@ function canUseRedis(): boolean {
   return Boolean(process.env.REDIS_URL || (restUrl && restToken));
 }
 
+/**
+ * Turn a Redis driver error into something an operator can act on.
+ *
+ * Every cache call deliberately swallows its errors — a broken cache must never
+ * break a page — but that left the Integrations console only able to report
+ * "Probe write/read failed", which is true and useless. The real causes are all
+ * distinguishable from the server's own text, and the wrong-password case is by
+ * far the most common (a rotated Redis Cloud credential, or an endpoint that
+ * needs TLS).
+ */
+export function explainRedisError(raw: string, url: string): string {
+  const message = raw.trim();
+  if (/WRONGPASS|invalid username-password|invalid password/i.test(message)) {
+    const tlsHint = url.startsWith("rediss://")
+      ? "re-copy the password from the provider dashboard"
+      : "re-copy the password, and switch REDIS_URL to rediss:// if the endpoint is TLS-only";
+    return `Credentials rejected by the server — ${tlsHint}.`;
+  }
+  if (/NOAUTH|without any password/i.test(message)) {
+    return "The server requires a password but REDIS_URL supplies none.";
+  }
+  if (/ENOTFOUND|EAI_AGAIN/i.test(message)) {
+    return "Hostname in REDIS_URL does not resolve — check for a typo or a deleted database.";
+  }
+  if (/ECONNREFUSED/i.test(message)) {
+    return "Connection refused — check the port in REDIS_URL.";
+  }
+  if (/ETIMEDOUT|timed out|timeout/i.test(message)) {
+    return "Timed out reaching Redis — the host may be wrong, or the database asleep.";
+  }
+  if (/ssl|tls|certificate/i.test(message)) {
+    return `TLS problem — try rediss:// instead of redis://. (${message})`;
+  }
+  return message || "Connection failed with no error text.";
+}
+
+/**
+ * Explain *why* Redis is unreachable, by opening a throwaway connection purely
+ * to capture the server's error.
+ *
+ * The error arrives as an `error` event slightly before `connect()` rejects (the
+ * rejection itself just says "Connection is closed"), so the message has to be
+ * captured from the event listener — reading the thrown error alone loses the
+ * only useful part.
+ */
+export async function redisProbeError(): Promise<string | null> {
+  const url = process.env.REDIS_URL;
+  if (!url) return null;
+
+  let lastError = "";
+  const probe = new Redis(url, {
+    lazyConnect: true,
+    maxRetriesPerRequest: 1,
+    connectTimeout: 4000,
+    retryStrategy: () => null,
+    enableOfflineQueue: false,
+  });
+  probe.on("error", (error) => {
+    lastError = error instanceof Error ? error.message : String(error);
+  });
+
+  try {
+    await probe.connect();
+    await probe.ping();
+    return null;
+  } catch (error) {
+    const thrown = error instanceof Error ? error.message : String(error);
+    return explainRedisError(lastError || thrown, url);
+  } finally {
+    probe.disconnect();
+  }
+}
+
 function createClient(): Redis | null {
   if (!process.env.REDIS_URL) return null;
   const c = new Redis(process.env.REDIS_URL, {

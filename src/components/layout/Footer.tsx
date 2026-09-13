@@ -1,6 +1,37 @@
+"use client";
+
 import Link from "next/link";
 import { Heart } from "lucide-react";
 import Logo from "@/components/ui/Logo";
+import { useSiteConfig } from "@/hooks/useSiteConfig";
+
+/**
+ * Official connectPlus social profiles.
+ *
+ * Hard-coded rather than configurable because these are *our* accounts, not a
+ * per-deployment setting — and because the previous entries were `href="#"`
+ * placeholders, which render as links that go nowhere (bad for readers, and
+ * crawled as dead links).
+ *
+ * `handleKey` marks the entries whose URL is derived from the site's own handle
+ * setting, so renaming the account is still a one-field change in
+ * Admin → Settings rather than a code edit.
+ */
+const SOCIAL_LINKS: {
+  label: string;
+  href: string;
+  handleKey?: boolean;
+}[] = [
+  {
+    label: "X (Twitter)",
+    href: "https://twitter.com/connectplus",
+    handleKey: true,
+  },
+  {
+    label: "Facebook",
+    href: "https://www.facebook.com/profile.php?id=61593971836662",
+  },
+];
 
 function XIcon({ className }: { className?: string }) {
   return (
@@ -10,10 +41,10 @@ function XIcon({ className }: { className?: string }) {
   );
 }
 
-function GithubIcon({ className }: { className?: string }) {
+function FacebookIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
-      <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56v-2.17c-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.19 1.76 1.19 1.03 1.75 2.7 1.25 3.35.95.1-.74.4-1.25.72-1.54-2.55-.29-5.23-1.28-5.23-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11.1 11.1 0 015.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.69 5.38-5.25 5.66.41.36.77 1.05.77 2.13v3.16c0 .31.21.67.8.56C20.21 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z" />
+      <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.412c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z" />
     </svg>
   );
 }
@@ -43,6 +74,15 @@ const FOOTER_LINKS = {
 };
 
 export default function Footer() {
+  // Footer is reached through PublicLayout, which is a client component, so the
+  // handle comes from the shared client config hook rather than a server read.
+  const siteConfig = useSiteConfig();
+  const handle = (siteConfig?.twitterHandle ?? "").replace(/[^A-Za-z0-9_]/g, "").slice(0, 15);
+
+  const socials = SOCIAL_LINKS.map((social) =>
+    social.handleKey && handle ? { ...social, href: `https://twitter.com/${handle}` } : social
+  );
+
   return (
     <footer className="border-t border-surface-800/50 bg-surface-950">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
@@ -57,21 +97,24 @@ export default function Footer() {
               sports scores with model-generated betting insight.
               Karibu nyumbani.
             </p>
-            <div className="mt-4 flex items-center gap-3">
-              <a
-                href="#"
-                aria-label="X (Twitter)"
-                className="text-surface-500 hover:text-surface-50 transition-colors"
-              >
-                <XIcon className="h-4 w-4" />
-              </a>
-              <a
-                href="#"
-                aria-label="GitHub"
-                className="text-surface-500 hover:text-surface-50 transition-colors"
-              >
-                <GithubIcon className="h-4 w-4" />
-              </a>
+            <div className="mt-4 flex items-center gap-2">
+              {socials.map((social) => (
+                <a
+                  key={social.label}
+                  href={social.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`connectPlus on ${social.label}`}
+                  title={`connectPlus on ${social.label}`}
+                  className="grid h-9 w-9 place-items-center rounded-full border border-surface-800 bg-surface-900 text-surface-400 transition-all duration-200 hover:-translate-y-0.5 hover:border-brand-500/40 hover:text-brand-400 hover:shadow-lg hover:shadow-brand-500/10"
+                >
+                  {social.label === "Facebook" ? (
+                    <FacebookIcon className="h-4 w-4" />
+                  ) : (
+                    <XIcon className="h-4 w-4" />
+                  )}
+                </a>
+              ))}
             </div>
           </div>
 
