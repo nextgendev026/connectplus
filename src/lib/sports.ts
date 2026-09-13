@@ -129,6 +129,18 @@ export interface NormalizedMatch {
   country?: string | null;
   homeTeam: string;
   awayTeam: string;
+  /**
+   * Crest/badge URLs straight from the provider, plus the provider's own team
+   * id. Both stay in-memory rather than getting columns: they arrive with the
+   * fixture on every fetch, so persisting them would only add a migration and a
+   * second source of truth. They are null on the database-fallback path, which
+   * is a degraded path where a score matters far more than a crest.
+   */
+  homeLogo?: string | null;
+  awayLogo?: string | null;
+  /** Used by the head-to-head lookups, which are keyed on the provider team id. */
+  homeTeamId?: string | null;
+  awayTeamId?: string | null;
   homeScore: number | null;
   awayScore: number | null;
   status: MatchStatus;
@@ -136,6 +148,7 @@ export interface NormalizedMatch {
   /** ISO timestamp. */
   kickoff: string | null;
   venue?: string | null;
+  /** Recent results as `"WDL"`, most recent first — real form, not a placeholder. */
   homeForm?: string | null;
   awayForm?: string | null;
   oddsHome?: number | null;
@@ -359,6 +372,10 @@ const footballDataProvider: SportsProvider = {
             : null,
           homeTeam: homeName || "Home",
           awayTeam: awayName || "Away",
+          homeLogo: typeof home.crest === "string" ? home.crest : null,
+          awayLogo: typeof away.crest === "string" ? away.crest : null,
+          homeTeamId: home.id != null ? String(home.id) : null,
+          awayTeamId: away.id != null ? String(away.id) : null,
           homeScore: toInt(full.home ?? score.regularTime),
           awayScore: toInt(full.away),
           status,
@@ -397,7 +414,7 @@ function sportsDbSport(sport: string): string {
  * A patron key that has expired must not take the football board down with it:
  * on an "Invalid … API key" response we drop to the public key and carry on.
  */
-async function sportsDbGet(path: string): Promise<Record<string, unknown> | null> {
+export async function sportsDbGet(path: string): Promise<Record<string, unknown> | null> {
   const candidates = [...new Set([SPORTSDB_API_KEY, SPORTSDB_PUBLIC_KEY])].filter(Boolean);
   const ordered = sportsDbRejectedKey
     ? candidates.filter((k) => k !== sportsDbRejectedKey)
@@ -601,6 +618,12 @@ function mapEspnEvent(row: unknown, league: string, sport: string): NormalizedMa
     country: ESPN_COUNTRY[league] ?? null,
     homeTeam: homeName || "Home",
     awayTeam: awayName || "Away",
+    // ESPN nests the crest differently per competition: `logo` on some, a
+    // `logos[]` array on others. Take whichever exists.
+    homeLogo: espnLogo(home),
+    awayLogo: espnLogo(away),
+    homeTeamId: espnTeamId(home),
+    awayTeamId: espnTeamId(away),
     homeScore: completed || status === "LIVE" || status === "HT" ? score(home) : null,
     awayScore: completed || status === "LIVE" || status === "HT" ? score(away) : null,
     status,
@@ -780,7 +803,9 @@ export function coalesceMatches(
 
       // Same real fixture from a second source: keep the winner's identity and
       // status, borrow every field it could not supply.
-      const preferIncoming = provider.priority < (ordered.find((b) => b.provider.id === owner.get(key))?.provider.priority ?? 99);
+      const preferIncoming =
+        provider.priority <
+        (ordered.find((b) => b.provider.id === owner.get(key))?.provider.priority ?? 99);
       const winner = preferIncoming ? m : existing;
       const other = preferIncoming ? existing : m;
       byKey.set(key, {
@@ -794,6 +819,15 @@ export function coalesceMatches(
         oddsHome: winner.oddsHome ?? other.oddsHome,
         oddsDraw: winner.oddsDraw ?? other.oddsDraw,
         oddsAway: winner.oddsAway ?? other.oddsAway,
+        // A source with no crests must not blank out one that has them, and the
+        // team id is what the head-to-head lookup keys on, so it is worth
+        // borrowing across sources too.
+        homeLogo: winner.homeLogo ?? other.homeLogo,
+        awayLogo: winner.awayLogo ?? other.awayLogo,
+        homeTeamId: winner.homeTeamId ?? other.homeTeamId,
+        awayTeamId: winner.awayTeamId ?? other.awayTeamId,
+        homeForm: winner.homeForm ?? other.homeForm,
+        awayForm: winner.awayForm ?? other.awayForm,
         status: winner.status === "SCHEDULED" && other.status !== "SCHEDULED" ? other.status : winner.status,
       });
       if (preferIncoming) owner.set(key, provider.id);
@@ -830,6 +864,10 @@ function mapSportsDbEvent(row: unknown, fallbackDay?: string): NormalizedMatch |
     country: e.strCountry != null ? String(e.strCountry) : null,
     homeTeam: home || "Home",
     awayTeam: away || "Away",
+    homeLogo: badgeOf(e, "strHomeTeamBadge", "Home"),
+    awayLogo: badgeOf(e, "strAwayTeamBadge", "Away"),
+    homeTeamId: e.idHomeTeam != null ? String(e.idHomeTeam) : null,
+    awayTeamId: e.idAwayTeam != null ? String(e.idAwayTeam) : null,
     homeScore: toInt(e.intHomeScore),
     awayScore: toInt(e.intAwayScore),
     status,
@@ -837,6 +875,43 @@ function mapSportsDbEvent(row: unknown, fallbackDay?: string): NormalizedMatch |
     kickoff,
     venue: e.strVenue != null ? String(e.strVenue) : null,
   };
+}
+
+/**
+ * Read TheSportsDB's crest for one side of a fixture.
+ *
+ * The field name has drifted across API versions (`strHomeTeamBadge` on
+ * `/eventsday`, `strBadge` on `/eventsnextleague`), so fall back rather than
+ * losing every badge on one endpoint.
+ */
+function badgeOf(event: Record<string, unknown>, key: string, side: "Home" | "Away"): string | null {
+  const candidates = [event[key], event[`str${side}TeamBadge`]];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && /^https?:\/\//i.test(candidate)) return candidate;
+  }
+  return null;
+}
+
+/** ESPN's crest lives at `team.logo` or in a `team.logos[]` array, per competition. */
+function espnLogo(side: Record<string, unknown> | undefined): string | null {
+  const team = side?.team as Record<string, unknown> | undefined;
+  if (!team) return null;
+  if (typeof team.logo === "string" && team.logo) return team.logo;
+  const logos = team.logos;
+  if (Array.isArray(logos)) {
+    for (const entry of logos) {
+      const href = (entry as Record<string, unknown> | null)?.href;
+      if (typeof href === "string" && href) return href;
+    }
+  }
+  return null;
+}
+
+/** ESPN team id — the key for its per-team schedule endpoint. */
+function espnTeamId(side: Record<string, unknown> | undefined): string | null {
+  const team = side?.team as Record<string, unknown> | undefined;
+  const id = team?.id;
+  return id != null && String(id).length > 0 ? String(id) : null;
 }
 
 function isMatch(m: NormalizedMatch | null): m is NormalizedMatch {
@@ -1208,6 +1283,13 @@ function fromDbRow(row: {
     oddsHome: row.oddsHome,
     oddsDraw: row.oddsDraw,
     oddsAway: row.oddsAway,
+    // Crests and team ids are provider-only: they are not persisted, so the
+    // database-fallback path legitimately has none. The UI renders a monogram
+    // badge in that case rather than a broken image.
+    homeLogo: null,
+    awayLogo: null,
+    homeTeamId: null,
+    awayTeamId: null,
   };
 }
 

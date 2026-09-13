@@ -46,6 +46,15 @@ interface LiveMatch {
   country: string | null;
   homeTeam: string;
   awayTeam: string;
+  /** Crest URLs from the provider. Null on the database-fallback path. */
+  homeLogo?: string | null;
+  awayLogo?: string | null;
+  /** Provider team ids, used to resolve head-to-head and recent form. */
+  homeTeamId?: string | null;
+  awayTeamId?: string | null;
+  /** Most recent results as `"WDL"`, newest first, when the provider supplies it. */
+  homeForm?: string | null;
+  awayForm?: string | null;
   homeScore: number | null;
   awayScore: number | null;
   status: string;
@@ -602,8 +611,20 @@ function MatchRow({
           </div>
 
           <div className="min-w-0 flex-1">
-            <TeamLine name={match.homeTeam} score={match.homeScore} leading={(match.homeScore ?? 0) > (match.awayScore ?? 0)} />
-            <TeamLine name={match.awayTeam} score={match.awayScore} leading={(match.awayScore ?? 0) > (match.homeScore ?? 0)} />
+            <TeamLine
+              name={match.homeTeam}
+              logo={match.homeLogo}
+              form={match.homeForm}
+              score={match.homeScore}
+              leading={(match.homeScore ?? 0) > (match.awayScore ?? 0)}
+            />
+            <TeamLine
+              name={match.awayTeam}
+              logo={match.awayLogo}
+              form={match.awayForm}
+              score={match.awayScore}
+              leading={(match.awayScore ?? 0) > (match.homeScore ?? 0)}
+            />
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
@@ -644,13 +665,260 @@ function MatchRow({
   );
 }
 
-function TeamLine({ name, score, leading }: { name: string; score: number | null; leading: boolean }) {
+/**
+ * A team crest that never leaves a hole in the layout.
+ *
+ * Crests come from whichever provider won the merge, and those URLs 404 or
+ * hotlink-block often enough that a bare `<img>` would flash a broken icon.
+ * The initials monogram is the fallback, and `referrerPolicy` keeps the
+ * provider from rejecting the request when it checks where it came from.
+ */
+function TeamCrest({ name, logo }: { name: string; logo?: string | null }) {
+  const [failed, setFailed] = useState(false);
+  const initials = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0]?.toUpperCase() ?? "")
+    .join("");
+
+  if (!logo || failed) {
+    return (
+      <span
+        aria-hidden
+        className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-surface-800 text-[9px] font-bold text-surface-400 sm:h-6 sm:w-6 sm:text-[10px]"
+      >
+        {initials || "?"}
+      </span>
+    );
+  }
+
   return (
-    <div className="flex items-center justify-between gap-3 py-[1px]">
-      <span className={cn("truncate text-sm", leading ? "font-semibold text-surface-50" : "text-surface-300")}>{name}</span>
+    // eslint-disable-next-line @next/next/no-img-element -- crests are third-party CDN assets; the optimizer would add a hop and fail on hotlink-protected hosts
+    <img
+      src={logo}
+      alt=""
+      aria-hidden
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(true)}
+      className="h-5 w-5 shrink-0 object-contain sm:h-6 sm:w-6"
+    />
+  );
+}
+
+function TeamLine({
+  name,
+  logo,
+  score,
+  leading,
+  form,
+}: {
+  name: string;
+  logo?: string | null;
+  score: number | null;
+  leading: boolean;
+  form?: string | null;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 py-[1px] sm:gap-3">
+      <span className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+        <TeamCrest name={name} logo={logo} />
+        <span className={cn("truncate text-sm", leading ? "font-semibold text-surface-50" : "text-surface-300")}>{name}</span>
+        {form ? <FormPills form={form} /> : null}
+      </span>
       <span className={cn("w-6 text-right text-sm font-bold tabular-nums", leading ? "text-surface-50" : "text-surface-400")}>
         {score ?? "–"}
       </span>
+    </div>
+  );
+}
+
+/** The last five results as compact W/D/L dots — green, grey, red. */
+function FormPills({ form, className }: { form: string; className?: string }) {
+  const results = form.replace(/[^WDL]/gi, "").toUpperCase().slice(0, 5).split("");
+  if (results.length === 0) return null;
+  return (
+    <span className={cn("hidden shrink-0 items-center gap-0.5 sm:inline-flex", className)} aria-label={`Recent form: ${results.join(", ")}`}>
+      {results.map((r, i) => (
+        <span
+          key={`${r}-${i}`}
+          className={cn(
+            "grid h-3.5 w-3.5 place-items-center rounded-[4px] text-[8px] font-bold",
+            r === "W" ? "bg-emerald-500/20 text-emerald-300" : r === "L" ? "bg-red-500/20 text-red-300" : "bg-surface-700/60 text-surface-400"
+          )}
+        >
+          {r}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+interface TeamFormSummary {
+  team: string;
+  played: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  form: string;
+  avgGoalsFor: number | null;
+  avgGoalsAgainst: number | null;
+}
+
+interface H2HMeeting {
+  date: string | null;
+  competition: string;
+  homeTeam: string;
+  awayTeam: string;
+  homeScore: number | null;
+  awayScore: number | null;
+}
+
+interface FixtureContext {
+  home: TeamFormSummary | null;
+  away: TeamFormSummary | null;
+  h2h: H2HMeeting[];
+  source: string;
+  degraded: boolean;
+}
+
+/**
+ * Real form and head-to-head for one fixture, loaded only when the reader opens
+ * the analysis panel.
+ *
+ * Deliberately lazy: the scoreboard refreshes every 15 seconds across many
+ * fixtures, and fetching history for all of them would triple the request
+ * volume for information most readers never look at. The server caches the
+ * lookup on the team pair, so opening several fixtures costs one round trip.
+ */
+function useFixtureContext(match: LiveMatch) {
+  // The loaded value carries the fixture it belongs to, so "still loading" is
+  // derived during render rather than set from inside the effect.
+  const [state, setState] = useState<{ key: string; context: FixtureContext | null } | null>(null);
+  const homeTeam = match.homeTeam;
+  const awayTeam = match.awayTeam;
+  const homeTeamId = match.homeTeamId;
+  const awayTeamId = match.awayTeamId;
+  const key = `${homeTeam}::${awayTeam}`;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+
+    const params = new URLSearchParams({ home: homeTeam, away: awayTeam });
+    if (homeTeamId) params.set("homeId", homeTeamId);
+    if (awayTeamId) params.set("awayId", awayTeamId);
+
+    fetch(`/api/sports/h2h?${params.toString()}`, { signal: controller.signal })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: FixtureContext | null) => {
+        if (active) setState({ key: `${homeTeam}::${awayTeam}`, context: data });
+      })
+      .catch(() => {
+        /* History is optional context — never surface it as an error. */
+        if (active) setState({ key: `${homeTeam}::${awayTeam}`, context: null });
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [homeTeam, awayTeam, homeTeamId, awayTeamId]);
+
+  return { context: state?.key === key ? state.context : null, loading: state?.key !== key };
+}
+
+function FormColumn({ form, accent }: { form: TeamFormSummary | null; accent: string }) {
+  if (!form) {
+    return (
+      <div className="rounded-lg border border-surface-800/60 bg-surface-900/30 p-2.5">
+        <p className="text-[11px] text-surface-500">No recent results available.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-surface-800/60 bg-surface-900/30 p-2.5">
+      <p className="truncate text-xs font-semibold text-surface-100">{form.team}</p>
+      <div className="mt-1.5 flex items-center gap-2">
+        <FormPills form={form.form} className="!inline-flex" />
+        <span className="text-[10px] text-surface-500">{form.played} played</span>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-surface-400">
+        <span>
+          <span className="font-semibold text-surface-200">{form.wins}</span>W ·
+          <span className="ml-1 font-semibold text-surface-200">{form.draws}</span>D ·
+          <span className="ml-1 font-semibold text-surface-200">{form.losses}</span>L
+        </span>
+        {form.avgGoalsFor != null ? (
+          <span>
+            {form.avgGoalsFor.toFixed(2)} scored / {form.avgGoalsAgainst?.toFixed(2) ?? "—"} conceded per game
+          </span>
+        ) : null}
+      </div>
+      <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-surface-800">
+        <div className={cn("h-full rounded-full", accent)} style={{ width: `${form.played > 0 ? (form.wins / form.played) * 100 : 0}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function FixtureContextPanel({ match }: { match: LiveMatch }) {
+  const { context, loading } = useFixtureContext(match);
+
+  return (
+    <div className="mt-4 rounded-xl border border-surface-800/60 bg-surface-900/30 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-surface-500">Recent form</span>
+        {context?.h2h && context.h2h.length > 0 ? (
+          <span className="text-[10px] text-surface-500">{context.h2h.length} head-to-head found</span>
+        ) : null}
+      </div>
+
+      {loading ? (
+        <div className="mt-3 flex items-center gap-2 text-[11px] text-surface-500">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading form and head-to-head…
+        </div>
+      ) : (
+        <>
+          <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
+            <FormColumn form={context?.home ?? null} accent="bg-brand-500" />
+            <FormColumn form={context?.away ?? null} accent="bg-accent-coral" />
+          </div>
+
+          {context?.h2h && context.h2h.length > 0 ? (
+            <div className="mt-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-surface-500">Head to head</p>
+              <ul className="mt-1.5 space-y-1">
+                {context.h2h.slice(0, 5).map((meeting, i) => (
+                  <li
+                    key={`${meeting.date ?? "meeting"}-${i}`}
+                    className="flex items-center justify-between gap-3 rounded-lg bg-surface-900/40 px-2.5 py-1.5 text-[11px]"
+                  >
+                    <span className="truncate text-surface-400">
+                      {meeting.date ? new Date(meeting.date).toLocaleDateString([], { day: "2-digit", month: "short", year: "2-digit" }) : "—"}
+                      <span className="ml-2 text-surface-600">{meeting.competition}</span>
+                    </span>
+                    <span className="shrink-0 tabular-nums text-surface-200">
+                      {meeting.homeTeam} <span className="font-bold text-surface-50">{meeting.homeScore ?? "–"}–{meeting.awayScore ?? "–"}</span> {meeting.awayTeam}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {context?.degraded ? (
+            <p className="mt-2 text-[10px] text-amber-400/80">
+              Limited history for this fixture — the model falls back to its competition priors for the missing side.
+            </p>
+          ) : null}
+        </>
+      )}
     </div>
   );
 }
@@ -694,11 +962,22 @@ function AnalysisPanel({ match }: { match: LiveMatch }) {
               <MarketCard key={p.id} prediction={p} match={match} />
             ))}
           </div>
-          <div className="mt-4">
-            <ReferralCards placement="sports-inline" matchId={match.id} compact />
-          </div>
         </>
       )}
+
+      {/*
+        Form and head-to-head sit OUTSIDE the picks branch on purpose: they are
+        real evidence about the fixture, independent of whether the analyser has
+        published a call yet — and they are most useful on exactly the fixtures
+        where no pick exists.
+      */}
+      <FixtureContextPanel match={match} />
+
+      {predictions.length > 0 ? (
+        <div className="mt-4">
+          <ReferralCards placement="sports-inline" matchId={match.id} compact />
+        </div>
+      ) : null}
 
       <p className="mt-3 text-[10px] leading-relaxed text-surface-600">
         Model output, not financial advice. Predictions are probabilistic — never stake more than you can afford to lose.

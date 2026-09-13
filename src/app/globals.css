@@ -75,50 +75,52 @@
 }
 
 html:not(.dark) {
-  /* ===== SAVANNA DAY (light mode) =====
-     Canvas: warm kitenge paper (#E2D7C1) — homey, sunlit, easy on the eyes.
-     Text: deep espresso ink, never pure black. Every step of the scale was
-     checked for WCAG AA (4.5:1+) body contrast on the paper canvas, so type
-     stays legible on small phone screens in bright daylight.
-     Brand: deep terracotta so the sunset orange stays legible on paper.
+  /* ===== STUDIO GREY (light mode) =====
+     Canvas: neutral grey (#D3D3D3). The palette is deliberately UNTINTED — no
+     warm cast — so photography, team badges and brand orange all read true
+     instead of picking up a colour wash from the page behind them.
 
-     DEPTH: white-on-white is the classic light-mode flatness trap — a near
-     white card on a near-white canvas loses its edge and the whole page reads
-     as one flat sheet. The canvas is therefore deliberately DARKER than any
-     surface that sits on it, and the three layers are spaced far enough apart
-     to be told apart at a glance on a phone in daylight:
+     TYPE: the whole text ramp is pushed darker than a typical light theme.
+     Secondary and meta text in particular were the weak point: on a mid-grey
+     canvas, "muted" text that looked fine on near-white turns to mush, and
+     small phone screens in daylight are exactly where that hurts. Every step
+     is verified against the canvas AND the surfaces it actually sits on.
 
-       canvas  #E2D7C1  (950)  ← deepest, everything reads against this
-       inset   #E0D3BB  (800)  ← recessed wells: inputs, badges, tab rails
-       panel   #F6F0E4  (900)  ← lifted panels and tables
-       card    #FFFDF8  (850)  ← brightest, the top layer
+     DEPTH: white-on-white is the classic light-mode flatness trap. The canvas
+     is deliberately darker than every surface above it, spaced far enough
+     apart to be told apart at a glance:
 
-     Text steps stay untouched, so deepening the canvas can only increase
-     heading/body contrast, never reduce it. */
-  --surface-50: 36 26 18;      /* #241A12 — headings/body (darkest text) */
-  --surface-100: 62 46 32;     /* #3E2E20 — secondary text */
-  --surface-200: 93 74 56;     /* #5D4A38 — muted text */
-  --surface-300: 101 81 60;    /* #65513C — icons */
-  --surface-400: 110 91 70;    /* #6E5B46 — placeholders, secondary */
-  --surface-500: 122 104 84;   /* #7A6854 — subtle text */
-  --surface-600: 196 181 152;  /* #C4B598 — light borders (deeper for edges) */
-  --surface-700: 214 199 172;  /* #D6C7AC — input borders */
-  /* The inset is darker than the panel it sits in (recessed) but deliberately
-     NOT as dark as the canvas: dark type on a badge or disabled control still
-     has to clear 4.5:1, and deepening this past ~#E5D9C3 breaks that. */
-  --surface-800: 229 217 195;  /* #E5D9C3 — tinted inset (badges, inputs) */
-  --surface-850: 255 253 248;  /* #FFFDF8 — cards (brightest layer) */
-  --surface-900: 246 240 228;  /* #F6F0E4 — main panels (lifted) */
-  --surface-950: 226 215 193;  /* #E2D7C1 — canvas (deepened so layers read) */
-  --foreground: 36 26 18;
-  --background: 226 215 193;
-  --scrollbar-thumb: 196 181 152;
-  --scrollbar-hover: 168 148 118;
-  --glass-bg: 250 245 236;
-  --glass-border: 208 193 166;
-  --card-bg: 255 253 248;
-  --card-border: 208 193 166;
-  --muted: 93 74 56;
+       canvas  #D3D3D3  (950)  ← deepest, everything reads against this
+       inset   #E0E0E2  (800)  ← recessed wells: inputs, badges, tab rails
+       panel   #F0F0F2  (900)  ← lifted panels and tables
+       card    #FFFFFF  (850)  ← brightest, the top layer
+
+     Note the insets are LIGHTER than the canvas but darker than the panel:
+     recess reads as "set into the panel", and the panel is what they sit in. */
+  --surface-50: 15 15 17;      /* #0F0F11 — headings/body (darkest text) */
+  --surface-100: 34 34 38;     /* #222226 — secondary text */
+  --surface-200: 58 58 63;     /* #3A3A3F — muted text */
+  --surface-300: 76 76 82;     /* #4C4C52 — icons */
+  --surface-400: 92 92 98;     /* #5C5C62 — placeholders, secondary */
+  --surface-500: 106 106 112;  /* #6A6A70 — subtle text */
+  --surface-600: 167 167 171;  /* #A7A7AB — light borders */
+  --surface-700: 190 190 194;  /* #BEBEC2 — input borders, avatar wells */
+  /* Lighter than the canvas, darker than the panel: this is the "recessed"
+     step, and it is kept here rather than deeper because dark type on a badge
+     or a disabled control still has to clear 4.5:1. */
+  --surface-800: 224 224 226;  /* #E0E0E2 — tinted inset (badges, inputs) */
+  --surface-850: 255 255 255;  /* #FFFFFF — cards (brightest layer) */
+  --surface-900: 240 240 242;  /* #F0F0F2 — main panels (lifted) */
+  --surface-950: 211 211 211;  /* #D3D3D3 — canvas */
+  --foreground: 15 15 17;
+  --background: 211 211 211;
+  --scrollbar-thumb: 167 167 171;
+  --scrollbar-hover: 140 140 145;
+  --glass-bg: 248 248 250;
+  --glass-border: 200 200 204;
+  --card-bg: 255 255 255;
+  --card-border: 200 200 204;
+  --muted: 58 58 63;
   /* Brand colors — deep terracotta for light backgrounds so sunset orange
      stays legible on paper instead of washing out */
   --brand-primary: #c2410c;
@@ -129,19 +131,17 @@ html:not(.dark) {
   --accent-amber: #b45309;
   --accent-cyan: #0e7490;
   --accent-violet: #6d28d9;
-  --border-subtle: rgb(196 181 152 / 0.7);
-  --border-default: rgb(196 181 152);
-  --shadow-color: 120 84 40;
-  /* Elevation ramp — on a paper canvas depth has to come from a warm ambient
-     shadow plus a top highlight, never from pure black (which reads as dirt
-     on a warm surface). Values are tuned against the #E2D7C1 canvas, which is
-     deeper than before, so the shadows carry a touch more weight and the top
-     highlight is a little softer (a white line on a darker card edge is much
-     more visible than it was on the old near-white canvas). */
-  --elev-1: 0 1px 2px rgb(93 68 38 / 0.1), inset 0 1px 0 rgb(255 255 255 / 0.75);
-  --elev-2: 0 7px 20px -6px rgb(93 68 38 / 0.18), 0 2px 5px rgb(93 68 38 / 0.08), inset 0 1px 0 rgb(255 255 255 / 0.8);
-  --elev-3: 0 20px 48px -14px rgb(93 68 38 / 0.26), 0 7px 16px rgb(93 68 38 / 0.1), inset 0 1px 0 rgb(255 255 255 / 0.85);
-  --hairline-top: inset 0 1px 0 rgb(255 255 255 / 0.8);
+  --border-subtle: rgb(167 167 171 / 0.8);
+  --border-default: rgb(167 167 171);
+  --shadow-color: 0 0 0;
+  /* Elevation ramp — neutral, because the canvas is neutral. A warm shadow on a
+     grey page reads as a stain; on mid-grey the eye still wants a real drop
+     shadow plus a bright top edge, so the highlight stays near-white and the
+     ambient layer leans cooler. Values are tuned against the #D3D3D3 canvas. */
+  --elev-1: 0 1px 2px rgb(40 40 45 / 0.14), inset 0 1px 0 rgb(255 255 255 / 0.9);
+  --elev-2: 0 7px 20px -6px rgb(40 40 45 / 0.2), 0 2px 5px rgb(40 40 45 / 0.1), inset 0 1px 0 rgb(255 255 255 / 0.95);
+  --elev-3: 0 20px 48px -14px rgb(40 40 45 / 0.28), 0 7px 16px rgb(40 40 45 / 0.12), inset 0 1px 0 rgb(255 255 255 / 1);
+  --hairline-top: inset 0 1px 0 rgb(255 255 255 / 0.9);
   /* Success/Error/Warning semantic tokens */
   --success-bg: rgb(20 83 45 / 0.1);
   --success-text: #166534;
@@ -223,8 +223,8 @@ html:not(.dark) .font-black {
       elements that already carry a Tailwind shadow so utilities still win. */
 html:not(.dark) body {
   background-image:
-    radial-gradient(ellipse 90% 55% at 50% -10%, rgb(255 253 248 / 0.85), transparent 65%),
-    linear-gradient(180deg, rgb(var(--background)) 0%, rgb(219 206 182) 100%);
+    radial-gradient(ellipse 90% 55% at 50% -10%, rgb(255 255 255 / 0.7), transparent 65%),
+    linear-gradient(180deg, rgb(var(--background)) 0%, rgb(196 196 199) 100%);
   background-attachment: fixed;
 }
 

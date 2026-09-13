@@ -72,11 +72,24 @@ describe("theme depth tokens", () => {
     expect(card - canvas).toBeGreaterThanOrEqual(40);
   });
 
-  it("keeps the light canvas a warm paper, never pure white", () => {
+  it("keeps the light canvas a neutral grey, never pure white", () => {
     const canvas = token(light, "surface-950");
-    // Warm means the red channel leads the blue one.
-    expect(canvas[0]).toBeGreaterThan(canvas[2]);
-    expect(canvas[0]).toBeLessThan(250);
+
+    /**
+     * This assertion is the inverse of what it used to be.
+     *
+     * The canvas was previously a warm "savanna paper" and the test pinned the
+     * red channel above the blue one. The light theme is now a deliberately
+     * NEUTRAL grey (#D3D3D3) so photography, team badges and brand orange read
+     * true instead of picking up a wash from the page behind them. Pinning
+     * "warm" here would now fail on a correct palette, so it pins *neutrality*
+     * instead — which is the property worth protecting in the other direction:
+     * a stray tint is exactly how the old palette would creep back in.
+     */
+    const spread = Math.max(...canvas) - Math.min(...canvas);
+    expect(spread).toBeLessThanOrEqual(2);
+    // ...and still clearly greyer than white, or every card loses its edge.
+    expect(canvas[0]).toBeLessThan(230);
   });
 
   it("separates a light card from its border", () => {

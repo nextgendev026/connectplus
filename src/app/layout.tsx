@@ -173,11 +173,11 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export const viewport: Viewport = {
   themeColor: [
-    // Must match the live tokens: light is the deepened savanna canvas
-    // (--background #E2D7C1), dark is the deepest charcoal (--surface-950).
+    // Must match the live tokens: light is the neutral grey canvas
+    // (--background #D3D3D3), dark is the deepest charcoal (--surface-950).
     // A stale value here tints the mobile browser chrome a different colour
     // from the page it frames.
-    { media: "(prefers-color-scheme: light)", color: "#E2D7C1" },
+    { media: "(prefers-color-scheme: light)", color: "#D3D3D3" },
     { media: "(prefers-color-scheme: dark)", color: "#0E1114" },
   ],
   width: "device-width",

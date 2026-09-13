@@ -5,6 +5,7 @@ import { neuralMind } from "@/lib/neural-mind";
 import { hiveBrain } from "@/lib/hive-brain";
 import { classifyIntent } from "@/lib/neural-intent";
 import { tryLlmForChat } from "@/lib/ai-provider";
+import { parseDirective, saveDirective } from "@/lib/mind-directives";
 
 export async function POST(request: NextRequest) {
   try {
@@ -59,9 +60,19 @@ export async function POST(request: NextRequest) {
     // platform data intents). Graceful fallback keeps the chat fully functional
     // with zero configuration.
     const classified = classifyIntent(message.trim());
+
+    // A standing instruction is *saved*, not answered and forgotten. This is the
+    // hook that lets an operator actually teach the combined mind: the directive
+    // is persisted as a mind memory and consulted by every sports prediction from
+    // here on. Ordinary conversation parses to null and is untouched.
+    const directive = parseDirective(message.trim());
+    const saved = directive
+      ? await saveDirective({ text: message.trim(), parsed: directive, createdBy: userId })
+      : null;
+
     const llmText = await tryLlmForChat(message.trim(), history, classified.intent);
 
-    const response = llmText
+    const base = llmText
       ? {
           text: llmText,
           intent: classified.intent,
@@ -70,6 +81,22 @@ export async function POST(request: NextRequest) {
           sources: [] as string[],
         }
       : await neuralMind.processQuery(message.trim(), history);
+
+    // The confirmation leads the reply so the operator sees immediately that the
+    // instruction was understood and is now live, rather than hoping it was.
+    const response = saved
+      ? {
+          ...base,
+          text: [
+            `📌 Directive saved and active.\n${saved.note}`,
+            "It applies to every prediction from the next model pass onward. Revoke it any time from the Directives tab.",
+            base.text,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+          enginesUsed: [...base.enginesUsed, "directive"],
+        }
+      : base;
 
     void neuralMind.learnFromInteraction(message.trim(), response.intent, response.text).catch(() => {});
 
@@ -91,6 +118,10 @@ export async function POST(request: NextRequest) {
       async start(controller) {
         try {
           controller.enqueue(encoder.encode(JSON.stringify({ type: "metadata", conversationId: conversation!.id, intent: response.intent, enginesUsed: response.enginesUsed }) + "\n"));
+
+          if (saved) {
+            controller.enqueue(encoder.encode(JSON.stringify({ type: "directive", directive: saved }) + "\n"));
+          }
 
           controller.enqueue(encoder.encode(JSON.stringify({ type: "hive", status: hiveStatus }) + "\n"));
 

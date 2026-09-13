@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma";
+import { getFixtureContext, type H2HMeeting, type TeamForm } from "@/lib/sports-h2h";
+import { applyDirectives, extractDirectives, type StoredDirective } from "@/lib/mind-directives";
 import { createLogger } from "@/lib/logger";
 import {
   competitionRelevance,
@@ -126,12 +128,90 @@ function exactScoreProb(matrix: number[][], h: number, a: number): number {
 }
 
 /** Shared Poisson grid so every market is derived from one consistent model. */
-function buildGrid(match: NormalizedMatch, mind?: MindSignal | null): PoissonGrid {
+/**
+ * League-average goals per side, and the floor on how many real matches it takes
+ * before form is trusted at all.
+ */
+const LEAGUE_HOME_GOALS = 1.45;
+const LEAGUE_AWAY_GOALS = 1.15;
+/**
+ * Minimum mind weight once an operator directive applies. A human instruction is
+ * the most authoritative signal available to us, so it must not be diluted to
+ * nothing by an absence of learned lessons for that fixture.
+ */
+const DIRECTIVE_HEAT_FLOOR = 0.85;
+const MIN_FORM_SAMPLE = 3;
+/** Sample size at which real form fully replaces the base estimate. */
+const FULL_FORM_SAMPLE = 5;
+
+export interface FormSignal {
+  home: TeamForm | null;
+  away: TeamForm | null;
+  h2h: H2HMeeting[];
+}
+
+/**
+ * Expected goals for one side from real scored/conceded rates.
+ *
+ * The classic strength model: a side's attack rate multiplies the opponent's
+ * defence rate around the league baseline. Returns null when there is not
+ * enough real evidence, so the caller can keep the base estimate rather than
+ * fold in a number built on one match.
+ */
+function realExpectation(attack: TeamForm | null, defence: TeamForm | null, venue: "home" | "away"): number | null {
+  const base = venue === "home" ? LEAGUE_HOME_GOALS : LEAGUE_AWAY_GOALS;
+  const attackRate = attack?.avgGoalsFor != null ? attack.avgGoalsFor / base : null;
+  const defenceRate = defence?.avgGoalsAgainst != null ? defence.avgGoalsAgainst / base : null;
+  // One side of the pair is enough to be useful; requiring both would discard
+  // real information just because the opponent's history is thin.
+  if (attackRate == null && defenceRate == null) return null;
+  const expected = base * (attackRate ?? 1) * (defenceRate ?? 1);
+  return Math.min(Math.max(expected, 0.2), 4.2);
+}
+
+function buildGrid(
+  match: NormalizedMatch,
+  mind?: MindSignal | null,
+  form?: FormSignal | null
+): PoissonGrid {
   const homeStrength = teamStrength(match.homeTeam);
   const awayStrength = teamStrength(match.awayTeam);
 
   let lambdaHome = 1.35 + 0.9 * homeStrength - 0.5 * awayStrength + 0.25;
   let lambdaAway = 1.05 + 0.9 * awayStrength - 0.5 * homeStrength;
+
+  // ── Real form ─────────────────────────────────────────────────────────────
+  // The base estimate above is seeded by a hash of the team NAME, which is
+  // deterministic but carries no football information at all. When real recent
+  // results exist they replace it, weighted by how much evidence there is:
+  // three matches is the floor for being trusted at all, five replaces it
+  // outright. Below the floor the estimate is left untouched rather than
+  // nudged, because half a match of signal is worse than none.
+  if (form) {
+    const samples = Math.min(form.home?.played ?? 0, form.away?.played ?? 0);
+    if (samples >= MIN_FORM_SAMPLE) {
+      const weight = Math.min(samples, FULL_FORM_SAMPLE) / FULL_FORM_SAMPLE;
+      const homeReal = realExpectation(form.home, form.away, "home");
+      const awayReal = realExpectation(form.away, form.home, "away");
+      if (homeReal != null) lambdaHome = lambdaHome * (1 - weight) + homeReal * weight;
+      if (awayReal != null) lambdaAway = lambdaAway * (1 - weight) + awayReal * weight;
+    }
+
+    // Head-to-head: these two sides' actual meetings are a better guide to the
+    // shape of this fixture than either side's general form. Kept deliberately
+    // gentle — a couple of meetings is a hint, not a season.
+    if (form.h2h.length >= 2) {
+      const totals = form.h2h
+        .map((m) => (m.homeScore ?? 0) + (m.awayScore ?? 0))
+        .filter((t) => t > 0);
+      if (totals.length >= 2) {
+        const avgTotal = totals.reduce((sum, t) => sum + t, 0) / totals.length;
+        const scale = 1 + ((avgTotal - 2.6) / 2.6) * 0.12;
+        lambdaHome *= scale;
+        lambdaAway *= scale;
+      }
+    }
+  }
 
   // ── Combined-mind adjustment ──────────────────────────────────────────────
   // The hive's own lessons shift the goal expectations BEFORE the grid is built,
@@ -333,6 +413,7 @@ export function consultMind(corpus: MindMemory[], match: NormalizedMatch): MindS
   const avgGoals = competitionGames > 0 ? competitionGoals / competitionGames : null;
   const notes: string[] = [];
 
+  let signal: MindSignal;
   if (lessonCount >= MIND_MIN_LESSONS) {
     const homeRate = homeWins / lessonCount;
     notes.push(
@@ -341,22 +422,58 @@ export function consultMind(corpus: MindMemory[], match: NormalizedMatch): MindS
     if (avgGoals != null) {
       notes.push(`Learned scoring in ${match.competition}: ${avgGoals.toFixed(2)} goals/game.`);
     }
-    return { heat, momentum: { home: homeRate, away: 1 - homeRate }, avgGoals, lessons: lessonCount, notes };
-  }
-
-  if (avgGoals != null) {
+    signal = { heat, momentum: { home: homeRate, away: 1 - homeRate }, avgGoals, lessons: lessonCount, notes };
+  } else if (avgGoals != null) {
     notes.push(`Learned scoring in ${match.competition}: ${avgGoals.toFixed(2)} goals/game.`);
-    return { heat: Math.min(0.4, heat), momentum: { home: 0.5, away: 0.5 }, avgGoals, lessons: lessonCount, notes };
+    signal = { heat: Math.min(0.4, heat), momentum: { home: 0.5, away: 0.5 }, avgGoals, lessons: lessonCount, notes };
+  } else {
+    signal = { ...NEUTRAL_MIND, lessons: lessonCount, notes };
   }
 
-  return { ...NEUTRAL_MIND, lessons: lessonCount, notes };
+  // Operator directives ride the same channel as learned evidence, but are not
+  // gated by `heat`: they are an explicit instruction, not an inference, so a
+  // fixture with no lessons at all still honours them.
+  return withDirectives(signal, extractDirectives(corpus), match);
 }
 
-/** Load the sports slice of the mind once per run — never once per fixture. */
+/**
+ * Fold operator instructions into a mind signal.
+ *
+ * The directive's lean is merged into the momentum the grid already consumes and
+ * its goal shift adjusts the competition scoring rate, so all four markets stay
+ * derived from one scoreline distribution. `heat` is floored so the instruction
+ * is actually felt in `buildGrid`, and every applied directive is named in the
+ * notes — a reader can always see that a human, not the model, moved the pick.
+ */
+function withDirectives(base: MindSignal, directives: StoredDirective[], match: NormalizedMatch): MindSignal {
+  const effect = applyDirectives(directives, match);
+  if (effect.applied.length === 0) return base;
+
+  const home = clamp(base.momentum.home + effect.homeLean, 0.02, 0.98);
+  const avgGoals =
+    effect.goalsBias !== 0
+      ? Math.max(0.4, (base.avgGoals ?? LEAGUE_HOME_GOALS + LEAGUE_AWAY_GOALS) + effect.goalsBias)
+      : base.avgGoals;
+
+  return {
+    heat: Math.max(base.heat, DIRECTIVE_HEAT_FLOOR),
+    momentum: { home, away: clamp(base.momentum.away - effect.homeLean, 0.02, 0.98) },
+    avgGoals,
+    lessons: base.lessons,
+    notes: [...base.notes, ...effect.notes],
+  };
+}
+
+/**
+ * Load the sports slice of the mind once per run — never once per fixture.
+ *
+ * Operator directives are read in the same pass: they are few, they are consulted
+ * per fixture, and a second query would double the round trips for no gain.
+ */
 export async function loadMindCorpus(limit = 400): Promise<MindMemory[]> {
   return prisma.neuralMemory
     .findMany({
-      where: { source: "sports" },
+      where: { source: { in: ["sports", "operator"] } },
       select: { source: true, category: true, content: true, tags: true, metadata: true, confidence: true },
       orderBy: { createdAt: "desc" },
       take: Math.min(Math.max(limit, 20), 1000),
@@ -369,6 +486,27 @@ function priorBlurb(prior: PredictionPrior, competition: string): string {
     return `Hive prior: ${(prior.competitionAccuracy * 100).toFixed(0)}% accuracy across ${prior.settledSample} settled ${competition} picks.`;
   }
   return `Hive prior: not enough settled ${competition} picks yet, leaning on the base model.`;
+}
+
+/**
+ * Describe the real-form input behind a pick.
+ *
+ * The rationale is the model's own audit trail, so a pick built on real results
+ * has to be visibly distinguishable from one that fell back to the base
+ * estimate — otherwise there is no way to tell why two similar fixtures got
+ * different numbers, and no way to spot the form feed going quiet.
+ */
+function describeForm(form?: FormSignal | null): string {
+  if (!form) return "";
+  const parts: string[] = [];
+  if (form.home && form.home.played >= MIN_FORM_SAMPLE) parts.push(`${form.home.team} ${form.home.form}`);
+  if (form.away && form.away.played >= MIN_FORM_SAMPLE) parts.push(`${form.away.team} ${form.away.form}`);
+  if (parts.length === 0) return "";
+  const h2h =
+    form.h2h.length > 0
+      ? ` ${form.h2h.length} recent head-to-head meeting${form.h2h.length === 1 ? "" : "s"} factored in.`
+      : "";
+  return ` Real form: ${parts.join(", ")}.${h2h}`;
 }
 
 /** Temper confidence with the market's own historical hit rate. */
@@ -387,9 +525,10 @@ function applyMarketPrior(confidence: number, market: MarketKey, prior: Predicti
 export function predictMarkets(
   match: NormalizedMatch,
   prior: PredictionPrior,
-  mind?: MindSignal | null
+  mind?: MindSignal | null,
+  form?: FormSignal | null
 ): MarketPrediction[] {
-  const grid = buildGrid(match, mind);
+  const grid = buildGrid(match, mind, form);
   const base = {
     homeWinPct: Math.round(grid.pHome * 1000) / 10,
     drawPct: Math.round(grid.pDraw * 1000) / 10,
@@ -400,6 +539,7 @@ export function predictMarkets(
   const xgLine = `Poisson model: xG ${grid.lambdaHome.toFixed(2)}–${grid.lambdaAway.toFixed(2)}.`;
   const priorLine = priorBlurb(prior, match.competition);
   const mindLine = mind && mind.notes.length > 0 ? ` ${mind.notes.join(" ")}` : "";
+  const formLine = describeForm(form);
   const picks: MarketPrediction[] = [];
 
   // ── 1X2 ────────────────────────────────────────────────────────────────────
@@ -425,7 +565,7 @@ export function predictMarkets(
     confidence: clamp(applyMarketPrior(best.p, "1X2", prior), 0.34, 0.9),
     ...base,
     valueEdge,
-    rationale: `${xgLine} ${best.label} carries the highest modelled probability (${(best.p * 100).toFixed(0)}%). ${edgeLine} ${priorLine}${mindLine}`,
+    rationale: `${xgLine} ${best.label} carries the highest modelled probability (${(best.p * 100).toFixed(0)}%). ${edgeLine} ${priorLine}${formLine}${mindLine}`,
   });
 
   // ── Over / under 2.5 ───────────────────────────────────────────────────────
@@ -620,6 +760,78 @@ export async function marketAccuracy(): Promise<Record<string, { accuracy: numbe
  * Fold a batch of fixtures into neural memory. Deduped per (day, competition)
  * so a 30-second poll does not spam the mind with the same rows.
  */
+export async function teachRealResults(matches: NormalizedMatch[]): Promise<number> {
+  /**
+   * Learn from every finished match we actually observed.
+   *
+   * The only result lessons used to be written when one of OUR OWN picks
+   * settled. That is a closed loop: the mind could only ever learn from
+   * fixtures it had already predicted, so it never saw a match it declined to
+   * call and could not tell a league's real shape from its own coverage gaps.
+   *
+   * These lessons carry the observed scoreline for any completed fixture, which
+   * is the same evidence `consultMind` counts as head-to-head momentum — so the
+   * mind's opinion starts tracking real football instead of its own output.
+   */
+  const finished = matches.filter(
+    (m) =>
+      m.status === "FT" &&
+      m.homeScore !== null &&
+      m.awayScore !== null &&
+      m.homeTeam &&
+      m.awayTeam
+  );
+  if (finished.length === 0) return 0;
+
+  const keys = [...new Set(finished.map((m) => `${m.provider}:${m.externalId}`))];
+  // One bounded read decides create-vs-skip for the whole batch. Learning the
+  // same match twice would double-count it as momentum evidence, which quietly
+  // skews every prediction that later consults it.
+  const known = new Set<string>();
+  for (let i = 0; i < keys.length; i += 200) {
+    const slice = keys.slice(i, i + 200);
+    const rows = await prisma.neuralMemory
+      .findMany({
+        where: { source: "sports", category: "wisdom", tags: { contains: "sport:real" } },
+        select: { metadata: true },
+        take: 5000,
+      })
+      .catch(() => [] as { metadata: string | null }[]);
+    for (const row of rows) {
+      try {
+        const meta = JSON.parse(row.metadata ?? "{}") as { key?: string };
+        if (meta.key && slice.includes(meta.key)) known.add(meta.key);
+      } catch {
+        /* a malformed row must not stop the batch */
+      }
+    }
+    if (rows.length < 5000) break;
+  }
+
+  const lessons = finished
+    .filter((m) => !known.has(`${m.provider}:${m.externalId}`))
+    .slice(0, 500)
+    .map((m) => {
+      const key = `${m.provider}:${m.externalId}`;
+      return {
+        source: "sports",
+        category: "wisdom",
+        // The `Result lesson:` prefix and the `HOME h-a AWAY` shape are both
+        // load-bearing: consultMind parses exactly this to count real results.
+        content: `Result lesson: ${m.homeTeam} ${m.homeScore}-${m.awayScore} ${m.awayTeam} (${m.competition}).`,
+        tags: `result,lesson,sport:real,sport:${m.sport},${m.competition.toLowerCase()},${m.homeTeam.toLowerCase()},${m.awayTeam.toLowerCase()}`,
+        // An observed scoreline is a fact, not an opinion, so it carries more
+        // weight than a pick that merely landed.
+        confidence: 0.85,
+        metadata: JSON.stringify({ key, competition: m.competition, sport: m.sport }),
+      };
+    });
+
+  if (lessons.length === 0) return 0;
+  const result = await prisma.neuralMemory.createMany({ data: lessons }).catch(() => ({ count: 0 }));
+  return result.count;
+}
+
 export async function teachMind(matches: NormalizedMatch[]): Promise<number> {
   if (matches.length === 0) return 0;
   const day = new Date().toISOString().slice(0, 10);
@@ -725,6 +937,12 @@ export interface PredictRunResult {
   skipped: number;
   settled: number;
   taught: number;
+  /** Picks built on real recent results rather than the base estimate. */
+  formGrounded: number;
+  /** Upstream form lookups this run actually opened. */
+  formLookups: number;
+  /** Real observed scorelines written into the combined mind's corpus. */
+  realResultsTaught: number;
 }
 
 /**
@@ -752,6 +970,13 @@ export async function runSportsIntelligence(opts: {
   };
 
   const taught = opts.teach === false ? 0 : await phase("teach", () => teachMind(matches));
+  // Real observed results are learned separately from our own picks, so the
+  // corpus reflects actual football rather than only the fixtures we called.
+  if (opts.teach !== false) {
+    await phase("teachResults", async () => {
+      realResultsTaught = await teachRealResults(matches).catch(() => 0);
+    });
+  }
   const settled = await phase("settle", () => settlePredictions());
   const marketAcc = await phase("marketAccuracy", () => marketAccuracy());
   // The mind's own corpus, read once: predictions below are blended with what
@@ -796,6 +1021,49 @@ export async function runSportsIntelligence(opts: {
   const byKey = new Map(matches.map((m) => [`${m.provider}:${m.externalId}`, m]));
   const counts = { generated: 0, refreshed: 0, skipped: 0 };
   let mindsConsulted = 0;
+  let formGrounded = 0;
+  let realResultsTaught = 0;
+
+  /**
+   * Real-form lookups are the one part of this job that hits an upstream API,
+   * so they are budgeted rather than unbounded. The result is cached per team
+   * pair for ten minutes, which means a matchday usually resolves each side
+   * once — but a cold run over hundreds of fixtures would otherwise open
+   * hundreds of requests and get the job rate-limited off the provider.
+   * Fixtures past the budget fall back to the base model, which is what they
+   * did before this existed, so the ceiling degrades rather than breaks.
+   */
+  const FORM_LOOKUP_BUDGET = Math.min(
+    Math.max(Number(process.env.SPORTS_FORM_LOOKUPS_PER_RUN ?? 60) || 60, 0),
+    400
+  );
+  const formCache = new Map<string, FormSignal | null>();
+  let formLookups = 0;
+
+  async function formFor(match: NormalizedMatch): Promise<FormSignal | null> {
+    const key = `${match.homeTeam}|${match.awayTeam}`.toLowerCase();
+    const hit = formCache.get(key);
+    if (hit !== undefined) return hit;
+    if (formLookups >= FORM_LOOKUP_BUDGET) {
+      formCache.set(key, null);
+      return null;
+    }
+    formLookups++;
+    const context = await getFixtureContext({
+      homeTeam: match.homeTeam,
+      awayTeam: match.awayTeam,
+      homeTeamId: match.homeTeamId ?? null,
+      awayTeamId: match.awayTeamId ?? null,
+    }).catch(() => null);
+    // Only a context with real played matches counts as grounding; an empty
+    // lookup would otherwise be reported to the admin as if it had data.
+    const signal: FormSignal | null =
+      context && (context.home?.played || context.away?.played)
+        ? { home: context.home, away: context.away, h2h: context.h2h }
+        : null;
+    formCache.set(key, signal);
+    return signal;
+  }
 
   // Preload the learned prior for every competition in the batch, in parallel,
   // so the write loop never awaits a read (and never fetches the same prior
@@ -828,10 +1096,13 @@ export async function runSportsIntelligence(opts: {
 
     const mind = consultMind(corpus, predicate);
     if (mind.heat > 0) mindsConsulted++;
+    const form = await formFor(predicate);
+    if (form) formGrounded++;
     const planned: { prediction: MarketPrediction; model: string }[] = predictMarkets(
       predicate,
       prior,
-      mind
+      mind,
+      form
     ).map((prediction) => ({ prediction, model: PRIMARY_MODEL }));
     const baseline = buildBaselinePick(predicate);
     if (baseline) planned.push({ prediction: baseline, model: BASELINE_MODEL });
@@ -922,9 +1193,23 @@ export async function runSportsIntelligence(opts: {
     skipped: counts.skipped,
     matches: stored.length,
     mind: { corpus: corpus.length, consulted: mindsConsulted },
+    // How many picks were built on real results rather than the name-hash base,
+    // and how many upstream lookups that cost. If `grounded` stays at 0 while
+    // `lookups` climbs, the provider feed is quietly returning nothing.
+    form: { grounded: formGrounded, lookups: formLookups, budget: FORM_LOOKUP_BUDGET },
+    realResultsTaught,
     timings,
   });
-  return { generated: counts.generated, refreshed: counts.refreshed, skipped: counts.skipped, settled, taught };
+  return {
+    generated: counts.generated,
+    refreshed: counts.refreshed,
+    skipped: counts.skipped,
+    settled,
+    taught,
+    formGrounded,
+    formLookups,
+    realResultsTaught,
+  };
 }
 
 async function persistForPrediction(matches: NormalizedMatch[]): Promise<void> {

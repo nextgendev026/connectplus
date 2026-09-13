@@ -74,19 +74,19 @@ const surfaceDark: Record<SurfaceStep, RGB> = {
 };
 
 const surfaceLight: Record<SurfaceStep, RGB> = {
-  // Savanna Day — mirrors html:not(.dark) in src/app/globals.css
-  "50": [36, 26, 18], // #241A12 espresso ink
-  "100": [62, 46, 32], // #3E2E20
-  "200": [93, 74, 56], // #5D4A38
-  "300": [101, 81, 60], // #65513C
-  "400": [110, 91, 70], // #6E5B46
-  "500": [122, 104, 84], // #7A6854
-  "600": [196, 181, 152], // #C4B598 light border
-  "700": [214, 199, 172], // #D6C7AC input border
-  "800": [229, 217, 195], // #E5D9C3 tinted inset (recessed, still AA for dark type)
-  "850": [255, 253, 248], // #FFFDF8 card (brightest layer)
-  "900": [246, 240, 228], // #F6F0E4 panel (lifted off the canvas)
-  "950": [226, 215, 193], // #E2D7C1 savanna paper canvas (deepest layer)
+  // Studio Grey — mirrors html:not(.dark) in src/app/globals.css
+  "50": [15, 15, 17], // #0F0F11 headings/body (darkest text)
+  "100": [34, 34, 38], // #222226
+  "200": [58, 58, 63], // #3A3A3F
+  "300": [76, 76, 82], // #4C4C52
+  "400": [92, 92, 98], // #5C5C62
+  "500": [106, 106, 112], // #6A6A70
+  "600": [167, 167, 171], // #A7A7AB light border
+  "700": [190, 190, 194], // #BEBEC2 input border
+  "800": [224, 224, 226], // #E0E0E2 tinted inset
+  "850": [255, 255, 255], // #FFFFFF card (brightest layer)
+  "900": [240, 240, 242], // #F0F0F2 panel (lifted off the canvas)
+  "950": [211, 211, 211], // #D3D3D3 neutral canvas (deepest layer)
 };
 
 const WHITE: RGB = [255, 255, 255];
@@ -207,6 +207,36 @@ function pairsForTheme(theme: "light" | "dark"): Pair[] {
 }
 
 /* ------------------------------------------------------------------ */
+
+/**
+ * The light ramp was pushed darker for the neutral grey canvas, so the pairs
+ * that sit on the *text* end of the scale are asserted explicitly as well as
+ * through the token pairs below — a regression there degrades every screen at
+ * once and is easy to miss behind a passing headline pair.
+ */
+describe("light theme text ramp", () => {
+  it("keeps secondary and meta text readable on every surface it lands on", () => {
+    const failures: string[] = [];
+    for (const [name, list] of Object.entries({
+      "on canvas": surfaceLight["950"],
+      "on panel": surfaceLight["900"],
+      "on card": surfaceLight["850"],
+      "on inset": surfaceLight["800"],
+    })) {
+      for (const step of ["50", "100", "200", "300"] as const) {
+        const ratio = contrast(surfaceLight[step], list);
+        if (ratio < 4.5) failures.push(`${step} ${name}: ${ratio.toFixed(2)}:1`);
+      }
+    }
+    expect(failures, `light text ramp failures:\n${failures.join("\n")}`).toEqual([]);
+  });
+
+  it("darkened the ramp rather than lightening the canvas away from grey", () => {
+    // #D3D3D3 is the requested canvas; assert the token really is neutral grey
+    // so a future edit cannot quietly reintroduce a tint.
+    expect(surfaceLight["950"]).toEqual([211, 211, 211]);
+  });
+});
 
 describe("WCAG AA contrast — admin console + studio", () => {
   for (const theme of ["light", "dark"] as const) {

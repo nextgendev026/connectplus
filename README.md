@@ -88,18 +88,61 @@ a feed never touches the UI.
   notifies the reader at kick-off, on going live, at full time and when a pick on
   that match settles. Delivery is idempotent: a `(reader, fixture, event)` ledger
   means the 2-minute livescore heartbeat can never double-send.
+- **Real crests and form** — provider crest URLs are rendered on every row with an
+  initials monogram fallback, so a hotlink-blocked badge degrades to a lettered
+  chip instead of a broken image, and each side's last five results show as
+  compact W/D/L pills straight from the fixture payload.
+- **Head-to-head and recent form** — opening a fixture loads `/api/sports/h2h`,
+  which resolves both sides' last results and any direct meetings from real played
+  matches (cached on the team pair, and on Redis for ten minutes, so two fixtures
+  involving the same club cost one round trip). Team names are reconciled across
+  providers — `Chelsea FC` and `Chelsea` are the same club — but the match stays
+  strict, because collapsing `Arsenal` into `Arsenal de Sarandi` and handing one
+  club's form to another is far worse than simply not knowing.
+- **Real evidence in the model** — the Poisson grid's strength estimate used to be
+  a hash of the team *name*, carrying no football information at all. Real recent
+  results now replace it (weighted by sample size, three matches before it is
+  trusted at all) and head-to-head totals gently shape the fixture, so the base
+  model reasons from matches these teams actually played.
 - **Admin console** — source health per feed (fetched vs on-the-board counts),
   provider/key status, referral partner CRUD with referral-code injection,
   14-day activity, the model record, and alert-pipeline counters.
+
+### Operator Directives
+
+The admin console's chat is not just a question box — it **teaches the combined
+mind**. A standing instruction typed there ("favour home teams in La Liga",
+"avoid high scoring in Serie A", "strongly favour Gor Mahia") is parsed into a
+bounded numeric nudge, stored as a mind memory under `source: "operator"`, and
+consulted by every sports prediction from the next model pass onward. Directives
+are managed from the widget's **Directives** tab (or
+`/api/admin/neural/directives`) and can be revoked without being deleted, so the
+model's past behaviour stays explainable.
+
+Two rules keep it safe. Parsing is conservative: without an explicit instruction
+verb *and* a resolvable numeric effect (or a forced `directive:` prefix), ordinary
+conversation parses to nothing, so chat about fixtures cannot silently bend the
+model. And the effect is bounded — at most 20 probability points on the home/away
+split and 0.8 goals of scoring expectation, however emphatically it is phrased.
+Every applied directive is named in the published rationale, so a reader can
+always see that a human, not the model, moved a pick.
 
 ### Live Radio
 - **Kenyan + regional radio** — 30+ stations (Capital FM, Kiss FM, NRG, Radio Citizen, Clouds, etc.) with server-side stream proxy to strip ICY metadata corruption and deliver clean audio.
 - **HD mode** — optional direct-stream bypass for higher bitrate.
 - **Radio page** — hero section, station grid, mini-player with pause/resume, session persistence.
+- **Live scores strip** — a compact, self-refreshing scoreboard sits under the
+  market exchange, live matches first, so a reader who came for the dial can see
+  what is being played right now without leaving the page. It shares the full
+  board's endpoint (and therefore the Cloudflare edge entry on a configured
+  deploy) and renders nothing at all when it has nothing to show, because a
+  sports feed having a bad day must not leave an error box under the radio dial.
 
 ### Admin Console
 - **Command Center** — dashboard with key metrics.
-- **Neural Mind** — chat interface for platform intelligence.
+- **Neural Mind** — chat interface for platform intelligence, with an **Ask** tab
+  (the conversational brain) and a **Directives** tab for issuing standing
+  instructions to the combined mind (see Operator Directives above).
 - **AI Pipelines** — semantic index coverage, moderation queue, learning loop, A/B experiments, agent control panel.
 - **Moderation** — post moderation queue with approve/reject/flag.
 - **Content Console** — manage posts, toggle featured, categorize RSS imports.

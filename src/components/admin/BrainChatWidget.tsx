@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BrainCircuit, Send, Loader2, X, MessageSquareText, Zap, Database, RefreshCw } from "lucide-react";
+import { BrainCircuit, Send, Loader2, X, MessageSquareText, Zap, Database, RefreshCw, Target, Ban } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface HiveData {
@@ -36,6 +36,24 @@ const QUICK_QUERIES = [
   { label: "Trends", query: "What's trending right now?" },
 ];
 
+/** Example instructions — each one is a phrasing the parser is known to accept. */
+const DIRECTIVE_EXAMPLES = [
+  "Favour home teams in La Liga",
+  "Avoid high scoring in Serie A",
+  "Stop backing draws in the Premier League",
+  "Strongly favour Gor Mahia",
+];
+
+interface DirectiveRecord {
+  id: string;
+  raw: string;
+  note: string;
+  active: boolean;
+  createdAt: string;
+  lean: number;
+  goalsBias: number;
+}
+
 function EngineBadges({ intent, enginesUsed: engines, hive }: ChamberMessage) {
   return (
     <div className="mt-2 flex flex-wrap gap-1.5">
@@ -49,10 +67,14 @@ function EngineBadges({ intent, enginesUsed: engines, hive }: ChamberMessage) {
           key={e}
           className={cn(
             "rounded-full px-2 py-0.5 type-caption",
-            e === "hive" ? "bg-amber-500/15 text-warning-strong" : "bg-brand-500/15 text-accent-strong"
+            e === "hive"
+              ? "bg-amber-500/15 text-warning-strong"
+              : e === "directive"
+                ? "bg-emerald-500/15 text-positive-strong"
+                : "bg-brand-500/15 text-accent-strong"
           )}
         >
-          {e === "hive" ? "🐝 " : ""}
+          {e === "hive" ? "🐝 " : e === "directive" ? "📌 " : ""}
           {e}
         </span>
       ))}
@@ -67,13 +89,17 @@ function EngineBadges({ intent, enginesUsed: engines, hive }: ChamberMessage) {
 
 export default function BrainChatWidget() {
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<"ask" | "brains">("ask");
+  const [tab, setTab] = useState<"ask" | "brains" | "directives">("ask");
   const [messages, setMessages] = useState<ChamberMessage[]>([]);
   const [input, setInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [hive, setHive] = useState<HiveData | null>(null);
   const [insights, setInsights] = useState<NeuralInsight[]>([]);
   const [learning, setLearning] = useState<string | null>(null);
+  const [directives, setDirectives] = useState<DirectiveRecord[]>([]);
+  const [directiveDraft, setDirectiveDraft] = useState("");
+  const [directiveError, setDirectiveError] = useState<string | null>(null);
+  const [savingDirective, setSavingDirective] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -96,12 +122,71 @@ export default function BrainChatWidget() {
     }
   }, []);
 
+  const loadDirectives = useCallback(async () => {
+    const res = await fetch("/api/admin/neural/directives", { credentials: "include" });
+    if (res.ok) {
+      const d = await res.json();
+      setDirectives(d.directives ?? []);
+    }
+  }, []);
+
+  const saveDirectiveInstruction = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed || savingDirective) return;
+      setSavingDirective(true);
+      setDirectiveError(null);
+      try {
+        const res = await fetch("/api/admin/neural/directives", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ text: trimmed }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          // Surface the parser's own reason rather than a generic failure — the
+          // operator needs to know which phrasing it will accept.
+          setDirectiveError(data.hint ?? data.error ?? `HTTP ${res.status}`);
+          return;
+        }
+        setDirectiveDraft("");
+        await loadDirectives();
+      } catch {
+        setDirectiveError("Could not reach the mind. Check the dev server.");
+      } finally {
+        setSavingDirective(false);
+      }
+    },
+    [savingDirective, loadDirectives]
+  );
+
+  const toggleDirective = useCallback(
+    async (id: string, active: boolean) => {
+      // Optimistic: revoking is trivially reversible and a stalled request should
+      // not leave the operator staring at a button that appears stuck.
+      setDirectives(prev => (active ? prev : prev.filter(d => d.id !== id)));
+      const res = await fetch("/api/admin/neural/directives", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ id, active }),
+      }).catch(() => null);
+      if (!res?.ok) await loadDirectives();
+    },
+    [loadDirectives]
+  );
+
   useEffect(() => {
     if (open && tab === "brains") {
       const t = setTimeout(loadBrains, 0);
       return () => clearTimeout(t);
     }
-  }, [open, tab, loadBrains]);
+    if (open && tab === "directives") {
+      const t = setTimeout(loadDirectives, 0);
+      return () => clearTimeout(t);
+    }
+  }, [open, tab, loadBrains, loadDirectives]);
 
   useEffect(() => {
     scrollToEnd();
@@ -187,6 +272,14 @@ export default function BrainChatWidget() {
                   if (last) updated[updated.length - 1] = { ...last, intent: event.intent, enginesUsed: event.enginesUsed };
                   return updated;
                 });
+              } else if (event.type === "directive") {
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last) updated[updated.length - 1] = { ...last, enginesUsed: ["directive"] };
+                  return updated;
+                });
+                void loadDirectives();
               } else if (event.type === "hive") {
                 setMessages(prev => {
                   const updated = [...prev];
@@ -211,7 +304,7 @@ export default function BrainChatWidget() {
         setIsProcessing(false);
       }
     },
-    [isProcessing]
+    [isProcessing, loadDirectives]
   );
 
   const severityColor: Record<NeuralInsight["severity"], string> = {
@@ -281,6 +374,20 @@ export default function BrainChatWidget() {
           <Database className="h-3.5 w-3.5" /> Brains
           {learning && <Loader2 className="h-3 w-3 animate-spin" />}
         </button>
+        <button
+          onClick={() => setTab("directives")}
+          className={cn(
+            "flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all",
+            tab === "directives" ? "bg-surface-800 text-surface-50" : "text-surface-500 hover:text-surface-300"
+          )}
+        >
+          <Target className="h-3.5 w-3.5" /> Directives
+          {directives.length > 0 && (
+            <span className="rounded-full bg-emerald-500/15 px-1.5 text-[9px] font-bold text-positive-strong">
+              {directives.length}
+            </span>
+          )}
+        </button>
       </div>
 
       {/* Bodies */}
@@ -349,7 +456,7 @@ export default function BrainChatWidget() {
             </div>
           </div>
         </>
-      ) : (
+      ) : tab === "brains" ? (
         <div className="flex-1 overflow-y-auto space-y-3 p-3">
           <div className="grid grid-cols-2 gap-2">
             {[
@@ -419,6 +526,82 @@ export default function BrainChatWidget() {
                 Learn RSS
               </button>
             </div>
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 overflow-y-auto space-y-3 p-3">
+          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-positive-strong">
+              <Target className="h-3.5 w-3.5" /> Instruct the mind
+            </p>
+            <p className="type-caption mt-1 leading-relaxed text-surface-400">
+              Standing instructions are stored as mind memories and read on every sports prediction. They steer the model
+              by a bounded amount and are named in the published rationale, so a pick can always be explained.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <textarea
+              value={directiveDraft}
+              onChange={e => {
+                setDirectiveDraft(e.target.value);
+                setDirectiveError(null);
+              }}
+              rows={2}
+              placeholder="e.g. Favour home teams in La Liga"
+              className="w-full resize-none rounded-lg border border-surface-700 bg-surface-800 px-3 py-2 text-xs text-surface-50 placeholder-surface-500 outline-none focus:border-brand-500/50"
+            />
+            <div className="flex flex-wrap gap-1.5">
+              {DIRECTIVE_EXAMPLES.map(example => (
+                <button
+                  key={example}
+                  onClick={() => setDirectiveDraft(example)}
+                  className="rounded-full border border-surface-700 bg-surface-900 px-2 py-0.5 type-caption text-surface-300 hover:border-brand-500/40 hover:text-brand-600"
+                >
+                  {example}
+                </button>
+              ))}
+            </div>
+            {directiveError && <p className="type-caption leading-relaxed text-danger-strong">{directiveError}</p>}
+            <button
+              onClick={() => saveDirectiveInstruction(directiveDraft)}
+              disabled={!directiveDraft.trim() || savingDirective}
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white disabled:bg-surface-800 disabled:text-surface-500"
+            >
+              {savingDirective ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Target className="h-3.5 w-3.5" />}
+              Save standing instruction
+            </button>
+          </div>
+
+          <div>
+            <p className="mb-1.5 text-[9px] font-medium uppercase tracking-wider text-surface-500">
+              Active directives ({directives.length})
+            </p>
+            {directives.length === 0 ? (
+              <p className="type-caption leading-relaxed text-surface-500">
+                None yet. The model is running on its own learned evidence and the market line.
+              </p>
+            ) : (
+              <ul className="space-y-1.5">
+                {directives.map(d => (
+                  <li key={d.id} className="rounded-lg border border-surface-800 bg-surface-900/50 px-3 py-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-surface-100">{d.raw}</p>
+                        <p className="type-caption mt-0.5 leading-relaxed text-surface-500">{d.note}</p>
+                      </div>
+                      <button
+                        onClick={() => toggleDirective(d.id, false)}
+                        title="Revoke this directive"
+                        className="shrink-0 rounded-lg p-1.5 text-surface-500 transition hover:bg-surface-800 hover:text-danger-strong"
+                      >
+                        <Ban className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
       )}
