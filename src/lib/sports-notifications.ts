@@ -278,10 +278,49 @@ export async function notifySportsFavourites(
   result.sent = created.count;
   for (const item of fresh) result.byEvent[item.event] = (result.byEvent[item.event] ?? 0) + 1;
 
+  // The in-app row is only half an alert: a goal matters when the phone is in a
+  // pocket, so fan the same events out to registered devices. Aggregated per
+  // reader — a busy afternoon that touches three followed teams must not stack
+  // three banners — and tagged by fixture so a re-notified match replaces its
+  // own previous banner instead of appending.
+  const byUser = new Map<string, typeof fresh>();
+  for (const item of fresh) {
+    const list = byUser.get(item.userId) ?? [];
+    list.push(item);
+    byUser.set(item.userId, list);
+  }
+
+  if (byUser.size > 0) {
+    const { sendPushToUsers } = await import("@/lib/push");
+    // One send call per reader keeps the payload honest about which match it is
+    // about when there is only one, and summarises when there are several.
+    await Promise.all(
+      [...byUser.entries()].map(([userId, items]) => {
+        const first = items[0]!;
+        const title = items.length === 1 ? first.title : `${items.length} match updates`;
+        const body =
+          items.length === 1
+            ? first.message
+            : items
+                .slice(0, 3)
+                .map((i) => i.message)
+                .join("\n");
+        return sendPushToUsers([userId], {
+          title,
+          body,
+          url: "/sports",
+          tag: `cp-sports-${first.matchId}`,
+          important: first.event === "KICKOFF" || first.event === "FINAL",
+        });
+      })
+    ).catch(() => null);
+  }
+
   log.info("sports notifications", {
     considered: result.considered,
     sent: result.sent,
     byEvent: result.byEvent,
+    pushed: byUser.size,
   });
   return result;
 }

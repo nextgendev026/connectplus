@@ -10,6 +10,7 @@ import {
   type GradedPick,
 } from "@/lib/sports-accuracy";
 import { BASELINE_MODEL, MARKET_LABELS, PRIMARY_MODEL } from "@/lib/sports-intelligence";
+import { canonicalCompetition } from "@/lib/sports";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,7 +65,10 @@ export async function GET(request: NextRequest) {
         confidence: r.confidence,
         won: r.status === "WON",
         settledAt: r.settledAt as Date,
-        competition: r.match?.competition ?? "Unknown",
+        // Providers spell leagues differently, so the per-competition
+        // breakdown would otherwise split one league across two rows and make
+        // each half look like a small sample.
+        competition: canonicalCompetition(r.match?.competition ?? "", null),
       }));
 
     // The published record is the model's own picks; the baseline is graded

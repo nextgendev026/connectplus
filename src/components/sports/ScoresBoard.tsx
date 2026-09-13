@@ -914,7 +914,8 @@ function FixtureContextPanel({ match }: { match: LiveMatch }) {
 
           {context?.degraded ? (
             <p className="mt-2 text-[10px] text-amber-400/80">
-              Limited history for this fixture — the model falls back to its competition priors for the missing side.
+              We couldn&apos;t find enough recent matches for one of these teams, so the numbers above lean
+              on how other games in this competition usually go.
             </p>
           ) : null}
         </>
@@ -931,7 +932,7 @@ function AnalysisPanel({ match }: { match: LiveMatch }) {
     <div className="border-t border-surface-800/60 bg-surface-950/60 px-3 py-4 sm:px-4">
       <div className="flex flex-wrap items-center gap-2">
         <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-300">
-          <Brain className="h-3.5 w-3.5" /> In-app betting analysis
+          <Brain className="h-3.5 w-3.5" /> Our model&apos;s read on this match
         </span>
         {predictions.length > 0 ? (
           <span className="rounded-full bg-surface-800 px-2 py-0.5 text-[10px] uppercase tracking-wide text-surface-400">
@@ -947,7 +948,8 @@ function AnalysisPanel({ match }: { match: LiveMatch }) {
 
       {predictions.length === 0 ? (
         <p className="mt-3 text-xs text-surface-500">
-          The analyser has not produced picks for this fixture yet — they appear as soon as the next model pass runs.
+          No prediction for this match yet. Our model publishes picks shortly before kick-off — in the
+          meantime the form and head-to-head below are live.
         </p>
       ) : (
         <>

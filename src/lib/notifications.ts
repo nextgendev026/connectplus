@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { sendPushToUser } from "@/lib/push";
 
 export interface CreateNotificationInput {
   userId: string;
@@ -7,16 +8,46 @@ export interface CreateNotificationInput {
   title?: string | null;
   message?: string | null;
   postId?: string | null;
+  /** Skip the OS notification (e.g. a bulk backfill that should stay quiet). */
+  silent?: boolean;
+  /** Where tapping the push should land. Defaults to the notifications list. */
+  url?: string;
 }
 
 export async function createNotification(input: CreateNotificationInput) {
   if (!input.userId) return;
+  let created;
   try {
-    return await prisma.notification.create({ data: input });
+    // Only the persisted columns are written: `silent` and `url` are delivery
+    // hints for the push tier below, not fields on the row.
+    created = await prisma.notification.create({
+      data: {
+        userId: input.userId,
+        actorId: input.actorId ?? null,
+        type: input.type,
+        title: input.title ?? null,
+        message: input.message ?? null,
+        postId: input.postId ?? null,
+      },
+    });
   } catch (error) {
     console.error("Failed to create notification:", error);
     return null;
   }
+
+  // The stored row is what the bell reads; this is what reaches a closed app.
+  // Best-effort by design — a push service outage must never fail the social
+  // action that produced the notification.
+  if (!input.silent) {
+    void sendPushToUser(input.userId, {
+      title: input.title?.trim() || "connectPlus",
+      body: input.message?.trim() || "You have a new notification.",
+      url: input.url ?? "/notifications",
+      tag: `cp-${input.type.toLowerCase()}`,
+    }).catch(() => null);
+  }
+
+  return created;
 }
 
 export async function createCommentNotification(params: {
@@ -106,6 +137,20 @@ export async function createPublishNotifications(params: {
         postId: params.postId,
       })),
     });
+
+    // One push per follower, tagged by post so a prolific author cannot stack
+    // ten identical banners on a reader's lock screen.
+    const { sendPushToUsers } = await import("@/lib/push");
+    void sendPushToUsers(
+      followers.map((f) => f.id),
+      {
+        title: `${params.authorName} published a new story`,
+        body: params.postTitle,
+        url: "/notifications",
+        tag: `cp-post-${params.postId}`,
+      }
+    ).catch(() => null);
+
     return followers.length;
   } catch (error) {
     console.error("Failed to create publish notifications:", error);

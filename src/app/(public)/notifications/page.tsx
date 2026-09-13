@@ -7,10 +7,12 @@ import {
   MessageSquare,
   Reply,
   ShieldCheck,
+  Trophy,
 } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { timeAgo } from "@/lib/utils";
+import { describeNotification } from "@/lib/notification-display";
 import { MarkAllReadButton } from "./MarkAllRead";
 
 export const dynamic = "force-dynamic";
@@ -76,8 +78,8 @@ export default async function NotificationsPage() {
             <div className="rounded-2xl border border-surface-800 bg-surface-900/50 px-6 py-12 text-center">
               <Bell className="mx-auto h-8 w-8 text-surface-600" />
               <p className="mt-3 text-sm text-surface-400">
-                No notifications yet. Likes, comments, and follows will show up
-                here.
+                Nothing yet. Replies and follows show up here, along with goals,
+                kick-offs and full-time scores for the matches you follow.
               </p>
             </div>
           ) : (
@@ -111,13 +113,9 @@ function NotificationRow({
     REPLY: Reply,
     MODERATION_APPROVED: ShieldCheck,
   };
-  const Icon = icons[n.type] ?? Bell;
-
-  const href = n.post
-    ? `/article/${n.post.slug}`
-    : n.actor?.username
-    ? `/profile/${n.actor.username}`
-    : "/";
+  const view = describeNotification(n);
+  const Icon = view.kind === "sports" ? Trophy : icons[n.type] ?? Bell;
+  const href = view.href;
 
   return (
     <Link
@@ -139,19 +137,8 @@ function NotificationRow({
       </div>
       <div className="min-w-0 flex-1">
         <p className={`text-sm ${n.read ? "text-surface-400" : "text-surface-100"}`}>
-          <span className="font-semibold">
-            {n.actor?.name || "Someone"}
-          </span>{" "}
-          {n.message?.toLowerCase() ||
-            (n.type === "FOLLOW"
-              ? "started following you."
-              : "interacted with your story.")}
-          {n.post && (
-            <span className="text-surface-500">
-              {" "}
-              on <span className="text-brand-400">{n.post.title}</span>
-            </span>
-          )}
+          <span className="font-semibold text-surface-100">{view.headline}</span>{" "}
+          {view.body}
         </p>
         <p className="mt-1 text-xs text-surface-600">{timeAgo(n.createdAt)}</p>
       </div>

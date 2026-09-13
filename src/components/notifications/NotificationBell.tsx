@@ -3,14 +3,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { Bell, UserPlus, MessageSquare, Reply, ShieldCheck, BellRing } from "lucide-react";
+import { Bell, UserPlus, MessageSquare, Reply, ShieldCheck, BellRing, Trophy } from "lucide-react";
 import { cn, timeAgo } from "@/lib/utils";
 import {
   notificationPermissionState,
   playNotificationSound,
   requestNotificationPermission,
   showSystemNotification,
+  subscribeToPush,
+  unsubscribeFromPush,
+  webPushConfigured,
 } from "@/lib/permissions";
+import { describeNotification } from "@/lib/notification-display";
 import { getCookieConsent } from "@/components/pwa/CookieConsent";
 
 interface Actor {
@@ -43,6 +47,12 @@ const TYPE_ICONS: Record<string, typeof Bell> = {
   REPLY: Reply,
   MODERATION_APPROVED: ShieldCheck,
 };
+
+/** Sports alerts share one glyph: the notification is about a fixture. */
+function iconFor(type: string): typeof Bell {
+  if (type?.toUpperCase().startsWith("SPORTS_")) return Trophy;
+  return TYPE_ICONS[type] ?? Bell;
+}
 
 export function NotificationBell() {
   const { data: session } = useSession();
@@ -125,6 +135,27 @@ export function NotificationBell() {
     });
   }, [load]);
 
+  const [pushState, setPushState] = useState<"unknown" | "subscribed" | "denied" | "unsupported">("unknown");
+  const [testSent, setTestSent] = useState(false);
+  const pushAvailable = webPushConfigured();
+
+  useEffect(() => {
+    // Ask the server whether this reader already has a live push subscription,
+    // so the bell can show "Alerts on" instead of offering the same button
+    // forever. Unauthenticated readers just get the default.
+    if (!session?.user) return;
+    let active = true;
+    fetch("/api/notifications/push", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (active && d) setPushState(d.subscribed ? "subscribed" : "denied");
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [session?.user]);
+
   const handleItemClick = useCallback(
     async (notif: Notification) => {
       setOpen(false);
@@ -154,11 +185,51 @@ export function NotificationBell() {
 
   const enableNotifications = useCallback(async () => {
     setEnableMsg(null);
-    const res = await requestNotificationPermission("alerts when someone follows you or replies to your stories");
+    const res = await requestNotificationPermission(
+      "alerts when someone follows you, replies to your stories, or one of your followed teams plays"
+    );
     if (res.status !== "granted") {
       setEnableMsg(res.message);
+      return;
     }
+
+    // Permission alone only powers in-tab alerts. Register the service worker
+    // and a real push subscription so an alert can arrive with the app closed —
+    // that is the difference between "I saw it when I opened the site" and an
+    // actual notification. Without a VAPID key only the first is possible, and
+    // the copy below says so rather than pretending otherwise.
+    const sub = await subscribeToPush();
+    if (sub) {
+      setPushState("subscribed");
+      return;
+    }
+    setPushState(pushAvailable ? "unknown" : "unsupported");
+    setEnableMsg(
+      pushAvailable
+        ? "In-app alerts are on. Background push could not be registered on this device."
+        : "In-app alerts are on. Background alerts aren\u2019t configured on this site yet, so you\u2019ll see them when you\u2019re here."
+    );
+  }, [pushAvailable]);
+
+  const disableNotifications = useCallback(async () => {
+    await unsubscribeFromPush();
+    setPushState("denied");
+    setEnableMsg("Background alerts turned off for this device.");
   }, []);
+
+  /**
+   * End-to-end proof for the reader. The pipeline spans a database row, a poll,
+   * and a desktop notification, so "I never get alerts" is otherwise impossible
+   * to tell apart from "nothing has happened". This writes a real notification
+   * and lets the normal poll deliver it.
+   */
+  const sendTestAlert = useCallback(async () => {
+    setEnableMsg(null);
+    await fetch("/api/notifications/test", { method: "POST" }).catch(() => {});
+    setTestSent(true);
+    await load();
+    setTimeout(() => setTestSent(false), 4000);
+  }, [load]);
 
   return (
     <div ref={rootRef} className="relative">
@@ -195,17 +266,42 @@ export function NotificationBell() {
             {canSuggest && (
               <div className="border-b border-surface-800 bg-surface-800/30 px-4 py-2.5">
                 <p className="text-[11px] leading-relaxed text-surface-400">
-                  Enable browser notifications to get pings — with sound — when someone
-                  follows you or replies to your stories, even while you&apos;re elsewhere.
+                  Turn on alerts to hear about replies to your stories and about the teams
+                  and matches you follow — including goals while a match is live.
                 </p>
-                <button
-                  onClick={enableNotifications}
-                  className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg bg-brand-500/15 border border-brand-500/30 px-2.5 py-1 text-[11px] font-semibold text-accent-strong hover:bg-brand-500/25 transition-colors"
-                >
-                  <BellRing className="h-3 w-3" />
-                  {permState === "denied" ? "Open settings" : "Enable notifications"}
-                </button>
-                {enableMsg && <p className="mt-1 text-[10px] text-danger-strong">{enableMsg}</p>}
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  <button
+                    onClick={enableNotifications}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500/15 border border-brand-500/30 px-2.5 py-1 text-[11px] font-semibold text-accent-strong hover:bg-brand-500/25 transition-colors"
+                  >
+                    <BellRing className="h-3 w-3" />
+                    {permState === "denied" ? "Open settings" : "Turn on alerts"}
+                  </button>
+                  {pushState === "subscribed" && (
+                    <button
+                      onClick={disableNotifications}
+                      className="rounded-lg border border-surface-700 px-2.5 py-1 text-[11px] font-medium text-surface-400 hover:text-surface-200 transition-colors"
+                    >
+                      Turn off
+                    </button>
+                  )}
+                  {session?.user && (
+                    <button
+                      onClick={sendTestAlert}
+                      disabled={testSent}
+                      className="rounded-lg border border-surface-700 px-2.5 py-1 text-[11px] font-medium text-surface-400 hover:text-surface-200 disabled:opacity-50 transition-colors"
+                    >
+                      {testSent ? "Test sent" : "Send a test"}
+                    </button>
+                  )}
+                </div>
+                {!pushAvailable && (
+                  <p className="mt-1.5 text-[10px] leading-relaxed text-surface-500">
+                    Background alerts (app closed) aren&apos;t configured on this site yet —
+                    you&apos;ll get them here while the tab is open.
+                  </p>
+                )}
+                {enableMsg && <p className="mt-1 text-[10px] text-surface-400">{enableMsg}</p>}
               </div>
             )}
 
@@ -216,15 +312,12 @@ export function NotificationBell() {
                 </p>
               ) : items.length > 0 ? (
                 items.map((notif) => {
-                  const Icon =
-                    (TYPE_ICONS[notif.type] ??
-                      (notif.type === "COMMENT"
-                        ? MessageSquare
-                        : Bell)) as typeof Bell;
+                  const Icon = iconFor(notif.type) as typeof Bell;
+                  const view = describeNotification(notif);
                   return (
                     <Link
                       key={notif.id}
-                      href={notif.post ? `/article/${notif.post.slug}` : "/"}
+                      href={view.href}
                       onClick={() => handleItemClick(notif)}
                       className={cn(
                         "flex gap-3 border-b border-surface-800/60 px-4 py-3 transition-colors hover:bg-surface-800/60",
@@ -241,19 +334,8 @@ export function NotificationBell() {
                             !notif.read && "font-medium text-surface-100"
                           )}
                         >
-                          {notif.actor?.name || "Someone"}{" "}
-                          {notif.title?.toLowerCase() ||
-                            (notif.type === "FOLLOW"
-                              ? "followed you"
-                              : "interacted with your story")}
-                          {notif.post && (
-                            <>
-                              {" "}
-                              <span className="text-surface-500">
-                                on {notif.post.title}
-                              </span>
-                            </>
-                          )}
+                          <span className="font-semibold text-surface-200">{view.headline}</span>{" "}
+                          {view.body}
                         </span>
                         <span
                           className={cn(

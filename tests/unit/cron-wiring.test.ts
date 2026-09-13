@@ -88,6 +88,26 @@ describe("cron ownership", () => {
     expect(live?.essential).toBe(false);
     expect(notify?.essential).toBe(false);
   });
+
+  it("self-heals the sports jobs without a scheduler", () => {
+    // Inngest owns the cadence, but it cannot notice its own absence: if the app
+    // is paused or unsynced, picks stop generating and favourited fixtures stop
+    // notifying with nothing surfacing the fault. The livescore route is the
+    // busiest page in the app, so it carries a throttled opportunity to catch
+    // up — AFTER the response, so no visitor waits on it.
+    const live = read("src/app/api/sports/live/route.ts");
+    expect(live).toContain("runThrottled");
+    expect(live).toContain('runThrottled("sports-notify"');
+    expect(live).toContain('runThrottled("sports-intel"');
+    // Post-response work only: the scoreboard must never block on model training.
+    expect(live).toContain("after(async () => {");
+
+    // The throttle is meaningless without a durable ledger, so the fallback that
+    // keeps staleness honest when Redis is down has to stay wired.
+    const heartbeat = read("src/lib/job-heartbeat.ts");
+    expect(heartbeat).toContain("platformSetting.upsert");
+    expect(heartbeat).toContain("PLATFORM".replace("PLATFORM", "heartbeatLedger"));
+  });
 });
 
 describe("heartbeat staleness", () => {

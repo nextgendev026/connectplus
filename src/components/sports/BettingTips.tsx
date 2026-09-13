@@ -116,6 +116,15 @@ export default function BettingTips({
 
   const record = data?.record;
 
+  // ONE CARD PER FIXTURE.
+  //
+  // The model publishes a pick per market, so a single match legitimately
+  // produces two or three rows. Rendered flat, the same fixture appeared again
+  // and again down the board and read as duplication — the reader could not
+  // tell "we have a view on both the result and the goals" from "this got
+  // listed twice". Grouping keeps every market, without repeating the fixture.
+  const groups = groupByFixture(data?.picks ?? []);
+
   return (
     <div className="mx-auto grid w-full max-w-[1600px] gap-5 px-3 py-5 sm:gap-6 sm:px-6 sm:py-6 lg:grid-cols-[minmax(0,1fr)_340px] xl:px-8">
       <div className="min-w-0">
@@ -136,8 +145,9 @@ export default function BettingTips({
           )}
         </div>
         <p className="mt-1.5 max-w-2xl text-sm text-surface-400">
-          Model-generated leans across every market, ranked by conviction or by edge over the closing
-          line. Tap a fixture on the Scores tab for the full breakdown.
+          One card per match, with our model&apos;s pick for each market. Ranked by how confident it is,
+          or by how much its numbers differ from the bookmakers&apos;. Open the Scores tab for the full
+          breakdown behind any of these.
         </p>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -196,19 +206,20 @@ export default function BettingTips({
             <Radar className="mx-auto h-8 w-8 text-surface-600" />
             <p className="mt-2 text-sm font-medium text-surface-400">No tips for this filter yet</p>
             <p className="text-xs text-surface-500">
-              The analyser publishes picks as fixtures approach kick-off — check back closer to matchday.
+              Picks are published shortly before kick-off, so there is nothing here yet. Try clearing the
+              filter, or come back closer to matchday.
             </p>
           </div>
         ) : (
           <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {data.picks.slice(0, 6).map((tip) => (
-              <TipCard key={tip.id} tip={tip} />
+            {groups.slice(0, 6).map((group) => (
+              <FixtureTipsCard key={group.key} group={group} />
             ))}
-            {inlineAd && data.picks.length > 6 ? (
+            {inlineAd && groups.length > 6 ? (
               <div className="sm:col-span-2 xl:col-span-3 2xl:col-span-4">{inlineAd}</div>
             ) : null}
-            {data.picks.slice(6).map((tip) => (
-              <TipCard key={tip.id} tip={tip} />
+            {groups.slice(6).map((group) => (
+              <FixtureTipsCard key={group.key} group={group} />
             ))}
           </div>
         )}
@@ -230,17 +241,38 @@ export default function BettingTips({
   );
 }
 
-function TipCard({ tip }: { tip: Tip }) {
-  const kickoff = kickoffLabel(tip.match);
-  const confidencePct = Math.round(tip.confidence * 100);
-  const strong = confidencePct >= 65;
+interface FixtureGroup {
+  key: string;
+  match: TipMatch;
+  tips: Tip[];
+}
+
+/** Group the model's per-market picks back onto the fixture they describe. */
+function groupByFixture(picks: Tip[]): FixtureGroup[] {
+  const groups = new Map<string, FixtureGroup>();
+  for (const tip of picks) {
+    const key = `${tip.match.homeTeam}|${tip.match.awayTeam}|${tip.match.kickoff ?? ""}`.toLowerCase();
+    const existing = groups.get(key);
+    if (existing) existing.tips.push(tip);
+    else groups.set(key, { key, match: tip.match, tips: [tip] });
+  }
+  return [...groups.values()];
+}
+
+function FixtureTipsCard({ group }: { group: FixtureGroup }) {
+  const { match, tips } = group;
+  const kickoff = kickoffLabel(match);
+  // The fixture's headline pick is its most confident one; the rest sit beneath
+  // it so the card still answers "what does the model actually fancy here?".
+  const [lead, ...rest] = [...tips].sort((a, b) => b.confidence - a.confidence);
+  if (!lead) return null;
 
   return (
-    <article className="group relative overflow-hidden rounded-2xl border border-surface-800/70 bg-gradient-to-b from-surface-900/70 to-surface-950/60 p-4 transition hover:border-emerald-500/40 hover:shadow-[0_0_0_1px_rgba(16,185,129,0.1)]">
+    <article className="group relative flex flex-col overflow-hidden rounded-2xl border border-surface-800/70 bg-gradient-to-b from-surface-900/70 to-surface-950/60 p-4 transition hover:border-emerald-500/40 hover:shadow-[0_0_0_1px_rgba(16,185,129,0.1)]">
       <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-emerald-500/60 via-brand-500/40 to-transparent" />
       <div className="flex items-center justify-between gap-2">
         <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-surface-500">
-          {tip.match.competition}
+          {match.competition}
         </span>
         <span
           className={cn(
@@ -254,52 +286,69 @@ function TipCard({ tip }: { tip: Tip }) {
       </div>
 
       <h3 className="mt-2 truncate text-sm font-semibold text-surface-50">
-        {tip.match.homeTeam} <span className="text-surface-500">vs</span> {tip.match.awayTeam}
+        {match.homeTeam} <span className="text-surface-500">vs</span> {match.awayTeam}
       </h3>
 
-      <div className="mt-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-400/80">
+      <TipRow tip={lead} primary />
+
+      {rest.length > 0 ? (
+        <div className="mt-2 space-y-2">
+          {rest.map((tip) => (
+            <TipRow key={tip.id} tip={tip} />
+          ))}
+        </div>
+      ) : null}
+
+      <p className="mt-3 line-clamp-3 text-[11px] leading-relaxed text-surface-400">{lead.rationale}</p>
+    </article>
+  );
+}
+
+function TipRow({ tip, primary = false }: { tip: Tip; primary?: boolean }) {
+  const confidencePct = Math.round(tip.confidence * 100);
+  const strong = confidencePct >= 65;
+
+  return (
+    <div className={cn("mt-3 rounded-xl border px-3 py-2", primary ? "border-emerald-500/20 bg-emerald-500/5" : "border-surface-800 bg-surface-900/40")}>
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-surface-500">
           {tip.marketLabel ?? tip.market}
         </p>
-        <p className="mt-0.5 text-sm font-bold text-surface-50">{tip.selection}</p>
+        <span className={cn("text-[11px] font-bold tabular-nums", strong ? "text-emerald-400" : "text-surface-300")}>
+          {confidencePct}%
+        </span>
       </div>
-
-      <div className="mt-3">
-        <div className="flex items-center justify-between text-[11px] text-surface-400">
-          <span>Model confidence</span>
-          <span className={cn("font-bold tabular-nums", strong ? "text-emerald-400" : "text-surface-200")}>
-            {confidencePct}%
-          </span>
+      <p className={cn("mt-0.5 truncate text-sm font-bold", primary ? "text-surface-50" : "text-surface-200")}>
+        {tip.selection}
+      </p>
+      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-800">
+        <div
+          className={cn("h-full rounded-full", strong ? "bg-emerald-500" : "bg-brand-500")}
+          style={{ width: `${confidencePct}%` }}
+        />
+      </div>
+      {tip.valueEdge != null || (tip.expectedHomeGoals != null && tip.expectedAwayGoals != null) ? (
+        <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] text-surface-500">
+          {tip.valueEdge != null ? (
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 font-medium",
+                tip.valueEdge > 0 ? "text-emerald-400" : "text-amber-400"
+              )}
+              title="How much more likely our model thinks this is than the bookmaker's price implies. A positive number is the model's edge."
+            >
+              <TrendingUp className="h-3 w-3" />
+              {tip.valueEdge > 0 ? "+" : ""}
+              {tip.valueEdge.toFixed(1)}% edge
+            </span>
+          ) : null}
+          {tip.expectedHomeGoals != null && tip.expectedAwayGoals != null ? (
+            <span title="Goals our model expects each side to score.">
+              Expected goals {tip.expectedHomeGoals.toFixed(2)}–{tip.expectedAwayGoals.toFixed(2)}
+            </span>
+          ) : null}
         </div>
-        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-800">
-          <div
-            className={cn("h-full rounded-full", strong ? "bg-emerald-500" : "bg-brand-500")}
-            style={{ width: `${confidencePct}%` }}
-          />
-        </div>
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-surface-500">
-        {tip.valueEdge != null ? (
-          <span
-            className={cn(
-              "inline-flex items-center gap-1 font-medium",
-              tip.valueEdge > 0 ? "text-emerald-400" : "text-amber-400"
-            )}
-          >
-            <TrendingUp className="h-3 w-3" />
-            {tip.valueEdge > 0 ? "+" : ""}
-            {tip.valueEdge.toFixed(1)}pp vs line
-          </span>
-        ) : null}
-        {tip.expectedHomeGoals != null && tip.expectedAwayGoals != null ? (
-          <span>
-            xG {tip.expectedHomeGoals.toFixed(2)}–{tip.expectedAwayGoals.toFixed(2)}
-          </span>
-        ) : null}
-      </div>
-
-      <p className="mt-2 line-clamp-3 text-[11px] leading-relaxed text-surface-400">{tip.rationale}</p>
-    </article>
+      ) : null}
+    </div>
   );
 }

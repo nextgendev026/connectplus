@@ -2,6 +2,8 @@ import { prisma } from "@/lib/prisma";
 import { getSettings } from "@/lib/settings";
 import { runChecks, type ServiceCheck } from "@/lib/status";
 import { getCronStatus, type CronJobStatus } from "@/lib/cron-schedule";
+import { heartbeatLedger } from "@/lib/job-heartbeat";
+import { convexHealth } from "@/lib/convex";
 
 /**
  * Integration registry for the admin console.
@@ -242,13 +244,26 @@ export async function getIntegrations(): Promise<IntegrationsReport> {
     let status: IntegrationStatus = svcInngest?.status ?? "unconfigured";
     let detail = svcInngest?.detail ?? "Not configured";
 
-    if (status === "operational" && staleJobs.length > 0) {
+    // Staleness is only evidence when the ledger that records it is readable.
+    // With both tiers down every job reads back as "never ran", which used to
+    // report Inngest as degraded and send an operator chasing the queue while
+    // the real fault was the cache. Say which one it is.
+    const ledger = heartbeatLedger();
+    if (ledger === "unavailable" && status === "operational") {
+      status = "degraded";
+      detail =
+        "Run history is unavailable — neither Redis nor the database could be read, so job staleness cannot be judged. Check Redis credentials first.";
+    } else if (status === "operational" && staleJobs.length > 0) {
       status = "degraded";
       detail = `${staleJobs.length} essential job${staleJobs.length === 1 ? "" : "s"} past due — ${staleJobs
         .map((j) => j.name)
         .join(", ")}`;
     } else if (status === "operational" && neverRun.length === crons.length && crons.length > 0) {
       detail = "Keys configured — no run has been recorded yet (cron app may not be synced)";
+    } else if (status === "operational") {
+      detail = `Keys configured — ${crons.length - neverRun.length}/${crons.length} jobs reporting${
+        ledger === "database" ? " (ledger on Postgres fallback)" : ""
+      }`;
     }
 
     integrations.push({
@@ -350,13 +365,23 @@ export async function getIntegrations(): Promise<IntegrationsReport> {
       const r = await probe(`${url.replace(/\/+$/, "")}/version`, { timeoutMs: 5000 });
       latencyMs = r.ms;
       status = r.ok ? "operational" : "degraded";
-      detail = r.ok
-        ? `Deployment reachable (${r.ms}ms)${
-            (r.body as { version?: string } | null)?.version
-              ? ` — v${(r.body as { version?: string }).version}`
-              : ""
-          }`
-        : `Configured but unreachable${r.error ? `: ${r.error}` : ` (HTTP ${r.status})`} — view deltas buffer until the nightly sweep`;
+      // Reachability is not the same as usefulness: a deployment that answers
+      // /version while every query in the app throws stores nothing at all. So
+      // fold in what the client layer last observed, and only claim
+      // "operational" when calls are actually landing.
+      const call = convexHealth();
+      if (!r.ok) {
+        detail = `Configured but unreachable${r.error ? `: ${r.error}` : ` (HTTP ${r.status})`} — view deltas buffer until the nightly sweep`;
+      } else if (call.state === "failing") {
+        status = "degraded";
+        detail = `Deployment answers but queries are failing — ${call.error ?? "unknown error"}. Views and ad metrics are not being recorded.`;
+      } else {
+        detail = `Deployment reachable (${r.ms}ms)${
+          (r.body as { version?: string } | null)?.version
+            ? ` — v${(r.body as { version?: string }).version}`
+            : ""
+        }${call.state === "ok" ? " · queries landing" : ""}`;
+      }
     }
     integrations.push({
       id: "convex",

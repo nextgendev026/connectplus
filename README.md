@@ -131,6 +131,15 @@ always see that a human, not the model, moved a pick.
 - **Kenyan + regional radio** — 30+ stations (Capital FM, Kiss FM, NRG, Radio Citizen, Clouds, etc.) with server-side stream proxy to strip ICY metadata corruption and deliver clean audio.
 - **HD mode** — optional direct-stream bypass for higher bitrate.
 - **Radio page** — hero section, station grid, mini-player with pause/resume, session persistence.
+- **Ad interruptions kept off the dial.** Several free relays (Zeno, Radiojar,
+  RadioKin, shoutcast resellers) sell listener time, so a *new* HTTP session can
+  open with a pre-roll spot. The player used to reconnect three seconds after
+  any hiccup — and because every reconnect opens a fresh session, one advert
+  became an endless chain of them. Reconnects are now floored at 8s, resume the
+  last channel that actually produced audio instead of blindly re-dialling
+  channel 0, and auto-tune picks the least ad-prone mount first. A long stall on
+  an ad-prone relay is labelled an ad break with a one-tap skip, rather than an
+  unexplained "reconnecting…".
 - **Live scores strip** — a compact, self-refreshing scoreboard sits under the
   market exchange, live matches first, so a reader who came for the dial can see
   what is being played right now without leaving the page. It shares the full
@@ -140,9 +149,14 @@ always see that a human, not the model, moved a pick.
 
 ### Admin Console
 - **Command Center** — dashboard with key metrics.
-- **Neural Mind** — chat interface for platform intelligence, with an **Ask** tab
-  (the conversational brain) and a **Directives** tab for issuing standing
-  instructions to the combined mind (see Operator Directives above).
+- **Neural Mind** — chat interface for platform intelligence, with four tabs:
+  **Ask** (the conversational brain), **Brains** (corpus health plus manual
+  training passes), **Directives** (standing instructions to the model, see
+  Operator Directives above), and **Train** — point the combined mind at a
+  subject it has no way to know about (a league, a market, a competitor) and it
+  researches the open web and *keeps* what it reads, so the next question is
+  answered from memory instead of fetched again. Tick **Tag as sports** to make
+  it citable by the prediction engine.
 - **AI Pipelines** — semantic index coverage, moderation queue, learning loop, A/B experiments, agent control panel.
 - **Moderation** — post moderation queue with approve/reject/flag.
 - **Content Console** — manage posts, toggle featured, categorize RSS imports.
@@ -172,9 +186,32 @@ always see that a human, not the model, moved a pick.
 - **Animated** — SVG cloud, sun, rain, and snow animations.
 - **Forecast** — hourly + 7-day with temperature, humidity, wind.
 
+### Notifications
+
+Two tiers, because they answer different questions:
+
+- **In-app** — a notification row per recipient, read by the bell and the
+  `/notifications` page. Always on; needs nothing configured.
+- **Background push** — the same event delivered to the operating system, so it
+  arrives with the app closed. Requires a VAPID key pair
+  (`node scripts/generate-vapid-keys.mjs`). Until both halves are set, the bell
+  says so plainly instead of offering a button that does nothing.
+
+Sources of notifications: replies and follows, newly published stories from
+writers you follow, and **your followed teams and starred fixtures** — kick-off,
+live, full-time, and how a model pick on them settled. Match alerts are
+idempotent per `(user, match, event)`, so a job that runs every two minutes can
+never double-send, and per-reader pushes are aggregated so a busy afternoon
+cannot stack three banners for three different matches.
+
+`POST /api/notifications/test` writes a real notification on demand — the fastest
+way to tell "nothing has happened yet" apart from "delivery is broken".
+
 ### PWA
 - **Installable** — web manifest, service worker, splash screen, app icons.
 - **Offline** — cached shell for offline reading.
+- **Push-ready** — the service worker handles `push` and `notificationclick`,
+  focusing an existing tab or opening the target URL.
 
 ## Getting Started
 
@@ -214,6 +251,11 @@ Open [http://localhost:3000](http://localhost:3000).
 | `REDIS_URL` | Redis Cloud connection string |
 | `INNGEST_SIGN_KEY` / `INNGEST_EVENT_KEY` | Inngest cloud queue keys — Inngest owns every scheduled job's cadence |
 | `INNGEST_MANAGEMENT_KEY` | Optional — read-only run history from Inngest's API on `/status` |
+| `NEXT_PUBLIC_VAPID_KEY` | Web push public key — `node scripts/generate-vapid-keys.mjs`. Must keep the `NEXT_PUBLIC_` prefix so Next inlines it into the client bundle |
+| `VAPID_PRIVATE_KEY` | Web push private key (server-only). Both halves are required; with only the public key the browser subscribes and the server can never sign a send |
+| `VAPID_SUBJECT` | Contact address sent to the push services, e.g. `mailto:you@example.com` |
+| `NEXT_PUBLIC_CONVEX_URL` | Convex deployment URL — off-Supabase buffer for article views and ad metrics. Unset falls back to Postgres for both |
+| `CONVEX_DEPLOY_KEY` | Only needed to push Convex functions (`npx convex deploy`) |
 | `EDGE_URL` | Public URL of the Cloudflare edge Worker; probed at `<url>/__edge`. Editable from Admin → Integrations when unset |
 | `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` | Only needed to deploy the edge Worker from CI (`scripts/deploy-worker.mjs`) |
 | `NEXT_PUBLIC_EDGE_URL` | Edge URL used **by the browser** for the livescore poll (`<url>/__livescore`). Leave blank to poll the app route instead |
@@ -283,7 +325,13 @@ registry the admin console reads:
 | Daily status snapshot | 00:05 UTC | |
 
 Every run — Inngest cron, an admin "Run now", or an external trigger — stamps a
-heartbeat in Redis. That ledger is what makes the fallback cheap:
+heartbeat. The ledger has **two tiers**: Redis is the fast path, Postgres the
+durable one. The fallback is not belt-and-braces for its own sake — with Redis
+credentials rejected and no second tier, every job reads back as "never ran",
+which surfaces as *"Inngest is degraded — 3 essential jobs past due"* and sends
+you to investigate the queue while the real fault is the cache. Staleness has to
+be a measurement of the job, not of the cache. The console says which tier
+answered.
 
 - **Vercel** keeps exactly **one** cron: `/api/cron/safety-net` daily at 00:15
   UTC. It reads the heartbeats and re-runs **only the essential jobs that have
@@ -291,6 +339,16 @@ heartbeat in Redis. That ledger is what makes the fallback cheap:
   database or upstream traffic.
 - `/api/cron?trigger=…` remains for cron-job.org and the admin console, and
   `?force=1` on the safety net runs all essentials immediately.
+
+**High-frequency jobs are not in the safety net.** A once-a-day catch-up is the
+wrong repair for a two-minute scoreboard, and a job that frequent always looks
+stale to a daily check, so it would fire on every pass. Those recover *in
+minutes* instead, from the busiest page in the app: `/api/sports/live` schedules
+a throttled top-up of picks and favourite alerts with Next's `after()` — i.e.
+after the response is flushed, so no visitor ever waits on model training, and
+the heartbeat throttle collapses a thousand concurrent viewers into a single
+attempt per interval (5 min for picks, 1 min for alerts). Inngest remains the
+intended owner; this is what stops its silence from being invisible.
 
 **The trigger list is derived from the registry**, never hand-kept: every id in
 `CRON_JOBS` is automatically a valid `/api/cron?trigger=<id>`, so adding a job
@@ -370,7 +428,8 @@ connectPlus/
 │   ├── components/            # React components (ads, admin, layout, profile, radio, sports, ui, weather)
 │   ├── lib/                   # Core libraries (sports + sports-intelligence + sports-accuracy,
 │   │                          #   sports-notifications, sports-endpoint, db-retry, ai-provider,
-│   │                          #   ads, feed-ranker, hive-brain, cron-schedule, etc.)
+│   │                          #   ads, feed-ranker, hive-brain, cron-schedule, job-heartbeat,
+│   │                          #   throttled-job, push, mind-knowledge, notification-display, etc.)
 │   ├── inngest/               # Inngest functions (rss poll + drain, sports live/notify/intel, etc.)
 │   └── proxy.ts               # Rate limiting middleware
 ├── convex/                    # Convex functions (views, ads — offloaded from Supabase)
@@ -381,14 +440,20 @@ connectPlus/
 
 ## Testing
 
-- **Unit (Vitest)** — `npm test` (225 tests). Beyond utilities, intent classification
+- **Unit (Vitest)** — `npm test` (328 tests). Beyond utilities, intent classification
   and sentiment, the suite pins the contracts that were expensive to learn:
   RSS due-feed ordering and per-run batching (`rss-poll-order`), cron registry ↔
-  Inngest wiring (`cron-wiring`), multi-source coalescing and competition relevance
-  (`sports-sources`, including live-minute parsing), market grading
-  (`sports-markets`), calibration bucketing and strategy comparison
-  (`sports-accuracy`), the combined-mind ensemble (`sports-mind`), transient-DB
-  retry (`db-retry`), and WCAG AA contrast for both themes (`contrast`).
+  Inngest wiring (`cron-wiring`, including the scheduler-independent self-heal),
+  multi-source coalescing and competition relevance
+  (`sports-sources`, including live-minute parsing), fixture identity and league
+  canonicalisation (`sports-fixture-identity` — the duplicate-card regression),
+  market grading (`sports-markets`), calibration bucketing and strategy
+  comparison (`sports-accuracy`), the combined-mind ensemble (`sports-mind`),
+  operator directives (`mind-directives`), notification presentation for sports
+  and social types (`notification-display`), the heartbeat ledger's Postgres
+  fallback and the throttle built on it (`job-heartbeat-fallback`),
+  transient-DB retry (`db-retry`), and WCAG AA contrast for both themes
+  (`contrast`).
 - **E2E (Playwright)** — `npm run test:e2e` smoke-checks public pages and sign-in.
 
 ```bash

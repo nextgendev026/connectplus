@@ -31,6 +31,61 @@ export function stationSources(station: RadioStation): string[] {
   return [station.streamUrl, ...(station.fallbacks ?? [])];
 }
 
+/**
+ * Hosts that monetise a *free* relay.
+ *
+ * Several no-cost relays (Zeno, Radiojar, RadioKin, some shoutcast resellers)
+ * sell listener time: a new HTTP session can open with a pre-roll spot, and a
+ * long session is cut by mid-rolls. A broadcaster's own CDN mount does not do
+ * this. The player cannot block an upstream's own ad break, but it can stop
+ * *manufacturing* them — every reconnect opens a new session, and a reconnect
+ * loop therefore turns one ad into an endless one. This list is what the player
+ * uses to (a) prefer a cleaner channel and (b) stop re-dialling a rail that is
+ * almost certainly playing a spot rather than music.
+ */
+const AD_PRONE_HOSTS = [
+  "zeno.fm",
+  "radiojar.com",
+  "radioking.com",
+  "myradiostream.com",
+  "shoutcast.com",
+  "streamingv2.shoutcast.com",
+  "radioca.st",
+  "nextradio.live",
+];
+
+/** Higher risk = more likely to interrupt a listener with a paid spot. */
+export function sourceAdRisk(station: RadioStation, index: number): number {
+  const url = stationSources(station)[index];
+  if (!url) return 3;
+  let host = "";
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return 3;
+  }
+  return AD_PRONE_HOSTS.some((h) => host === h || host.endsWith(`.${h}`)) ? 2 : 0;
+}
+
+/**
+ * The channel to open first: the cleanest mount available, tie-broken by the
+ * station's own preference order (so a direct primary still beats a fallback).
+ */
+export function preferredSourceIndex(station: RadioStation): number {
+  const sources = stationSources(station);
+  let best = 0;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < sources.length; i++) {
+    // Ad risk dominates; index only breaks ties, preserving the curated order.
+    const score = sourceAdRisk(station, i) * 10 + i;
+    if (score < bestScore) {
+      bestScore = score;
+      best = i;
+    }
+  }
+  return best;
+}
+
 export const RADIO_GENRES = [
   "All",
   "Pop / Hits",

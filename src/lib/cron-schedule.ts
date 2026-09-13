@@ -98,6 +98,13 @@ export const CRON_JOBS: readonly CronJobDef[] = [
     description: "Notifies readers when a favourited match kicks off, goes live, finishes or settles a pick.",
     cron: "*/5 * * * *",
     everyMinutes: 5,
+    // Deliberately NOT in the daily safety net: a once-a-day catch-up is the
+    // wrong recovery for a five-minute job, and it would fire on every pass
+    // since a job this frequent always looks stale to a daily check. Its real
+    // recovery is the livescore board, which drives this and the pick top-up
+    // through `runThrottled` whenever a visitor loads it (see
+    // src/app/api/sports/live/route.ts). Silence here is measured in minutes,
+    // not days, so it must be repaired in minutes.
     essential: false,
     run: () => runSportsNotify(),
   },

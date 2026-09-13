@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getFixtureContext, type H2HMeeting, type TeamForm } from "@/lib/sports-h2h";
 import { applyDirectives, extractDirectives, type StoredDirective } from "@/lib/mind-directives";
+import { WEB_KNOWLEDGE_CATEGORY } from "@/lib/mind-knowledge";
 import { createLogger } from "@/lib/logger";
 import {
   competitionRelevance,
@@ -409,9 +410,37 @@ export function consultMind(corpus: MindMemory[], match: NormalizedMatch): MindS
     }
   }
 
+  // Outside reporting, folded in as CONTEXT ONLY.
+  //
+  // Web text is unattributed, unverified and sometimes wrong, so it must never
+  // move a probability — a scraped "club in crisis" headline silently shifting
+  // a pick is exactly the kind of invisible steering this model cannot afford.
+  // What it can legitimately do is tell a reader why the model's view is worth
+  // or not worth trusting, and flag that something happened (an injury, a
+  // managerial change) that a results-only model cannot see. So these become
+  // rationale notes and nothing else.
+  const outside: string[] = [];
+  for (const memory of corpus) {
+    if (memory.category !== WEB_KNOWLEDGE_CATEGORY) continue;
+    const tags = (memory.tags ?? "").toLowerCase();
+    const lower = (memory.content ?? "").toLowerCase();
+    const relevant =
+      tagIncludes(tags, match.competition) ||
+      tagIncludes(tags, match.homeTeam) ||
+      tagIncludes(tags, match.awayTeam) ||
+      lower.includes(match.homeTeam.toLowerCase()) ||
+      lower.includes(match.awayTeam.toLowerCase());
+    if (!relevant) continue;
+    const headline = memory.content.split(" — ")[0]?.trim();
+    if (headline) outside.push(headline);
+    if (outside.length >= 2) break;
+  }
+
   const heat = Math.min(1, lessonCount / MIND_FULL_HEAT_LESSONS);
   const avgGoals = competitionGames > 0 ? competitionGoals / competitionGames : null;
-  const notes: string[] = [];
+  const notes: string[] = outside.length > 0
+    ? [`Outside reporting: ${outside.join("; ")}. (Context only — it does not adjust the numbers.)`]
+    : [];
 
   let signal: MindSignal;
   if (lessonCount >= MIND_MIN_LESSONS) {
@@ -473,10 +502,19 @@ function withDirectives(base: MindSignal, directives: StoredDirective[], match: 
 export async function loadMindCorpus(limit = 400): Promise<MindMemory[]> {
   return prisma.neuralMemory
     .findMany({
-      where: { source: { in: ["sports", "operator"] } },
+      where: {
+        OR: [
+          { source: { in: ["sports", "operator"] } },
+          // Sport-tagged knowledge learned from the open web. It rides the same
+          // query so the per-fixture consultation stays a single read, and it is
+          // gated on the "sports" tag so editorial research about unrelated
+          // topics cannot leak into a football pick.
+          { category: WEB_KNOWLEDGE_CATEGORY, tags: { contains: "sports" } },
+        ],
+      },
       select: { source: true, category: true, content: true, tags: true, metadata: true, confidence: true },
       orderBy: { createdAt: "desc" },
-      take: Math.min(Math.max(limit, 20), 1000),
+      take: Math.min(Math.max(limit, 20), 1200),
     })
     .catch(() => [] as MindMemory[]);
 }
@@ -972,10 +1010,15 @@ export async function runSportsIntelligence(opts: {
   const taught = opts.teach === false ? 0 : await phase("teach", () => teachMind(matches));
   // Real observed results are learned separately from our own picks, so the
   // corpus reflects actual football rather than only the fixtures we called.
+  // Declared HERE (not further down) because this runs before the fixture loop
+  // and a `let` further down would be in its temporal dead zone — which used to
+  // throw `Cannot access 'realResultsTaught' before initialization` and abort
+  // the whole prediction run before a single pick was written.
+  let realResultsTaught = 0;
   if (opts.teach !== false) {
-    await phase("teachResults", async () => {
-      realResultsTaught = await teachRealResults(matches).catch(() => 0);
-    });
+    realResultsTaught = await phase("teachResults", () =>
+      teachRealResults(matches ?? []).catch(() => 0)
+    );
   }
   const settled = await phase("settle", () => settlePredictions());
   const marketAcc = await phase("marketAccuracy", () => marketAccuracy());
@@ -1022,7 +1065,6 @@ export async function runSportsIntelligence(opts: {
   const counts = { generated: 0, refreshed: 0, skipped: 0 };
   let mindsConsulted = 0;
   let formGrounded = 0;
-  let realResultsTaught = 0;
 
   /**
    * Real-form lookups are the one part of this job that hits an upstream API,

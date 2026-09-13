@@ -10,7 +10,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { STATIONS, getStationById, stationSources } from "@/lib/radio-stations";
+import {
+  STATIONS,
+  getStationById,
+  preferredSourceIndex,
+  sourceAdRisk,
+  stationSources,
+} from "@/lib/radio-stations";
 import type { RadioStation } from "@/lib/radio-stations";
 
 export type StreamState = "idle" | "connecting" | "playing" | "error";
@@ -39,6 +45,14 @@ interface RadioPlayerContextValue {
   recentlyPlayed: string[];
   nowPlaying: NowPlaying;
   signal: SignalState;
+  /**
+   * True when a stall looks like the upstream playing a spot rather than a
+   * broken stream: the station is on a relay known to sell listener time, the
+   * audio was fine a moment ago, and nothing has come back for a while. The UI
+   * owes the listener an explanation and a way out (skip), because a silent
+   * "reconnecting…" over an advert is the worst of both.
+   */
+  adBreakSuspected: boolean;
   playStation: (stationId: string, source?: number) => void;
   playSource: (source: number) => void;
   togglePlay: () => void;
@@ -90,6 +104,14 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamFailed = useRef(false);
   const sourceRef = useRef(0);
+  /** The last channel that actually produced audio — the one worth returning to. */
+  const playedSourceRef = useRef<number | null>(null);
+  /**
+   * True while the current channel is suspected of playing a spot rather than
+   * its programme. Surfaced to the UI so a stall reads as "ad break" instead of
+   * a broken stream — and so the player does not reconnect through it.
+   */
+  const [adBreakSuspected, setAdBreakSuspected] = useState(false);
 
   useEffect(() => {
     volumeRef.current = volume;
@@ -98,15 +120,45 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
 
   // Indirection so the reconnect callback can reschedule itself without a
   // self-reference (which React Compiler rejects as a forward access).
+  const stallTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * Decide whether a stall is a fault or an advert.
+   *
+   * The distinction matters because the right response is opposite: a fault
+   * wants a reconnect, an advert wants patience (reconnecting replays it). The
+   * signal used here is deliberately conservative — only a station sitting on a
+   * relay known to sell listener time, that was playing seconds ago, is ever
+   * described as being on a break. Everything else keeps the plain reconnect
+   * behaviour.
+   */
+  const noteStall = useCallback(() => {
+    if (pausedByUser.current || streamFailed.current) return;
+    if (stallTimer.current) clearTimeout(stallTimer.current);
+    stallTimer.current = setTimeout(() => {
+      const current = stationRef.current;
+      if (!current || pausedByUser.current) return;
+      if (sourceAdRisk(current, sourceRef.current) > 0 && playedSourceRef.current !== null) {
+        setAdBreakSuspected(true);
+      }
+    }, 12_000);
+  }, []);
+
   const scheduleReconnectRef = useRef<() => void>(() => {});
   // Same indirection for channel failover: the tune callback steps to the
   // next channel on error without referencing itself.
   const tuneSourceRef = useRef<(station: RadioStation, source: number) => void>(() => {});
 
   // Auto-reconnect with exponential backoff when a live stream drops.
+  //
+  // The floor is deliberately not 3s any more. A live re-connect opens a NEW
+  // upstream session, and the free relays several stations sit behind sell a
+  // pre-roll spot at the start of each one — so a fast reconnect loop did not
+  // merely retry, it replayed the same advert over and over and buried the
+  // music. Backing off also stops a flapping mount from being hammered.
+  const RECONNECT_FLOOR_MS = 8000;
   const scheduleReconnect = useCallback(() => {
-    const base = 3000;
-    const delay = Math.min(base * 2 ** retryCount.current, 30_000);
+    const delay = Math.min(RECONNECT_FLOOR_MS * 2 ** retryCount.current, 60_000);
     retryCount.current += 1;
     if (retryTimer.current) clearTimeout(retryTimer.current);
     retryTimer.current = setTimeout(() => {
@@ -115,10 +167,14 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
       if (!audio || !current || pausedByUser.current) return;
       setStreamState("connecting");
       streamFailed.current = false;
-      // Re-arm from the head of the failover chain so a recovered primary
-      // channel is picked up again instead of camping on a backup.
-      sourceRef.current = 0;
-      audio.src = proxyUrl(current.id, 0);
+      // Re-arm the LAST CHANNEL THAT PLAYED, not blindly channel 0. Resetting to
+      // 0 undid the failover the moment anything hiccuped: a listener who had
+      // escaped an ad-heavy mount was dragged straight back onto it on the next
+      // reconnect. Only a station with no known-good channel starts at the
+      // preferred (cleanest) one.
+      const resumeSource = playedSourceRef.current ?? preferredSourceIndex(current);
+      sourceRef.current = resumeSource;
+      audio.src = proxyUrl(current.id, resumeSource);
       audio.play().catch(() => scheduleReconnectRef.current());
     }, delay);
   }, []);
@@ -131,6 +187,7 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     return () => {
       if (retryTimer.current) clearTimeout(retryTimer.current);
+      if (stallTimer.current) clearTimeout(stallTimer.current);
     };
   }, []);
 
@@ -193,6 +250,9 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
   );
 
   const stop = useCallback(() => {
+    setAdBreakSuspected(false);
+    playedSourceRef.current = null;
+    if (stallTimer.current) clearTimeout(stallTimer.current);
     setNowPlaying({ song: null, listeners: null, meta: false });
     setSignal({ source: 0, channels: 1, bitrateKbps: null, channelName: null, probed: false });
     sourceRef.current = 0;
@@ -247,6 +307,7 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
       setSignal((prev) => ({ ...prev, source, channels, probed: false }));
       retryCount.current = 0;
       streamFailed.current = false;
+      setAdBreakSuspected(false);
       if (retryTimer.current) clearTimeout(retryTimer.current);
       audio.src = proxyUrl(next.id, source);
       audio.volume = volumeRef.current / 100;
@@ -297,7 +358,10 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
       setRecentlyPlayed(recent);
       safeSetStorage("radio-recently", JSON.stringify(recent));
 
-      tuneSource(next, source ?? 0);
+      // Open the CLEANEST channel available rather than whatever happens to be
+      // first: several stations list an ad-injecting relay ahead of a direct
+      // broadcaster mount, so "channel 0" was quietly the worst choice.
+      tuneSource(next, source ?? preferredSourceIndex(next));
     },
     [isPlaying, streamState, recentlyPlayed, tuneSource]
   );
@@ -453,6 +517,7 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
       recentlyPlayed,
       nowPlaying,
       signal,
+      adBreakSuspected,
       playStation,
       playSource,
       togglePlay,
@@ -461,7 +526,7 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
       toggleFavorite,
       skip,
     }),
-    [station, isPlaying, streamState, volume, favorites, recentlyPlayed, nowPlaying, signal, playStation, playSource, togglePlay, stop, setVolume, toggleFavorite, skip]
+    [station, isPlaying, streamState, volume, favorites, recentlyPlayed, nowPlaying, signal, adBreakSuspected, playStation, playSource, togglePlay, stop, setVolume, toggleFavorite, skip]
   );
 
   return (
@@ -479,12 +544,19 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
           pausedByUser.current = false;
           streamFailed.current = false;
           retryCount.current = 0;
+          // Remember the channel that actually worked, and stand down any
+          // ad-break suspicion — audio is back.
+          playedSourceRef.current = sourceRef.current;
+          setAdBreakSuspected(false);
+          if (stallTimer.current) clearTimeout(stallTimer.current);
         }}
         onWaiting={() => {
           if (!pausedByUser.current && !streamFailed.current) setStreamState("connecting");
+          noteStall();
         }}
         onStalled={() => {
           if (!pausedByUser.current && !streamFailed.current) setStreamState("connecting");
+          noteStall();
         }}
         onEnded={() => {
           // Live streams never "end" naturally — this fires when the proxy

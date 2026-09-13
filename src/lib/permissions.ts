@@ -172,24 +172,65 @@ export function registerServiceWorker() {
 }
 
 /**
+ * The VAPID public key, however it was named in the environment.
+ *
+ * Next only inlines `NEXT_PUBLIC_*` into a client bundle, so the canonical name
+ * is `NEXT_PUBLIC_VAPID_KEY`. The other spellings are accepted because the
+ * server-side sender and the platform dashboards use them, and a key that is
+ * present under one name but read under another is the classic reason "push is
+ * configured" while no device is ever subscribed.
+ */
+function vapidPublicKey(): string {
+  return (
+    process.env.NEXT_PUBLIC_VAPID_KEY ??
+    process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ??
+    process.env.VAPID_PUBLIC_KEY ??
+    ""
+  );
+}
+
+/** True when this browser can hold a push subscription at all. */
+export function pushSupported(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    "serviceWorker" in navigator &&
+    "PushManager" in window &&
+    "Notification" in window
+  );
+}
+
+/**
+ * True when background push is actually deliverable: the device supports it AND
+ * this deployment has a VAPID public key. Callers use it to explain the real
+ * capability instead of rendering a button that silently does nothing.
+ */
+export function webPushConfigured(): boolean {
+  return pushSupported() && vapidPublicKey().length > 0;
+}
+
+/**
  * Subscribe to push notifications via the service worker.
  * Returns the subscription object or null on failure.
  */
 export async function subscribeToPush(): Promise<PushSubscription | null> {
-  if (typeof window === "undefined" || !("serviceWorker" in navigator) || !("PushManager" in window)) {
-    return null;
-  }
+  if (!pushSupported()) return null;
 
   try {
     const reg = await navigator.serviceWorker.ready;
     // Check for existing subscription
     let sub = await reg.pushManager.getSubscription();
-    if (sub) return sub;
+    if (sub) {
+      // Already subscribed: re-post so the server has the current endpoint even
+      // after it pruned the row (browsers rotate push endpoints silently).
+      await postSubscription(sub).catch(() => {});
+      return sub;
+    }
 
-    // Create new subscription with VAPID key (from env or fallback)
-    const vapidKey = process.env.NEXT_PUBLIC_VAPID_KEY ?? "";
+    const vapidKey = vapidPublicKey();
     if (!vapidKey) {
-      console.warn("No VAPID key configured for push notifications");
+      console.warn(
+        "No VAPID public key configured — background push is unavailable. Set NEXT_PUBLIC_VAPID_KEY."
+      );
       return null;
     }
 
@@ -199,19 +240,7 @@ export async function subscribeToPush(): Promise<PushSubscription | null> {
       applicationServerKey: rawKey as BufferSource,
     });
 
-    // Send subscription to server
-    await fetch("/api/notifications/push", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        endpoint: sub.endpoint,
-        keys: {
-          p256dh: btoa(String.fromCharCode(...new Uint8Array(sub.getKey("p256dh")!))),
-          auth: btoa(String.fromCharCode(...new Uint8Array(sub.getKey("auth")!))),
-        },
-      }),
-    });
-
+    await postSubscription(sub);
     return sub;
   } catch (err) {
     console.error("Push subscription failed:", err);
@@ -228,10 +257,18 @@ export async function unsubscribeFromPush(): Promise<boolean> {
   try {
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
-    if (!sub) return true;
+    if (!sub) {
+      // No local subscription, but the server may still hold a stale row from a
+      // previous browser profile — clear it so sends stop.
+      await fetch("/api/notifications/push", { method: "DELETE" }).catch(() => {});
+      return true;
+    }
 
+    // Identify this exact device so turning alerts off on a phone does not
+    // silence the reader's desktop too.
+    const endpoint = encodeURIComponent(sub.endpoint);
     await sub.unsubscribe();
-    await fetch("/api/notifications/push", { method: "DELETE" });
+    await fetch(`/api/notifications/push?endpoint=${endpoint}`, { method: "DELETE" }).catch(() => {});
     return true;
   } catch {
     return false;
@@ -247,4 +284,28 @@ function urlBase6ToUint8Array(base64String: string): Uint8Array {
     outputArray[i] = rawData.charCodeAt(i);
   }
   return outputArray;
+}
+
+/** 
+ * Send one subscription to the server.
+ *
+ * Guarded, because an eager fetch with no subscription keys would post
+ * `undefined` for p256dh/auth and the API would reject the whole request —
+ * leaving the device believing it had subscribed.
+ */
+async function postSubscription(sub: PushSubscription): Promise<void> {
+  const p256dh = sub.getKey?.("p256dh");
+  const auth = sub.getKey?.("auth");
+  if (!p256dh || !auth) return;
+  await fetch("/api/notifications/push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      endpoint: sub.endpoint,
+      keys: {
+        p256dh: btoa(String.fromCharCode(...new Uint8Array(p256dh))),
+        auth: btoa(String.fromCharCode(...new Uint8Array(auth))),
+      },
+    }),
+  });
 }

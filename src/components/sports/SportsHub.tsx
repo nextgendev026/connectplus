@@ -74,11 +74,12 @@ export default function SportsHub({
               themes, so a gradient that fades to a light brand tone washes out on
               the light theme's dark text. */}
           <h1 className="mt-3 text-2xl font-black tracking-tight text-surface-50 sm:text-4xl">
-            Live scores &amp; betting intel
+            Live scores &amp; betting tips
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-surface-400">
-            Every fixture, live minute by minute — with model-generated analysis across four markets
-            and the hive mind&apos;s highest-conviction tips.
+            Every match, updating minute by minute. Open any fixture for our model&apos;s read on it —
+            who wins, how many goals, both teams to score — plus the recent form and past meetings behind
+            that view.
           </p>
 
           <div className="mt-5 flex w-full max-w-md items-center rounded-2xl border border-surface-800 bg-surface-900/70 p-1 backdrop-blur">

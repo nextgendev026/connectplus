@@ -14,7 +14,7 @@ import {
 import { useRadioPlayer } from "@/components/radio/RadioPlayerContext";
 
 export function RadioPlayerBar() {
-  const { station, isPlaying, streamState, nowPlaying, signal, playSource, togglePlay, stop, setVolume, volume, skip } = useRadioPlayer();
+  const { station, isPlaying, streamState, nowPlaying, signal, playSource, togglePlay, stop, setVolume, volume, skip, adBreakSuspected } = useRadioPlayer();
   const [isMuted, setIsMuted] = useState(false);
 
   if (!station) return null;
@@ -46,7 +46,11 @@ export function RadioPlayerBar() {
               </p>
               <div className="overflow-hidden">
                 <p className="truncate text-xs text-surface-400 animate-marquee">
-                  {streamState === "error" ? "Stream reconnecting…" : songLine}
+                  {adBreakSuspected
+                    ? "Ad break on this station — skip to keep listening"
+                    : streamState === "error"
+                      ? "Stream reconnecting…"
+                      : songLine}
                 </p>
               </div>
             </div>
@@ -78,8 +82,19 @@ export function RadioPlayerBar() {
               </button>
             </div>
             <span className="text-[10px] text-surface-500">
-              {streamState === "error" ? (
-                <button onClick={() => station && playSource(0)} className="text-amber-400 hover:underline">
+              {adBreakSuspected ? (
+                // A silent "reconnecting…" over an advert is the worst of both
+                // worlds: the listener cannot tell whether the station or the
+                // app is broken, and waiting may be the correct move. Say what
+                // it is and offer the exit.
+                <button onClick={() => skip(1)} className="text-amber-400 hover:underline">
+                  Ad break — tap to skip to the next station
+                </button>
+              ) : streamState === "error" ? (
+                <button
+                  onClick={() => station && playSource(signal.source)}
+                  className="text-amber-400 hover:underline"
+                >
                   Can’t reach stream — tap to retry
                 </button>
               ) : nowPlaying.meta ? (

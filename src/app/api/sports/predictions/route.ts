@@ -3,6 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { withDbRetry } from "@/lib/db-retry";
 import { createLogger } from "@/lib/logger";
 import { BASELINE_MODEL, MARKET_LABELS, MARKETS } from "@/lib/sports-intelligence";
+import { canonicalCompetition, fixtureIdentity } from "@/lib/sports";
+
+/** Provider precedence — a keyed live feed outranks a keyless fallback. */
+const PROVIDER_RANK: Record<string, number> = { sportsdb: 0, espn: 1, openligadb: 2, demo: 9 };
 
 const log = createLogger("sports-predictions");
 
@@ -45,11 +49,15 @@ export async function GET(request: NextRequest) {
             sort === "edge"
               ? [{ valueEdge: { sort: "desc", nulls: "last" } }, { confidence: "desc" }]
               : [{ confidence: "desc" }, { createdAt: "desc" }],
-          take: limit,
+          // Over-fetch: the same fixture is stored once per provider, so the
+          // dedupe below needs headroom to still return a full page. Without it
+          // a limit of 20 could collapse to 12 cards.
+          take: Math.min(limit * 3, 300),
             include: {
               match: {
                 select: {
                   id: true,
+                  provider: true,
                   competition: true,
                   country: true,
                   homeTeam: true,
@@ -93,7 +101,14 @@ export async function GET(request: NextRequest) {
           won: wonCount,
           accuracy: settledCount > 0 ? Math.round((wonCount / settledCount) * 1000) / 10 : null,
         },
-        picks: picks.map((p) => ({ ...p, marketLabel: MARKET_LABELS[p.market] ?? p.market })),
+        picks: dedupePicks(picks, limit).map((p) => ({
+          ...p,
+          marketLabel: MARKET_LABELS[p.market] ?? p.market,
+          match: {
+            ...p.match,
+            competition: canonicalCompetition(p.match.competition, p.match.country),
+          },
+        })),
       },
       { headers: { "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60" } }
     );
@@ -103,4 +118,45 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+interface PickLike {
+  market: string;
+  confidence: number;
+  valueEdge?: number | null;
+  match: { provider: string; competition: string; country: string | null; homeTeam: string; awayTeam: string; kickoff: Date | null };
+}
+
+/**
+ * One card per fixture, and one card per market on it.
+ *
+ * Each provider stores its own row for the same match, so a fixture covered by
+ * two feeds produced two identical tips under two spellings of the same league
+ * — the duplication readers actually see. The winner is the better-ranked
+ * provider, and ties fall back to the more confident call so the strongest
+ * available evidence survives.
+ */
+function dedupePicks<T extends PickLike>(picks: T[], limit: number): T[] {
+  const best = new Map<string, T>();
+
+  for (const pick of picks) {
+    const key = `${fixtureIdentity(pick.match)}|${pick.market}`;
+    const current = best.get(key);
+    if (!current) {
+      best.set(key, pick);
+      continue;
+    }
+    const rank = PROVIDER_RANK[pick.match.provider] ?? 5;
+    const currentRank = PROVIDER_RANK[current.match.provider] ?? 5;
+    if (
+      rank < currentRank ||
+      (rank === currentRank && (pick.valueEdge ?? 0) > (current.valueEdge ?? 0))
+    ) {
+      best.set(key, pick);
+    }
+  }
+
+  // Preserve the query's ordering: it is what the caller asked to sort by.
+  const winners = new Set(best.values());
+  return picks.filter((p) => winners.has(p)).slice(0, limit);
 }

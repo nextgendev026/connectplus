@@ -1,67 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import { createLogger } from "@/lib/logger";
+import { webPushConfigured } from "@/lib/push";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * POST /api/notifications/push — Subscribe to push notifications
- * DELETE /api/notifications/push — Unsubscribe
- * GET /api/notifications/push — Check subscription status
+ * POST   /api/notifications/push — register this device
+ * DELETE /api/notifications/push — release this device
+ * GET    /api/notifications/push — is this device/production able to receive push?
  *
- * Stores push subscription in a simple JSON field on User (via a
- * PlatformSetting for now — avoids schema migration). In production you'd
- * use a PushSubscription table.
+ * Subscriptions are rows now, not an array inside a settings blob, so:
+ *   • two devices registering at once cannot clobber one another,
+ *   • a rotated endpoint reassigns rather than duplicates (unique on endpoint),
+ *   • one device is capped per user, so a shared browser cannot accumulate
+ *     registrations forever.
  */
 
-// In-memory store (backed by Redis in prod) for push subscriptions
-// Format: { endpoint: { userId, subscription, createdAt } }
-// We store this in PlatformSetting as a JSON array for zero-migration.
+const MAX_ENDPOINTS_PER_USER = 10;
+/** Push service URLs are long but bounded; anything huge is not a real endpoint. */
+const MAX_ENDPOINT_LENGTH = 1200;
 
-interface PushSub {
-  endpoint: string;
-  keys: { p256dh: string; auth: string };
-  userId: string;
-  createdAt: string;
-}
-
-async function getSubscriptions(): Promise<PushSub[]> {
-  try {
-    const raw = await prisma.platformSetting.findUnique({
-      where: { key: "push_subscriptions" },
-      select: { value: true },
-    });
-    if (!raw?.value) return [];
-    return JSON.parse(raw.value) as PushSub[];
-  } catch {
-    return [];
-  }
-}
-
-async function saveSubscriptions(subs: PushSub[]): Promise<void> {
-  await prisma.platformSetting.upsert({
-    where: { key: "push_subscriptions" },
-    update: { value: JSON.stringify(subs) },
-    create: {
-      key: "push_subscriptions",
-      value: JSON.stringify(subs),
-      group: "plugins",
-      label: "Push subscriptions",
-      type: "textarea",
-      isSecret: true,
-    },
-  });
-}
+const log = createLogger("push-subscribe");
 
 export async function GET() {
   const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ subscribed: false });
-  }
+  const configured = webPushConfigured();
+  if (!session?.user?.id) return NextResponse.json({ subscribed: false, configured });
 
-  const subs = await getSubscriptions();
-  const hasSub = subs.some((s) => s.userId === session.user!.id);
-  return NextResponse.json({ subscribed: hasSub });
+  const count = await prisma.pushSubscription
+    .count({ where: { userId: session.user.id } })
+    .catch(() => 0);
+  return NextResponse.json({ subscribed: count > 0, configured, devices: count });
 }
 
 export async function POST(request: NextRequest) {
@@ -70,43 +42,76 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
+  const body = (await request.json().catch(() => null)) as
+    | { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } }
+    | null;
+
+  const endpoint = typeof body?.endpoint === "string" ? body.endpoint.trim() : "";
+  const p256dh = typeof body?.keys?.p256dh === "string" ? body.keys.p256dh.trim() : "";
+  const auth_ = typeof body?.keys?.auth === "string" ? body.keys.auth.trim() : "";
+
+  if (!endpoint || !p256dh || !auth_) {
+    return NextResponse.json({ error: "Invalid subscription" }, { status: 400 });
+  }
+  if (endpoint.length > MAX_ENDPOINT_LENGTH || !/^https:\/\//.test(endpoint)) {
+    return NextResponse.json({ error: "Invalid push endpoint" }, { status: 400 });
+  }
+
+  const userAgent = request.headers.get("user-agent")?.slice(0, 300) ?? null;
+
   try {
-    const body = await request.json();
-    const { endpoint, keys } = body;
-
-    if (!endpoint || !keys?.p256dh || !keys?.auth) {
-      return NextResponse.json({ error: "Invalid subscription" }, { status: 400 });
-    }
-
-    const subs = await getSubscriptions();
-    // Remove any existing sub for this user or endpoint
-    const filtered = subs.filter(
-      (s) => s.userId !== session.user!.id && s.endpoint !== endpoint
-    );
-
-    filtered.push({
-      endpoint,
-      keys,
-      userId: session.user!.id,
-      createdAt: new Date().toISOString(),
+    // `endpoint` is globally unique, so upserting on it both rotates ownership
+    // when a device changes hands and refreshes an existing registration.
+    await prisma.pushSubscription.upsert({
+      where: { endpoint },
+      update: {
+        userId: session.user.id,
+        p256dh,
+        auth: auth_,
+        userAgent,
+        failures: 0,
+        lastSeenAt: new Date(),
+      },
+      create: { userId: session.user.id, endpoint, p256dh, auth: auth_, userAgent },
     });
 
-    await saveSubscriptions(filtered);
-    return NextResponse.json({ ok: true, subscribed: true });
-  } catch {
+    // Keep only the most recent devices for this user, oldest first.
+    const extra = await prisma.pushSubscription.findMany({
+      where: { userId: session.user.id },
+      orderBy: { lastSeenAt: "desc" },
+      select: { id: true },
+      skip: MAX_ENDPOINTS_PER_USER,
+    });
+    if (extra.length > 0) {
+      await prisma.pushSubscription
+        .deleteMany({ where: { id: { in: extra.map((e) => e.id) } } })
+        .catch(() => null);
+    }
+
+    return NextResponse.json({ ok: true, subscribed: true, configured: webPushConfigured() });
+  } catch (error) {
+    log.error("failed to save push subscription", { error: String(error) });
     return NextResponse.json({ error: "Failed to save subscription" }, { status: 500 });
   }
 }
 
-export async function DELETE() {
+export async function DELETE(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
-  const subs = await getSubscriptions();
-  const filtered = subs.filter((s) => s.userId !== session.user!.id);
-  await saveSubscriptions(filtered);
+  // Prefer an exact endpoint so turning alerts off on the phone does not also
+  // silence the desktop; fall back to "this user, all devices".
+  const endpoint = new URL(request.url).searchParams.get("endpoint");
+  await prisma.pushSubscription
+    .deleteMany({
+      where: {
+        userId: session.user.id,
+        ...(endpoint ? { endpoint } : {}),
+      },
+    })
+    .catch(() => null);
 
   return NextResponse.json({ ok: true, subscribed: false });
 }

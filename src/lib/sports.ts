@@ -761,15 +761,95 @@ const openLigaProvider: SportsProvider = {
 /* Coalescing                                                          */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Collapse a club name to comparable letters.
+ *
+ * Club suffixes are stripped because providers disagree about them constantly
+ * ("Sheffield United" vs "Sheffield Utd", "Chelsea FC" vs "Chelsea"), and an
+ * unstripped suffix is the difference between recognising one fixture and
+ * rendering it twice.
+ */
+export function teamSlug(name: string): string {
+  return (name ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    // Fold accents so "Málaga" and "Malaga" are one club, not two.
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\b(fc|sc|ac|cf|afc|united|utd|city|club|cd|sk|fk)\b/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
 /** Loose identity for the same real-world fixture across providers. */
 export function fixtureKey(m: NormalizedMatch): string {
-  const slug = (s: string) =>
-    s
-      .toLowerCase()
-      .replace(/\b(fc|sc|ac|cf|afc|united|utd|city|club|cd|sk|fk|afc)\b/g, "")
-      .replace(/[^a-z0-9]/g, "");
   const day = (m.kickoff ?? "").slice(0, 10);
-  return `${slug(m.homeTeam)}|${slug(m.awayTeam)}|${day}`;
+  return `${teamSlug(m.homeTeam)}|${teamSlug(m.awayTeam)}|${day}`;
+}
+
+/**
+ * Identity for a fixture as *stored*, where only plain columns are available.
+ *
+ * The live board merges providers in memory, but anything reading the database
+ * (the tips feed, the accuracy record, the admin tables) sees one row per
+ * provider and therefore renders the same match — and the same league under two
+ * different names — twice. This is the key those readers dedupe on.
+ */
+export function fixtureIdentity(row: {
+  homeTeam: string;
+  awayTeam: string;
+  kickoff?: Date | string | null;
+}): string {
+  const day = row.kickoff ? new Date(row.kickoff).toISOString().slice(0, 10) : "";
+  return `${teamSlug(row.homeTeam)}|${teamSlug(row.awayTeam)}|${day}`;
+}
+
+/** Provider-specific country prefixes that obscure the same competition. */
+const COMPETITION_PREFIX =
+  /^(english|spanish|italian|german|french|dutch|portuguese|scottish|belgian|turkish|russian|japanese|danish|swedish|norwegian|polish|austrian|swiss|greek|brazilian|argentine|mexican|american|saudi|qatari|uae|kenyan|ugandan|tanzanian|nigerian|south african)\s+/i;
+
+/** Labels providers use for one league, folded onto a single canonical name. */
+const COMPETITION_ALIASES: Record<string, string> = {
+  "la liga": "LaLiga",
+  "la liga santander": "LaLiga",
+  "primera division": "LaLiga",
+  "laliga": "LaLiga",
+  "laliga ea sports": "LaLiga",
+  "premier league": "Premier League",
+  "english premier league": "Premier League",
+  "epl": "Premier League",
+  championship: "Championship",
+  "efl championship": "Championship",
+  "serie a": "Serie A",
+  bundesliga: "Bundesliga",
+  "ligue 1": "Ligue 1",
+  eredivisie: "Eredivisie",
+  "primeira liga": "Primeira Liga",
+  "uefa champions league": "UEFA Champions League",
+  "champions league": "UEFA Champions League",
+  "uefa europa league": "UEFA Europa League",
+  "europa league": "UEFA Europa League",
+  "caf champions league": "CAF Champions League",
+};
+
+/**
+ * One label per competition.
+ *
+ * Two providers naming the same league differently is why the tips board showed
+ * "LaLiga" and "Spanish La Liga" as separate leagues. Folding the known labels
+ * onto one name keeps per-competition views, filters and breakdowns honest; an
+ * unknown competition is titled-cased but never guessed at.
+ */
+export function canonicalCompetition(name: string, country?: string | null): string {
+  const raw = (name ?? "").replace(/\s+/g, " ").trim();
+  if (!raw) return country ? `${country} league` : "Unknown competition";
+
+  const stripped = raw.replace(COMPETITION_PREFIX, "").trim();
+  const alias = COMPETITION_ALIASES[stripped.toLowerCase()];
+  if (alias) return alias;
+
+  // "Spanish Segunda Federación Group 1" has no canonical short form; keep the
+  // provider's own wording (minus the redundant country prefix) rather than
+  // merging distinct lower divisions into one bucket.
+  return stripped;
 }
 
 /**

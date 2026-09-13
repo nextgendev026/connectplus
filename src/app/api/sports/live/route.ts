@@ -1,8 +1,16 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { inngest } from "@/lib/inngest";
 import { getSportsHub, LIVE_STATUSES, type NormalizedMatch } from "@/lib/sports";
 import { BASELINE_MODEL } from "@/lib/sports-intelligence";
+import { runThrottled } from "@/lib/throttled-job";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("sports-live-api");
+
+/** How often the board may opportunistically top up picks and alerts. */
+const SELF_HEAL_INTEL_MS = 5 * 60_000;
+const SELF_HEAL_NOTIFY_MS = 60_000;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,7 +65,32 @@ export async function GET(request: NextRequest) {
       void inngest
         .send({ name: "sports-intel", data: { reason: "missing-picks", missing, sport: hub.sport } })
         .catch(() => null);
+
+      // …and a scheduler-independent safety net. Inngest is the intended owner,
+      // but it is a single point of failure with no way to notice its own
+      // absence: if the queue is unsynced or paused, the model simply stops and
+      // the board keeps serving picks that predate the current fixtures. This
+      // runs AFTER the response is flushed, so the visitor never waits, and the
+      // heartbeat throttle collapses a thousand concurrent viewers into one
+      // attempt per interval.
+      after(async () => {
+        const intel = await runThrottled("sports-intel", SELF_HEAL_INTEL_MS, async () => {
+          const { runSportsIntelligence } = await import("@/lib/sports-intelligence");
+          return runSportsIntelligence({ limit: 12, teach: false });
+        });
+        if (intel.ran) log.info("opportunistic pick top-up", { missing, sport: hub.sport });
+      });
     }
+
+    // Favourite alerts ride the same surface: the bell only rings when a job
+    // runs, so the busiest page in the app guarantees one attempt a minute.
+    after(async () => {
+      const notify = await runThrottled("sports-notify", SELF_HEAL_NOTIFY_MS, async () => {
+        const { notifySportsFavourites } = await import("@/lib/sports-notifications");
+        return notifySportsFavourites();
+      });
+      if (notify.ran) log.info("opportunistic favourite alert sweep");
+    });
 
     return NextResponse.json(
       {

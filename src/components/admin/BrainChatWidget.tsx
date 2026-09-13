@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BrainCircuit, Send, Loader2, X, MessageSquareText, Zap, Database, RefreshCw, Target, Ban } from "lucide-react";
+import { BrainCircuit, Send, Loader2, X, MessageSquareText, Zap, Database, RefreshCw, Target, Ban, GraduationCap, Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface HiveData {
@@ -89,7 +89,7 @@ function EngineBadges({ intent, enginesUsed: engines, hive }: ChamberMessage) {
 
 export default function BrainChatWidget() {
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<"ask" | "brains" | "directives">("ask");
+  const [tab, setTab] = useState<"ask" | "brains" | "directives" | "train">("ask");
   const [messages, setMessages] = useState<ChamberMessage[]>([]);
   const [input, setInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
@@ -100,6 +100,13 @@ export default function BrainChatWidget() {
   const [directiveDraft, setDirectiveDraft] = useState("");
   const [directiveError, setDirectiveError] = useState<string | null>(null);
   const [savingDirective, setSavingDirective] = useState(false);
+  /** Web knowledge the combined mind has filed, and the operator's training form. */
+  const [knowledge, setKnowledge] = useState<KnowledgeDigest | null>(null);
+  const [teachDraft, setTeachDraft] = useState("");
+  const [teachSources, setTeachSources] = useState(3);
+  const [teachSports, setTeachSports] = useState(false);
+  const [teaching, setTeaching] = useState(false);
+  const [teachMsg, setTeachMsg] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -176,6 +183,58 @@ export default function BrainChatWidget() {
     },
     [loadDirectives]
   );
+
+  const loadKnowledge = useCallback(async () => {
+    const res = await fetch("/api/admin/neural/knowledge", { credentials: "include" });
+    const d = (await res.json().catch(() => null)) as { digest?: KnowledgeDigest } | null;
+    if (d?.digest) setKnowledge(d.digest);
+  }, []);
+
+  /**
+   * File what the web knows about a subject into the combined mind.
+   *
+   * This is the operator's side of the learning loop: the mind only ever
+   * researched when someone happened to ask it something, so its outside
+   * knowledge was shaped by chance. An operator knows the beats before anyone
+   * asks about them.
+   */
+  const teachFromWeb = useCallback(async () => {
+    const query = teachDraft.trim();
+    if (query.length < 3 || teaching) return;
+    setTeaching(true);
+    setTeachMsg(null);
+    try {
+      const res = await fetch("/api/admin/neural/knowledge", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query,
+          sources: teachSources,
+          tags: teachSports ? ["sports"] : [],
+        }),
+      });
+      const d = (await res.json().catch(() => null)) as
+        | { note?: string; digest?: KnowledgeDigest; error?: string }
+        | null;
+      if (!res.ok) {
+        setTeachMsg(d?.error ?? "Could not file that subject.");
+        return;
+      }
+      if (d?.digest) setKnowledge(d.digest);
+      setTeachMsg(d?.note ?? "Filed.");
+      setTeachDraft("");
+    } finally {
+      setTeaching(false);
+    }
+  }, [teachDraft, teachSources, teachSports, teaching]);
+
+  useEffect(() => {
+    if (open && tab === "train") {
+      const t = setTimeout(loadKnowledge, 0);
+      return () => clearTimeout(t);
+    }
+  }, [open, tab, loadKnowledge]);
 
   useEffect(() => {
     if (open && tab === "brains") {
@@ -388,6 +447,16 @@ export default function BrainChatWidget() {
             </span>
           )}
         </button>
+        <button
+          onClick={() => setTab("train")}
+          className={cn(
+            "flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all",
+            tab === "train" ? "bg-surface-800 text-surface-50" : "text-surface-500 hover:text-surface-300"
+          )}
+        >
+          <GraduationCap className="h-3.5 w-3.5" /> Train
+          {teaching && <Loader2 className="h-3 w-3 animate-spin" />}
+        </button>
       </div>
 
       {/* Bodies */}
@@ -528,7 +597,7 @@ export default function BrainChatWidget() {
             </div>
           </div>
         </div>
-      ) : (
+      ) : tab === "directives" ? (
         <div className="flex-1 overflow-y-auto space-y-3 p-3">
           <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
             <p className="flex items-center gap-1.5 text-xs font-semibold text-positive-strong">
@@ -604,7 +673,102 @@ export default function BrainChatWidget() {
             )}
           </div>
         </div>
+      ) : (
+        <div className="flex-1 space-y-3 overflow-y-auto p-3">
+          <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-3">
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-surface-100">
+              <GraduationCap className="h-3.5 w-3.5 text-brand-400" /> Teach the mind from the web
+            </p>
+            <p className="mt-1 type-caption leading-relaxed text-surface-500">
+              The brain already learns from our posts, comments and RSS. Give it a subject it has no
+              way to know about — a league, a market, a competitor — and it will research the open
+              web and keep what it reads, so the next question is answered from memory instead of
+              fetched again.
+            </p>
+
+            <div className="mt-2.5 space-y-2">
+              <input
+                value={teachDraft}
+                onChange={e => setTeachDraft(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter") void teachFromWeb();
+                }}
+                placeholder="e.g. Kenyan Premier League 2026 season"
+                className="w-full rounded-lg border border-surface-700 bg-surface-800 px-3 py-2 text-xs text-surface-50 placeholder-surface-500 outline-none focus:border-brand-500/50"
+              />
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-1.5 type-caption text-surface-400">
+                  Sources
+                  <select
+                    value={teachSources}
+                    onChange={e => setTeachSources(Number(e.target.value))}
+                    className="rounded-md border border-surface-700 bg-surface-800 px-1.5 py-0.5 text-[11px] text-surface-200 outline-none"
+                  >
+                    {[1, 2, 3, 4, 5, 6].map(n => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex items-center gap-1.5 type-caption text-surface-400">
+                  <input
+                    type="checkbox"
+                    checked={teachSports}
+                    onChange={e => setTeachSports(e.target.checked)}
+                    className="h-3 w-3 accent-emerald-500"
+                  />
+                  Tag as sports
+                </label>
+              </div>
+              <p className="type-caption leading-relaxed text-surface-500">
+                Only sport-tagged knowledge is allowed into the prediction engine, and it is used as
+                context in a pick&apos;s reasoning — never to move the numbers.
+              </p>
+              {teachMsg && <p className="type-caption leading-relaxed text-brand-600">{teachMsg}</p>}
+              <button
+                onClick={() => void teachFromWeb()}
+                disabled={teachDraft.trim().length < 3 || teaching}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white disabled:bg-surface-800 disabled:text-surface-500"
+              >
+                {teaching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Globe className="h-3.5 w-3.5" />}
+                Research and file
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <p className="mb-1.5 text-[9px] font-medium uppercase tracking-wider text-surface-500">
+              Web knowledge held{knowledge ? ` — ${knowledge.rows} sources from ${knowledge.hosts} sites` : ""}
+            </p>
+            {!knowledge || knowledge.recent.length === 0 ? (
+              <p className="type-caption leading-relaxed text-surface-500">
+                Nothing filed from the web yet. The mind can still answer from our own corpus.
+              </p>
+            ) : (
+              <ul className="space-y-1.5">
+                {knowledge.recent.map(item => (
+                  <li
+                    key={`${item.url}-${item.title}`}
+                    className="truncate rounded-lg border border-surface-800 bg-surface-900/50 px-3 py-1.5 text-[11px] text-surface-300"
+                    title={item.url ?? item.title}
+                  >
+                    {item.title}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
+}
+
+/** Shape of `/api/admin/neural/knowledge` — how much the mind has filed from the web. */
+interface KnowledgeDigest {
+  rows: number;
+  hosts: number;
+  lastLearnedAt: string | null;
+  recent: { title: string; url: string | null }[];
 }

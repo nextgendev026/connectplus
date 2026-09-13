@@ -36,6 +36,7 @@ model User {
   conversations NeuralConversation[]
   notifications Notification[] @relation("NotifRecipient")
   sentNotifications Notification[] @relation("NotifActor")
+  pushSubscriptions PushSubscription[]
   preference  UserPreference?
   feedback    ModelFeedback[]
   subscriptions UserSubscription[]
@@ -371,6 +372,33 @@ model NeuralMessage {
   createdAt      DateTime            @default(now())
 
   @@index([conversationId])
+}
+
+/// One push endpoint per browser/device.
+///
+/// This used to be a JSON array inside a single PlatformSetting row, which made
+/// subscribing a read-modify-write across every device: two subscribers at once
+/// silently lost one of the registrations, the blob grew without bound, and a
+/// dead endpoint could never be pruned because nothing identified it on its own.
+/// A row per endpoint makes each of those a one-line operation.
+model PushSubscription {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// The push service URL. Unique: an endpoint belongs to exactly one device,
+  /// and re-registering it must rotate ownership rather than duplicate it.
+  endpoint   String   @unique
+  p256dh     String
+  auth       String
+  userAgent  String?
+  /// Consecutive delivery failures. Pruned at 5 — a permanently-gone endpoint
+  /// (410/404) or a repeatedly-refused one is dead weight on every send.
+  failures   Int      @default(0)
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([failures])
 }
 
 model Notification {
