@@ -2,19 +2,36 @@
 
 import { useEffect, useState } from "react";
 import { signIn } from "next-auth/react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Info } from "lucide-react";
 
 /**
  * Social sign-in buttons.
  *
  * Provider availability is read from NextAuth's own `/api/auth/providers`
- * endpoint so the buttons track server config exactly — add GOOGLE_CLIENT_ID +
- * GOOGLE_CLIENT_SECRET and Google appears; remove them and it disappears. No
- * env values are ever shipped to the browser.
+ * endpoint so the button state tracks server config exactly — add
+ * GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET and it becomes live; remove them and
+ * it falls back to the not-configured state. No env values are ever shipped to
+ * the browser.
+ *
+ * The button is always rendered (never hidden). Hiding it entirely made a
+ * half-configured deployment look like the feature had never been built; a
+ * disabled button with an honest explanation is both discoverable and useful.
  */
 export function OAuthButtons({ callbackUrl = "/" }: { callbackUrl?: string }) {
   const [providers, setProviders] = useState<Record<string, unknown> | null>(null);
   const [pending, setPending] = useState<string | null>(null);
+
+  /** Honour ?callbackUrl= on the page — someone bounced here from a gated action
+   *  ("sign in to like/bookmark/publish") should land back where they were, not
+   *  on the homepage. Resolved at click time from window rather than via
+   *  useSearchParams, so no page needs a Suspense boundary for this. */
+  function targetCallbackUrl(): string {
+    try {
+      return new URLSearchParams(window.location.search).get("callbackUrl") || callbackUrl;
+    } catch {
+      return callbackUrl;
+    }
+  }
 
   useEffect(() => {
     let alive = true;
@@ -31,11 +48,8 @@ export function OAuthButtons({ callbackUrl = "/" }: { callbackUrl?: string }) {
     };
   }, []);
 
-  // Until we know, render nothing rather than flashing a button that may not exist.
-  if (!providers) return null;
-
-  const googleReady = Boolean(providers.google);
-  if (!googleReady) return null;
+  const checking = providers === null;
+  const googleReady = Boolean(providers?.google);
 
   return (
     <div className="space-y-3">
@@ -47,14 +61,17 @@ export function OAuthButtons({ callbackUrl = "/" }: { callbackUrl?: string }) {
 
       <button
         type="button"
-        disabled={pending !== null}
+        disabled={pending !== null || checking || !googleReady}
+        aria-disabled={!googleReady}
+        title={googleReady ? "Continue with Google" : "Google sign-in is not configured yet"}
         onClick={() => {
+          if (!googleReady) return;
           setPending("google");
-          void signIn("google", { callbackUrl });
+          void signIn("google", { callbackUrl: targetCallbackUrl() });
         }}
         className="w-full flex items-center justify-center gap-2.5 rounded-xl border border-surface-700/60 bg-surface-800/40 py-3 text-sm font-medium text-surface-100 hover:bg-surface-800 hover:border-surface-600 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
       >
-        {pending === "google" ? (
+        {checking || pending === "google" ? (
           <Loader2 className="w-4 h-4 animate-spin" />
         ) : (
           <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
@@ -76,8 +93,20 @@ export function OAuthButtons({ callbackUrl = "/" }: { callbackUrl?: string }) {
             />
           </svg>
         )}
-        Continue with Google
+        {checking ? "Checking Google sign-in…" : "Continue with Google"}
       </button>
+
+      {!checking && !googleReady ? (
+        <div className="flex items-start gap-2 rounded-xl border border-surface-700/60 bg-surface-800/40 px-3 py-2.5 text-[11px] leading-relaxed text-surface-400">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-400" />
+          <p>
+            Google sign-in isn&apos;t configured on this deployment yet. You can still use your email
+            and password above. Admins: add <code className="rounded bg-surface-900 px-1">GOOGLE_CLIENT_ID</code> and{" "}
+            <code className="rounded bg-surface-900 px-1">GOOGLE_CLIENT_SECRET</code> to switch it on — see{" "}
+            <span className="text-surface-300">Admin → Integrations</span> for the exact redirect URI.
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }

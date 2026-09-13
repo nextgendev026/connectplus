@@ -1,0 +1,81 @@
+import type { Metadata } from "next";
+import AdSlot from "@/components/ads/AdSlot";
+import SportsHub from "@/components/sports/SportsHub";
+
+export const metadata: Metadata = {
+  title: "Live Scores & Betting Tips",
+  description:
+    "Real-time football and basketball livescores for every league, with model-generated betting analysis for each fixture, today's highest-conviction tips across four markets, and vetted partner offers.",
+  keywords: [
+    "live scores",
+    "livescore today",
+    "football live scores",
+    "basketball live scores",
+    "football betting tips",
+    "sports predictions today",
+    "over under tips",
+    "both teams to score",
+    "correct score predictions",
+    "African football live",
+  ],
+  alternates: { canonical: "/sports" },
+  openGraph: {
+    title: "Live Scores & Betting Tips · connectPlus",
+    description:
+      "Live scores, in-app betting analysis and today's highest-conviction model tips — updated as the games move.",
+    type: "website",
+    url: "/sports",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Live Scores & Betting Tips · connectPlus",
+    description:
+      "Real-time livescores and model-generated betting analysis for every fixture, across four markets.",
+  },
+};
+
+/**
+ * Structured data for the sports desk.
+ *
+ * `CollectionPage` + `BreadcrumbList` is the honest description of this surface:
+ * a hub that lists fixtures and picks. We deliberately do NOT emit `SportsEvent`
+ * here — the fixtures are fetched client-side and would be stale or empty in the
+ * crawler's copy, and schema that contradicts the rendered page is worse than
+ * no schema at all.
+ */
+const SPORTS_SCHEMA = JSON.stringify({
+  "@context": "https://schema.org",
+  "@type": "CollectionPage",
+  name: "Live Scores & Betting Tips",
+  description:
+    "Real-time football and basketball livescores with model-generated betting analysis and tips for every fixture.",
+  inLanguage: "en",
+  isPartOf: { "@type": "WebSite", name: "connectPlus" },
+  about: { "@type": "Thing", name: "Association football and basketball results and betting markets" },
+  breadcrumb: {
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      { "@type": "ListItem", position: 1, name: "Home", item: "/" },
+      { "@type": "ListItem", position: 2, name: "Sports", item: "/sports" },
+    ],
+  },
+}).replace(/</g, "\\u003c");
+
+/**
+ * Sports hub shell. The fixture grid and the tips board are client components
+ * (they poll live scores and read the model record), while the ad slots stay on
+ * the server so creatives are picked and impressions counted without shipping
+ * the ad pipeline to the browser.
+ */
+export default function SportsPage() {
+  return (
+    <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: SPORTS_SCHEMA }} />
+      <SportsHub
+        heroAd={<AdSlot slot="sports-hero" label="Sponsored" />}
+        inlineAd={<AdSlot slot="sports-inline" label="Sponsored" />}
+        sidebarAd={<AdSlot slot="sports-sidebar" label="Sponsored" />}
+      />
+    </>
+  );
+}

@@ -20,20 +20,25 @@ function GithubIcon({ className }: { className?: string }) {
 
 const FOOTER_LINKS = {
   platform: [
-    { label: "About", href: "/about" },
-    { label: "Contact", href: "/contact" },
-    { label: "Help Center", href: "/help" },
-    { label: "System Status", href: "/status" },
+    { label: "Live Scores", href: "/sports" },
+    { label: "Betting Tips", href: "/sports?tab=tips" },
+    { label: "Live Radio", href: "/radio" },
+    { label: "Trending", href: "/trending" },
   ],
   creators: [
     { label: "Write", href: "/studio" },
+    { label: "Categories", href: "/categories" },
     { label: "Guidelines", href: "/guidelines" },
     { label: "Monetize", href: "/monetize" },
   ],
   legal: [
+    { label: "About", href: "/about" },
+    { label: "Contact", href: "/contact" },
+    { label: "Help Center", href: "/help" },
+    { label: "Pricing", href: "/pricing" },
+    { label: "System Status", href: "/status" },
     { label: "Privacy", href: "/privacy" },
     { label: "Terms", href: "/terms" },
-    { label: "Trending", href: "/trending" },
   ],
 };
 
@@ -48,7 +53,9 @@ export default function Footer() {
             </div>
             <p className="mt-3 text-sm text-surface-500 leading-relaxed">
               Voices of the Silicon Savanna — homegrown stories, tech, and
-              ideas from Nairobi to Kigali. Karibu nyumbani.
+              ideas from Nairobi to Kigali, plus live radio and real-time
+              sports scores with model-generated betting insight.
+              Karibu nyumbani.
             </p>
             <div className="mt-4 flex items-center gap-3">
               <a

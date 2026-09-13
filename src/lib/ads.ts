@@ -20,6 +20,9 @@ export const AD_SLOTS = [
   "article-inline",
   "article-sidebar",
   "radio-hero",
+  "sports-hero",
+  "sports-inline",
+  "sports-sidebar",
 ] as const;
 
 export type AdSlotName = (typeof AD_SLOTS)[number];
@@ -31,6 +34,9 @@ export const AD_SLOT_LABELS: Record<string, string> = {
   "article-inline": "Article — mid-content",
   "article-sidebar": "Article — sidebar",
   "radio-hero": "Radio — hero panel",
+  "sports-hero": "Sports — hero panel",
+  "sports-inline": "Sports — between fixtures",
+  "sports-sidebar": "Sports — sidebar rail",
 };
 
 export interface AdCreative {

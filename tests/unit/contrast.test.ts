@@ -81,12 +81,12 @@ const surfaceLight: Record<SurfaceStep, RGB> = {
   "300": [101, 81, 60], // #65513C
   "400": [110, 91, 70], // #6E5B46
   "500": [122, 104, 84], // #7A6854
-  "600": [196, 181, 158], // #C4B59E
-  "700": [214, 201, 178], // #D6C9B2
-  "800": [229, 218, 197], // #E5DAC5
-  "850": [244, 235, 220], // #F4EBDC
-  "900": [250, 244, 231], // #FAF4E7
-  "950": [246, 239, 226], // #F6EFE2 savanna paper
+  "600": [196, 181, 152], // #C4B598 light border
+  "700": [214, 199, 172], // #D6C7AC input border
+  "800": [229, 217, 195], // #E5D9C3 tinted inset (recessed, still AA for dark type)
+  "850": [255, 253, 248], // #FFFDF8 card (brightest layer)
+  "900": [246, 240, 228], // #F6F0E4 panel (lifted off the canvas)
+  "950": [226, 215, 193], // #E2D7C1 savanna paper canvas (deepest layer)
 };
 
 const WHITE: RGB = [255, 255, 255];

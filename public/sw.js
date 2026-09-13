@@ -6,13 +6,14 @@
  * can serve stale JS after a recompile, which bricks the app. SWR returns the
  * cached copy instantly on repeat loads and revalidates in the background, so
  * it is just as fast and cannot serve a permanently-wrong bundle. */
-const CACHE_VERSION = "connectplus-v4";
+const CACHE_VERSION = "connectplus-v5";
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 const IMAGE_CACHE = `${CACHE_VERSION}-images`;
 const API_CACHE = `${CACHE_VERSION}-api`;
 const PRECACHE = [
   "/",
+  "/offline",
   "/manifest.webmanifest",
   "/icon-32.png",
   "/icon-48.png",
@@ -20,6 +21,41 @@ const PRECACHE = [
 ];
 
 const API_SWR = ["/api/posts", "/api/radio/status", "/api/weather"];
+
+/* Private/authenticated areas are never intercepted. Caching a signed-in
+ * page means the next person on the same phone (or the same user after
+ * signing out) can be handed someone else's HTML from disk — the classic
+ * shared-device PWA leak. These go straight to the network, always. */
+const NEVER_INTERCEPT = [
+  /^\/admin(\/|$)/,
+  /^\/settings(\/|$)/,
+  /^\/studio(\/|$)/,
+  /^\/api\/admin(\/|$)/,
+  /^\/api\/auth(\/|$)/,
+  /^\/api\/stripe(\/|$)/,
+  /^\/api\/subscription(\/|$)/,
+  /^\/api\/notifications(\/|$)/,
+  /^\/api\/upload(\/|$)/,
+  /^\/login(\/|$)/,
+  /^\/register(\/|$)/,
+];
+
+const isPrivate = (pathname) => NEVER_INTERCEPT.some((re) => re.test(pathname));
+
+/**
+ * A navigation response is only safe to store when it is anonymous and
+ * genuinely revalidatable: a 200 that set no cookie and asked not to be
+ * stored privately must never make it into the shell cache.
+ */
+function storableNavigation(request, response) {
+  if (request.method !== "GET") return false;
+  if (response.status !== 200) return false;
+  if (response.headers.has("Set-Cookie")) return false;
+  const cacheControl = response.headers.get("cache-control") ?? "";
+  if (/no-store|private/i.test(cacheControl)) return false;
+  const type = response.headers.get("content-type") ?? "";
+  return type.includes("text/html");
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -56,10 +92,11 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
 
-  // Never intercept non-GET, cross-origin, stream, or auth traffic.
+  // Never intercept non-GET, cross-origin, stream, private, or auth traffic.
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith("/api/radio/stream")) return;
   if (url.pathname.startsWith("/auth")) return;
+  if (isPrivate(url.pathname)) return;
 
   /* Public read APIs: stale-while-revalidate with a small TTL so the feed,
    * radio status, and weather stay usable offline without going stale. */
@@ -153,7 +190,9 @@ async function cacheFirstPermanent(request) {
 async function networkFirstNavigation(request, url) {
   try {
     const res = await fetch(request);
-    if (res.ok) {
+    // Only anonymous, revalidatable documents are stored (see above); a
+    // response that sets a cookie or forbids storage is returned untouched.
+    if (storableNavigation(request, res)) {
       const cache = await caches.open(SHELL_CACHE);
       cache.put(request, res.clone()).catch(() => {});
     }
@@ -161,7 +200,14 @@ async function networkFirstNavigation(request, url) {
   } catch {
     const cached = await caches.match(request);
     if (cached) return cached;
-    return caches.match("/");
+    return (
+      (await caches.match("/offline")) ||
+      (await caches.match("/")) ||
+      new Response(
+        "<!doctype html><meta charset=utf-8><title>Offline</title><meta name=viewport content=\"width=device-width,initial-scale=1\"><body style=\"font:16px system-ui;background:#0E1114;color:#F9FAFB;display:grid;place-items:center;height:100vh;margin:0\"><div style=\"text-align:center\"><h1 style=\"color:#ff6b00\">connectPlus</h1><p>You're offline and this page isn't saved yet.</p></div>",
+        { status: 503, headers: { "Content-Type": "text/html; charset=utf-8" } }
+      )
+    );
   }
 }
 

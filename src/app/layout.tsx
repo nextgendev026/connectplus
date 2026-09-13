@@ -10,9 +10,93 @@ import { PwaBootstrap } from "@/components/pwa/PwaBootstrap";
 import RouteProgress from "@/components/layout/RouteProgress";
 import { getSiteConfig, buildIntegrationScripts } from "@/lib/settings";
 
-const DEFAULT_TITLE = "connectPlus - Voices of the Silicon Savanna";
+const DEFAULT_TITLE = "connectPlus — East African stories, live radio & real-time sports";
 const DEFAULT_DESCRIPTION =
-  "Homegrown stories, tech, and ideas from East Africa's Silicon Savanna — Nairobi to Kigali, Kampala to Dar es Salaam. Read, write, listen, and belong.";
+  "East Africa's home for homegrown stories, live radio, and real-time football and basketball livescores — with model-generated betting analysis and tips for every fixture. Read, write, listen, and follow the games from Nairobi to Dar es Salaam.";
+
+/**
+ * Default keyword set. It has to describe the product as it is now — a
+ * publishing platform *and* a live sports desk — because these strings are what
+ * a crawler reads first when the admin console has no override configured.
+ */
+const DEFAULT_KEYWORDS = [
+  "East Africa news",
+  "Kenya news",
+  "Nairobi stories",
+  "live football scores",
+  "livescore",
+  "football betting tips",
+  "sports predictions",
+  "Kenyan Premier League",
+  "African football",
+  "live radio Kenya",
+  "East African radio",
+  "tech blog Africa",
+  "Silicon Savanna",
+  "write and publish",
+  "African creators",
+];
+
+/**
+ * Site-wide structured data.
+ *
+ * `WebSite` + `SearchAction` is what lets Google attach a sitelinks search box
+ * to the brand result, and `Organization` feeds the knowledge panel + logo. Both
+ * are derived from live site config so a renamed site doesn't leave stale
+ * markup behind advertising the old one.
+ */
+function buildStructuredData(params: {
+  siteName: string;
+  url: string;
+  description: string;
+  logoUrl: string;
+  twitterHandle: string;
+}): string {
+  /**
+   * A handle is operator-entered, so it can arrive as "@name", "name!", or with
+   * stray whitespace. Interpolating it raw produced `https://twitter.com/name!`
+   * — an invalid URL in the `sameAs` that Google rejects. Strip it down to what
+   * a handle can legally contain, and drop it entirely when nothing survives
+   * (better to omit `sameAs` than to publish a broken link).
+   */
+  const handle = params.twitterHandle.replace(/[^A-Za-z0-9_]/g, "").slice(0, 15);
+  const sameAs = handle ? [`https://twitter.com/${handle}`] : undefined;
+
+  const graph = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebSite",
+        "@id": `${params.url}/#website`,
+        url: params.url,
+        name: params.siteName,
+        description: params.description,
+        inLanguage: "en",
+        publisher: { "@id": `${params.url}/#organization` },
+        potentialAction: {
+          "@type": "SearchAction",
+          target: {
+            "@type": "EntryPoint",
+            urlTemplate: `${params.url}/search?q={search_term_string}`,
+          },
+          "query-input": "required name=search_term_string",
+        },
+      },
+      {
+        "@type": "Organization",
+        "@id": `${params.url}/#organization`,
+        name: params.siteName,
+        url: params.url,
+        description: params.description,
+        logo: { "@type": "ImageObject", url: params.logoUrl },
+        areaServed: { "@type": "Place", name: "East Africa" },
+        ...(sameAs ? { sameAs } : {}),
+      },
+    ],
+  };
+  // Escape the closing tag so a `</script>` inside config can't break out.
+  return JSON.stringify(graph).replace(/</g, "\\u003c");
+}
 
 export async function generateMetadata(): Promise<Metadata> {
   let cfg;
@@ -29,12 +113,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const ogImage = cfg?.ogImage ?? "/pwa-512.png";
   const ogImageUrl = ogImage.startsWith("http") ? ogImage : `${url}${ogImage}`;
   const twitterHandle = (cfg?.twitterHandle ?? "@connectplus").replace(/^@/, "");
-  const keywords = cfg?.seoKeywords?.length
-    ? cfg.seoKeywords
-    : [
-        "blog", "East Africa", "Nairobi", "Kampala", "Dar es Salaam",
-        "Kigali", "stories", "writing", "community",
-      ];
+  const keywords = cfg?.seoKeywords?.length ? cfg.seoKeywords : DEFAULT_KEYWORDS;
 
   // Structured metadata so crawlers and the browser chrome always pick the
   // brand-faithful vector mark first, mirroring the in-app ConnectPlusMark.
@@ -94,8 +173,12 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#F6EFE2" },
-    { media: "(prefers-color-scheme: dark)", color: "#14100D" },
+    // Must match the live tokens: light is the deepened savanna canvas
+    // (--background #E2D7C1), dark is the deepest charcoal (--surface-950).
+    // A stale value here tints the mobile browser chrome a different colour
+    // from the page it frames.
+    { media: "(prefers-color-scheme: light)", color: "#E2D7C1" },
+    { media: "(prefers-color-scheme: dark)", color: "#0E1114" },
   ],
   width: "device-width",
   initialScale: 1,
@@ -115,10 +198,23 @@ export default async function RootLayout({
   }
   const scripts = cfg ? buildIntegrationScripts(cfg) : "";
   const maintenance = cfg?.maintenanceMode ?? false;
+  const structuredData = buildStructuredData({
+    siteName: cfg?.siteName ?? "connectPlus",
+    url: (cfg?.siteUrl ?? process.env.AUTH_URL ?? "https://connectplusapp.vercel.app").replace(/\/$/, ""),
+    description: cfg?.siteDescription ?? DEFAULT_DESCRIPTION,
+    logoUrl: `${(cfg?.siteUrl ?? process.env.AUTH_URL ?? "https://connectplusapp.vercel.app").replace(/\/$/, "")}/pwa-512.png`,
+    twitterHandle: (cfg?.twitterHandle ?? "@connectplus").replace(/^@/, ""),
+  });
 
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
       <body className="min-h-screen antialiased">
+        <script
+          type="application/ld+json"
+          // Site-wide schema for search engines. Server-rendered so it is in the
+          // very first HTML a crawler sees, before any client hydration.
+          dangerouslySetInnerHTML={{ __html: structuredData }}
+        />
         {scripts ? (
           // Third-party analytics / chat / pixel snippets configured in the
           // admin Settings & Integrations console. Rendered server-side so

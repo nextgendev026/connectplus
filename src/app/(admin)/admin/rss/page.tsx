@@ -23,6 +23,8 @@ import {
   ChevronsDown,
 } from "lucide-react";
 import { cn, timeAgo } from "@/lib/utils";
+import FeedHealthPanel from "@/components/admin/FeedHealthPanel";
+import DrainHistoryPanel from "@/components/admin/DrainHistoryPanel";
 
 interface RssFeed {
   id: string;
@@ -43,6 +45,12 @@ interface RssFeed {
   lastNewArticles: number | null;
   lastDurationMs: number | null;
   consecutiveFailures: number;
+  /** Intake verdicts from the last poll (JSON: reason -> count). */
+  lastFiltered: string | null;
+  /** Items the moderation scanner flagged on the last poll. */
+  lastFlagged: number | null;
+  /** Imported items per category slug on the last poll (JSON). */
+  lastCategories: string | null;
   httpEtag: string | null;
   _count?: { articles: number };
 }
@@ -54,6 +62,8 @@ interface PipelineProgress {
   total: number;
   label: string;
   log: { name: string; status: string; newArticles: number }[];
+  /** Set when the work is running on the Inngest drain — enables cancel. */
+  runId?: string | null;
 }
 
 interface RssArticle {
@@ -83,10 +93,20 @@ interface FeedStats {
   lastPollTime: string | null;
 }
 
+/** Page size for the fetched-articles list. The API clamps a page to 50, so this
+ *  is the largest single request it will honour. */
+const ARTICLE_PAGE_SIZE = 50;
+/** Feeds per streaming poll request, and how many requests "Poll All" may stack
+ *  before it hands the rest to the next cron cycle. */
+const POLL_BATCH_SIZE = 20;
+const MAX_POLL_BATCHES = 8;
+
 export default function RssAdminPage() {
   const articlesScrollRef = useRef<HTMLDivElement>(null);
   const [feeds, setFeeds] = useState<RssFeed[]>([]);
   const [articles, setArticles] = useState<RssArticle[]>([]);
+  const [totalArticles, setTotalArticles] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -101,10 +121,15 @@ export default function RssAdminPage() {
   const [addLoading, setAddLoading] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [recovering, setRecovering] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  /** Bumped after a drain so the durable history panel refetches. */
+  const [historyKey, setHistoryKey] = useState(0);
 
   const stats: FeedStats = {
     totalFeeds: feeds.length,
-    totalArticles: articles.length,
+    // The real row count from the API, not the length of the loaded page — the
+    // old figure capped at 50 and made the pipeline look stuck.
+    totalArticles,
     importedCount: articles.filter((a) => a.postId).length,
     lastPollTime: feeds.reduce<string | null>((latest, f) => {
       if (!f.lastPolled) return latest;
@@ -127,18 +152,40 @@ export default function RssAdminPage() {
     }
   }, []);
 
-  const fetchArticles = useCallback(async () => {
+  const fetchArticles = useCallback(
+    async (opts: { page?: number; append?: boolean } = {}) => {
+      const page = Math.max(1, opts.page ?? 1);
+      try {
+        const params = new URLSearchParams({
+          limit: String(ARTICLE_PAGE_SIZE),
+          page: String(page),
+        });
+        if (importCategoryFilter) params.set("category", importCategoryFilter);
+        const res = await fetch(`/api/rss/articles?${params}`);
+        if (!res.ok) throw new Error("Failed to fetch articles");
+        const data = await res.json();
+        const list: RssArticle[] = data.articles || [];
+        setArticles((prev) => (opts.append ? [...prev, ...list] : list));
+        setTotalArticles(data.pagination?.total ?? list.length);
+      } catch (err) {
+        console.error(err);
+      }
+    },
+    [importCategoryFilter]
+  );
+
+  /** Append the next page of fetched articles (the list used to stop at 50). */
+  async function handleLoadMoreArticles() {
+    setLoadingMore(true);
     try {
-      const params = new URLSearchParams({ limit: "50" });
-      if (importCategoryFilter) params.set("category", importCategoryFilter);
-      const res = await fetch(`/api/rss/articles?${params}`);
-      if (!res.ok) throw new Error("Failed to fetch articles");
-      const data = await res.json();
-      setArticles(data.articles || []);
-    } catch (err) {
-      console.error(err);
+      await fetchArticles({
+        page: Math.floor(articles.length / ARTICLE_PAGE_SIZE) + 1,
+        append: true,
+      });
+    } finally {
+      setLoadingMore(false);
     }
-  }, [importCategoryFilter]);
+  }
 
   useEffect(() => {
     async function init() {
@@ -157,91 +204,175 @@ export default function RssAdminPage() {
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount/filter-change: the sync setState is only an idempotent loading flag
-    fetchArticles();
+    void fetchArticles();
   }, [importCategoryFilter, fetchArticles]);
+
+  /**
+   * Streams ONE ingestion request over NDJSON. Each request is its own HTTP call,
+   * so the route's 300s ceiling bounds a single batch rather than the whole job.
+   * Returns how many due feeds the server did not reach this round.
+   */
+  async function streamPipeline(
+    params: URLSearchParams,
+    endpoint = "/api/rss/stream"
+  ): Promise<{ dueRemaining: number }> {
+    const res = await fetch(`${endpoint}?${params.toString()}`, {
+      headers: { Accept: "application/x-ndjson" },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}) as { error?: string });
+      throw new Error(body.error ?? `Pipeline failed (${res.status})`);
+    }
+    if (!res.body) throw new Error("No progress stream available");
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let dueRemaining = 0;
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let event: {
+          type: string;
+          index?: number;
+          total?: number;
+          name?: string;
+          status?: string;
+          newArticles?: number;
+          message?: string;
+          summary?: { dueRemaining?: number };
+        };
+        try {
+          event = JSON.parse(line);
+        } catch {
+          continue;
+        }
+
+        if (event.type === "error") throw new Error(event.message ?? "Pipeline failed");
+        if (event.type === "start") {
+          setProgress((prev) => (prev ? { ...prev, total: event.total ?? 0 } : prev));
+        } else if (event.type === "feed" || event.type === "item") {
+          setProgress((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  index: event.index ?? prev.index,
+                  total: event.total || prev.total,
+                  label: event.name ?? prev.label,
+                  log: [
+                    {
+                      name: event.name ?? "feed",
+                      status: event.status ?? "OK",
+                      newArticles: event.newArticles ?? 0,
+                    },
+                    ...prev.log,
+                  ].slice(0, 12),
+                }
+              : prev
+          );
+        } else if (event.type === "done") {
+          dueRemaining = event.summary?.dueRemaining ?? 0;
+        }
+      }
+    }
+
+    return { dueRemaining };
+  }
+
+  /**
+   * Start the whole-registry drain on the background worker. Returns true when
+   * Inngest accepted it and the progress stream has been consumed; false means
+   * the queue is unavailable and the caller should fall back to the inline
+   * batched path. Either way the console's progress bar is identical.
+   */
+  async function startBackgroundDrain(): Promise<boolean> {
+    const res = await fetch("/api/rss/drain", { method: "POST" });
+    if (!res.ok) return false;
+    const data = (await res.json().catch(() => ({}))) as { mode?: string; runId?: string };
+    if (data.mode !== "inngest" || !data.runId) return false;
+    const runId = data.runId;
+    setProgress((prev) => (prev ? { ...prev, runId } : prev));
+    await streamPipeline(
+      new URLSearchParams({ action: "drain", runId: data.runId }),
+      "/api/rss/drain/stream"
+    );
+    return true;
+  }
 
   /**
    * Drives the ingestion pipeline through its streaming endpoint so the console
    * can paint real progress instead of a spinner that lies. The old flow called
    * a fire-and-forget trigger: the button said "Polling…" for one round trip and
    * reported success even when the queue accepted the event and never ran it.
+   *
+   * "Poll All" now hands the whole registry to Inngest (one step per feed) and
+   * tails its progress; only when the queue is unavailable does it fall back to
+   * looping bounded inline requests. One click covers the registry either way.
    */
   async function runPipeline(action: "poll" | "thumbnails", feedId?: string) {
     const params = new URLSearchParams({ action });
     if (feedId) params.set("feedId", feedId);
+    if (action === "poll") params.set("maxFeeds", String(POLL_BATCH_SIZE));
     setError(null);
     setProgress({ action, running: true, index: 0, total: 0, label: "Starting…", log: [] });
 
     try {
-      const res = await fetch(`/api/rss/stream?${params.toString()}`, {
-        headers: { Accept: "application/x-ndjson" },
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}) as { error?: string });
-        throw new Error(body.error ?? `Pipeline failed (${res.status})`);
-      }
-      if (!res.body) throw new Error("No progress stream available");
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          let event: {
-            type: string;
-            index?: number;
-            total?: number;
-            name?: string;
-            status?: string;
-            newArticles?: number;
-            message?: string;
-          };
-          try {
-            event = JSON.parse(line);
-          } catch {
-            continue;
-          }
-
-          if (event.type === "error") throw new Error(event.message ?? "Pipeline failed");
-          if (event.type === "start") {
-            setProgress((prev) => (prev ? { ...prev, total: event.total ?? 0 } : prev));
-          } else if (event.type === "feed" || event.type === "item") {
+      if (action === "poll" && !feedId) {
+        // Preferred path: the background worker drains the whole registry and
+        // mirrors per-feed progress to us over NDJSON.
+        const drained = await startBackgroundDrain();
+        if (!drained) {
+          // Fallback: bounded inline batches for deployments without a queue.
+          for (let batch = 0; batch < MAX_POLL_BATCHES; batch++) {
+            const { dueRemaining } = await streamPipeline(params);
+            if (dueRemaining <= 0) break;
             setProgress((prev) =>
               prev
                 ? {
                     ...prev,
-                    index: event.index ?? prev.index,
-                    total: event.total || prev.total,
-                    label: event.name ?? prev.label,
-                    log: [
-                      {
-                        name: event.name ?? "feed",
-                        status: event.status ?? "OK",
-                        newArticles: event.newArticles ?? 0,
-                      },
-                      ...prev.log,
-                    ].slice(0, 8),
+                    label: `${dueRemaining} feed${dueRemaining === 1 ? "" : "s"} still due — continuing…`,
                   }
                 : prev
             );
           }
         }
+      } else {
+        // A single-feed poll (or thumbnail recovery) always fits one request.
+        await streamPipeline(params);
       }
 
       await Promise.all([fetchFeeds(), fetchArticles()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Pipeline failed");
     } finally {
-      setProgress((prev) => (prev ? { ...prev, running: false } : prev));
+      setProgress((prev) => (prev ? { ...prev, running: false, runId: null } : prev));
       window.setTimeout(() => setProgress(null), 5000);
+      // Refresh the durable history a beat after the run settles.
+      window.setTimeout(() => setHistoryKey((k) => k + 1), 1200);
+    }
+  }
+
+  /** Ask the background worker to stop after the current feed. */
+  async function handleCancelDrain() {
+    const runId = progress?.runId;
+    if (!runId) return;
+    setCancelling(true);
+    try {
+      await fetch("/api/rss/drain/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId }),
+      });
+      setProgress((prev) => (prev ? { ...prev, label: "Cancel requested — finishing current feed…" } : prev));
+    } finally {
+      setCancelling(false);
     }
   }
 
@@ -391,7 +522,7 @@ export default function RssAdminPage() {
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <button
-              onClick={() => fetchFeeds().then(fetchArticles)}
+              onClick={() => fetchFeeds().then(() => fetchArticles())}
               disabled={loading}
               className="rounded-lg bg-surface-900 border border-surface-800 p-2 text-surface-400 transition-colors hover:text-surface-50"
             >
@@ -475,6 +606,13 @@ export default function RssAdminPage() {
               ))}
             </div>
 
+            {/* Per-feed ingestion health: last status, what was filtered and
+                why, when each feed is next due, and consecutive failures. */}
+            <FeedHealthPanel feeds={feeds} />
+
+            {/* Durable drain history — per-feed outcomes that outlive Redis. */}
+            <DrainHistoryPanel refreshKey={historyKey} />
+
             {/* Live pipeline progress — real per-feed events streamed from
                 /api/rss/stream, so a slow or failing feed is visible while it
                 runs instead of after the fact. */}
@@ -497,6 +635,16 @@ export default function RssAdminPage() {
                   <span className="max-w-full truncate text-xs text-surface-400 sm:max-w-[18rem]">
                     {progress.label}
                   </span>
+                  {progress.running && progress.runId ? (
+                    <button
+                      onClick={handleCancelDrain}
+                      disabled={cancelling}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-2.5 py-1.5 text-xs font-medium text-red-400 transition hover:bg-red-500/10 disabled:opacity-60"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      {cancelling ? "Cancelling…" : "Cancel drain"}
+                    </button>
+                  ) : null}
                 </div>
                 <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-surface-800">
                   <div
@@ -784,7 +932,9 @@ export default function RssAdminPage() {
                       <ChevronsDown className="h-3.5 w-3.5" />
                     </button>
                     <span className="rounded-full bg-surface-800 px-2.5 py-1 text-xs font-semibold text-surface-200 tabular-nums">
-                      {filteredArticles.length} articles
+                      {filteredArticles.length}
+                      {articleSearch ? "" : ` of ${totalArticles.toLocaleString()}`} article
+                      {filteredArticles.length === 1 && !articleSearch ? "" : "s"}
                     </span>
                   </div>
                 </div>
@@ -902,6 +1052,34 @@ export default function RssAdminPage() {
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {/* The API clamps a page to 50 rows, so the panel used to look
+                  frozen at 50 fetched articles. Page through the rest here. */}
+              {!articleSearch && articles.length < totalArticles && (
+                <div className="flex flex-wrap items-center justify-center gap-3 border-t border-surface-800/60 px-6 py-4">
+                  <span className="text-xs text-surface-500 tabular-nums">
+                    Showing {articles.length.toLocaleString()} of{" "}
+                    {totalArticles.toLocaleString()}
+                  </span>
+                  <button
+                    onClick={() => void handleLoadMoreArticles()}
+                    disabled={loadingMore}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+                      loadingMore
+                        ? "border-surface-800 bg-surface-800 text-surface-400 cursor-not-allowed"
+                        : "border-cyan-400/20 bg-cyan-400/10 text-cyan-300 hover:bg-cyan-400/20"
+                    )}
+                  >
+                    {loadingMore ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <ChevronsDown className="h-3 w-3" />
+                    )}
+                    Load more
+                  </button>
                 </div>
               )}
             </div>

@@ -53,6 +53,10 @@ export async function GET(request: NextRequest) {
   const feedId = request.nextUrl.searchParams.get("feedId") ?? undefined;
   const limit = Number(request.nextUrl.searchParams.get("limit") ?? "25");
   const network = request.nextUrl.searchParams.get("network") !== "0";
+  // Attended runs may raise the per-run feed cap; the caller loops on the
+  // `dueRemaining` field of the done payload until every due feed is reached.
+  // 0/absent keeps the environment's unattended cap.
+  const maxFeeds = Math.min(Math.max(Number(request.nextUrl.searchParams.get("maxFeeds") ?? "0") || 0, 0), 100);
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -84,18 +88,21 @@ export async function GET(request: NextRequest) {
           send({ type: "done", summary });
         } else {
           send({ type: "start", total: 0, action });
-          const summary = await pollFeeds(feedId, ({ index, total, summary: feed }) =>
-            send({
-              type: "feed",
-              index,
-              total,
-              name: feed.feedName,
-              status: feed.status ?? (feed.error ? "ERROR" : "OK"),
-              newArticles: feed.newArticles,
-              items: feed.itemCount,
-              durationMs: feed.durationMs,
-              error: feed.error,
-            })
+          const summary = await pollFeeds(
+            feedId,
+            ({ index, total, summary: feed }) =>
+              send({
+                type: "feed",
+                index,
+                total,
+                name: feed.feedName,
+                status: feed.status ?? (feed.error ? "ERROR" : "OK"),
+                newArticles: feed.newArticles,
+                items: feed.itemCount,
+                durationMs: feed.durationMs,
+                error: feed.error,
+              }),
+            maxFeeds > 0 ? { maxFeeds } : {}
           );
           send({ type: "done", summary });
         }

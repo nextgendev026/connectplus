@@ -150,9 +150,22 @@ async function checkWeather(): Promise<{ status: ServiceStatus; detail: string }
  * down so the page does not cry wolf during development.
  */
 async function checkEdge(): Promise<{ status: ServiceStatus; detail: string }> {
-  const edgeUrl = process.env.EDGE_URL?.replace(/\/+$/, "");
+  // Env first (the deploy-time source of truth), then the admin-managed
+  // setting so the edge can be brought under monitoring from the Integrations
+  // console without a redeploy. Reading it is cached for 30s and fails soft.
+  let edgeUrl = process.env.EDGE_URL?.replace(/\/+$/, "");
   if (!edgeUrl) {
-    return { status: "unconfigured", detail: "EDGE_URL not set — traffic reaches the origin directly" };
+    const { getSettings } = await import("@/lib/settings");
+    const configured = await getSettings(true)
+      .then((s) => s.edgeUrl?.trim())
+      .catch(() => undefined);
+    edgeUrl = configured ? configured.replace(/\/+$/, "") : undefined;
+  }
+  if (!edgeUrl) {
+    return {
+      status: "unconfigured",
+      detail: "No edge URL — set EDGE_URL or the Cloudflare edge URL in Settings",
+    };
   }
   const started = Date.now();
   try {

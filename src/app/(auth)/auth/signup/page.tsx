@@ -342,7 +342,7 @@ export default function SignUpPage() {
             </button>
           </form>
 
-          {/* Social sign-up — renders only when the provider is configured. */}
+          {/* Social sign-up — always visible; shows a not-configured state until Google credentials exist. */}
           <div className="mt-6">
             <OAuthButtons callbackUrl="/" />
           </div>

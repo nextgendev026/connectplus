@@ -245,6 +245,13 @@ model RssFeed {
   lastNewArticles     Int?
   lastDurationMs      Int?
   consecutiveFailures Int     @default(0)
+  /// Intake verdicts for the last poll, as a JSON object of reason -> count.
+  /// This is the "items filtered by reason" column in the feed health view.
+  lastFiltered        String? @db.Text
+  /// Items the moderation scanner flagged for review on the last poll.
+  lastFlagged         Int?
+  /// Imported items per category slug on the last poll (JSON object).
+  lastCategories      String? @db.Text
   /// Conditional-GET validators: sending these back avoids re-downloading an
   /// unchanged feed (the single biggest egress saver on a polling pipeline).
   httpEtag         String?
@@ -523,4 +530,225 @@ model SeoMetadata {
   customOgImage String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+}
+
+/// Normalised livescore snapshot. Every provider adapter (football-data.org,
+/// TheSportsDB, or the built-in demo feed) is mapped onto this ONE shape, so the
+/// public page, the betting analyser and the hive mind never care where a
+/// fixture came from. Rows are upserted by (provider, externalId) and kept after
+/// full time so the analyser can grade its own predictions.
+model SportsMatch {
+  id            String   @id @default(cuid())
+  externalId    String
+  provider      String   @default("demo")
+  sport         String   @default("football")
+  competition   String
+  competitionId String?
+  country       String?
+  homeTeam      String
+  awayTeam      String
+  homeScore     Int?
+  awayScore     Int?
+  /// SCHEDULED | LIVE | HT | FT | POSTPONED | CANCELLED | SUSPENDED
+  status        String   @default("SCHEDULED")
+  minute        Int?
+  kickoff       DateTime?
+  venue         String?
+  homeForm      String?
+  awayForm      String?
+  /// Decimal 1X2 prices when the provider publishes them (for value edges).
+  oddsHome      Float?
+  oddsDraw      Float?
+  oddsAway      Float?
+  providerUpdatedAt DateTime?
+  lastSyncedAt  DateTime @default(now())
+  predictions   SportsPrediction[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([provider, externalId])
+  @@index([status, kickoff])
+  @@index([competition, kickoff])
+  @@index([sport, kickoff])
+}
+
+/// A model-generated betting pick. Written by the sports intelligence layer
+/// after it has folded the fixtures into neural memory, so every pick has a
+/// rationale the admin console (and the hive) can inspect and learn from.
+model SportsPrediction {
+  id             String   @id @default(cuid())
+  matchId        String
+  match          SportsMatch @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  /// 1X2 | double-chance | over-under | btts
+  market         String   @default("1X2")
+  selection      String
+  confidence     Float    @default(0.5)
+  homeWinPct     Float?
+  drawPct        Float?
+  awayWinPct     Float?
+  expectedHomeGoals Float?
+  expectedAwayGoals Float?
+  /// Percentage points of edge over the provider's implied probability.
+  valueEdge      Float?
+  rationale      String   @db.Text
+  model          String   @default("hive-hybrid")
+  /// PENDING | WON | LOST | VOID
+  status         String   @default("PENDING")
+  settledAt      DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  /// One row per (fixture, market, model): the analyser runs from several
+  /// triggers at once, so the write path must be idempotent rather than
+  /// trusting an in-memory "does it exist yet" check (which races).
+  @@unique([matchId, market, model])
+  @@index([matchId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([market, status])
+}
+
+/// A reminder on ONE fixture ("notify me about this match"). Separate from
+/// SportsTeamFollow because readers often care about a single game — a derby, a
+/// final — without following either club permanently.
+model SportsMatchReminder {
+  id          String   @id @default(cuid())
+  userId      String
+  /// `${provider}:${externalId}` — stable across snapshot refreshes.
+  matchKey    String
+  provider    String
+  externalId  String
+  homeTeam    String
+  awayTeam    String
+  competition String
+  kickoff     DateTime?
+  /// KICKOFF | LIVE | FINAL | PICK_SETTLED
+  events      String   @default("KICKOFF,LIVE,FINAL,PICK_SETTLED")
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, matchKey])
+  @@index([matchKey])
+  @@index([userId])
+}
+
+/// Idempotency ledger: one row per (user, match, event) actually notified, so a
+/// 2-minute poll can never send the same kick-off alert twice.
+model SportsNotificationLog {
+  id        String   @id @default(cuid())
+  userId    String
+  matchId   String
+  event     String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, matchId, event])
+  @@index([createdAt])
+  @@index([userId])
+}
+
+/// A reader's followed team. Used to filter the livescore feed to "my teams"
+/// and to weight the model's attention; kept as a plain userId string (like
+/// SportsActivity) so the table needs no cascade relationship.
+model SportsTeamFollow {
+  id          String   @id @default(cuid())
+  userId      String
+  team        String
+  sport       String   @default("football")
+  competition String?
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, team])
+  @@index([userId])
+  @@index([team])
+}
+
+/// One whole-registry RSS drain. Rows outlive Redis, so "what happened last
+/// time, per feed?" is answerable from the console instead of a progress bar
+/// that disappears the moment the tab closes.
+model RssDrainRun {
+  id          String   @id @default(cuid())
+  /// queued | running | done | cancelled
+  stage       String   @default("queued")
+  total       Int      @default(0)
+  processed   Int      @default(0)
+  newArticles Int      @default(0)
+  errors      Int      @default(0)
+  cancelled   Boolean  @default(false)
+  startedAt   DateTime @default(now())
+  finishedAt  DateTime?
+  feeds       RssDrainFeed[]
+
+  @@index([startedAt])
+}
+
+/// Per-feed outcome inside a drain run — the durable history behind the feed
+/// health view. Written as each Inngest step completes, so a crash still leaves
+/// an auditable record of which feeds were reached.
+model RssDrainFeed {
+  id          String      @id @default(cuid())
+  runId       String
+  run         RssDrainRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  feedId      String?
+  feedName    String
+  status      String
+  newArticles Int         @default(0)
+  items       Int?
+  durationMs  Int?
+  error       String?     @db.Text
+  createdAt   DateTime    @default(now())
+
+  @@index([runId])
+  @@index([feedId, createdAt])
+}
+
+/// Admin-injected betting partner. The referral code is woven into the URL
+/// template at click time (never hard-coded in the page), and every impression,
+/// click and conversion is counted so the console can rank partners.
+model BettingReferral {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  region      String?
+  /// Destination template. `{code}` is replaced with referralCode, `{match}`
+  /// with the current match id when the link is opened from a fixture.
+  urlTemplate String   @db.Text
+  referralCode String?
+  bonus       String?
+  description String?  @db.Text
+  logoUrl     String?
+  /// sports-hero | sports-inline | sports-sidebar | sports-footer
+  placement   String   @default("sports-sidebar")
+  ctaText     String   @default("Join & claim")
+  weight      Int      @default(1)
+  isActive    Boolean  @default(true)
+  startsAt    DateTime?
+  endsAt      DateTime?
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  conversions Int      @default(0)
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([placement, isActive])
+}
+
+/// Lightweight activity ledger for the sports hub. Impressions and clicks are
+/// counted on the referral row as well; this table keeps the time series the
+/// admin console charts (and the visitor/returning split) without a second
+/// analytics pipeline.
+model SportsActivity {
+  id          String   @id @default(cuid())
+  /// match_view | prediction_view | referral_impression | referral_click | prediction_settled
+  type        String
+  matchId     String?
+  predictionId String?
+  referralId  String?
+  userId      String?
+  visitorHash String?
+  metadata    String?  @db.Text
+  createdAt   DateTime @default(now())
+
+  @@index([type, createdAt])
+  @@index([referralId])
+  @@index([matchId])
 }

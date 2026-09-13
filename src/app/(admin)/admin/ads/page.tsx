@@ -51,6 +51,9 @@ const SLOT_OPTIONS = [
   { value: "article-inline", label: "Article — mid-content" },
   { value: "article-sidebar", label: "Article — sidebar" },
   { value: "radio-hero", label: "Radio — hero panel" },
+  { value: "sports-hero", label: "Sports — hero panel" },
+  { value: "sports-inline", label: "Sports — between fixtures" },
+  { value: "sports-sidebar", label: "Sports — sidebar rail" },
 ];
 
 const emptyForm = {

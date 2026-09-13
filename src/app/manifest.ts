@@ -3,22 +3,32 @@ import type { MetadataRoute } from "next";
 export default function manifest(): MetadataRoute.Manifest {
   return {
     id: "/",
-    name: "connectPlus - Voices of the Silicon Savanna",
+    name: "connectPlus — East African stories, live radio & real-time sports",
     short_name: "connectPlus",
     description:
-      "Homegrown stories, tech, and ideas from East Africa's Silicon Savanna — read, write, listen to live radio, and belong.",
+      "Homegrown stories from East Africa's Silicon Savanna, live radio, and real-time football and basketball livescores with model-generated betting analysis.",
     lang: "en",
+    dir: "ltr",
     start_url: "/",
     scope: "/",
     display: "standalone",
     display_override: ["standalone", "minimal-ui", "browser"],
-    background_color: "#0a0a0d",
+    // Matches the dark canvas token so the install splash never flashes a
+    // different black than the app's own first paint.
+    background_color: "#0E1114",
     theme_color: "#ff6b00",
     orientation: "portrait-primary",
-    categories: ["social", "news", "blog", "lifestyle"],
+    categories: ["social", "news", "blog", "sports", "lifestyle"],
     prefer_related_applications: false,
     launch_handler: { client_mode: "navigate-existing" },
     shortcuts: [
+      {
+        name: "Live Scores",
+        short_name: "Scores",
+        description: "Real-time livescores and tips for every fixture",
+        url: "/sports",
+        icons: [{ src: "/icon-180.png", sizes: "180x180", type: "image/png" }],
+      },
       {
         name: "Write a Story",
         short_name: "Write",
@@ -77,5 +87,8 @@ export default function manifest(): MetadataRoute.Manifest {
         label: "connectPlus on desktop — browse stories, radio, and the story studio",
       },
     ],
+    // "related_applications" is intentionally omitted: there is no store build,
+    // and declaring one that doesn't exist tells the browser to offer an
+    // install that cannot happen.
   };
 }

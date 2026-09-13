@@ -42,6 +42,14 @@ export function PwaBootstrap() {
 
     let active = true;
 
+    // Whether a service worker was ALREADY controlling this page. On the very
+    // first visit there is none; the new worker then calls clients.claim(),
+    // which fires controllerchange — reloading on that would refresh every
+    // first-time visitor for no reason. Only an update (a controller being
+    // replaced) should reload.
+    const hadController = Boolean(navigator.serviceWorker.controller);
+    let reloaded = false;
+
     const register = () => {
       if (!active) return;
       navigator.serviceWorker
@@ -66,16 +74,21 @@ export function PwaBootstrap() {
     if (document.readyState === "complete") register();
     else window.addEventListener("load", register, { once: true });
 
-    // A freshly-activated SW (via SKIP_WAITING) means the page is stale.
-    navigator.serviceWorker.addEventListener("controllerchange", () => {
+    // A freshly-activated SW (via SKIP_WAITING) means the page is stale — swap
+    // it once, guarded so a controllerchange stampede can't loop the reload.
+    const onControllerChange = () => {
+      if (!hadController || reloaded) return;
+      reloaded = true;
       window.location.reload();
-    });
+    };
+    navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
 
     return () => {
       active = false;
       clearTimeout(bootSync);
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
+      navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
       if (backOnlineTimer.current) clearTimeout(backOnlineTimer.current);
       if (offlineTimer.current) clearTimeout(offlineTimer.current);
     };

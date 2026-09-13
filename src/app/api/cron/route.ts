@@ -2,15 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { inngest } from "@/lib/inngest";
 import { createLogger } from "@/lib/logger";
-import {
-  runPublishScheduled,
-  runHiveSweep,
-  runEmbedPosts,
-  runRecoverThumbnails,
-  runRadioSweep,
-  runRssPollInline,
-  runStatusWatchdog,
-} from "@/lib/cron-jobs";
+import { recordHeartbeat } from "@/lib/job-heartbeat";
+import { CRON_JOBS, getCronStatus } from "@/lib/cron-schedule";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,34 +14,44 @@ export const maxDuration = 300;
 const log = createLogger("cron");
 
 /**
- * cron-job.org entrypoint. Schedules ping this endpoint with a trigger name
- * and each trigger runs the matching heavy job inline, so the free,
- * open-source scheduler owns the cadence. When an inline run fails and Inngest
- * Cloud is configured, the run is handed to Inngest as a durable fallback.
+ * On-demand / external-cron entrypoint.
+ *
+ * TWO schedulers own production and neither of them is Vercel:
+ *
+ *   • Inngest — the primary cadence, one cron trigger per job (mirrored from
+ *     lib/cron-schedule, which a unit test keeps honest).
+ *   • cron-job.org — pings `GET /api/cron?trigger=<jobId>` as the external
+ *     scheduler, which is also the manual/admin path.
+ *
+ * There is no trigger list in this file any more: it is DERIVED from the job
+ * registry, so adding a job to cron-schedule wires the scheduler and this route
+ * at the same time and the two can never drift.
  *
  *  Authorization: Bearer <CRON_SECRET>
  *  or x-cron-secret / ?key= / ?secret=   (same shared secret)
  *
- *  GET /api/cron?trigger=hive-sweep
- *  GET /api/cron?trigger=rss-poll
- *  GET /api/cron?trigger=embed-posts
- *  GET /api/cron?trigger=recover-thumbnails
- *  GET /api/cron?trigger=radio-sweep
- *  GET /api/cron?trigger=publish-scheduled
- *  GET /api/cron?trigger=status-watchdog
+ *  GET /api/cron                      → the schedule, heartbeats and cron-job.org
+ *                                       setup payload (discovery)
+ *  GET /api/cron?trigger=<jobId>      → run that job inline
  */
 
-const TRIGGERS = {
-  "rss-poll": { run: () => runRssPollInline(), event: "rss-poll" },
-  "hive-sweep": { run: () => runHiveSweep(), event: "hive-sweep" },
-  "embed-posts": { run: () => runEmbedPosts(), event: "embed-posts" },
-  "recover-thumbnails": { run: () => runRecoverThumbnails(), event: "recover-thumbnails" },
-  "radio-sweep": { run: () => runRadioSweep(), event: "radio-status-sweep" },
-  "publish-scheduled": { run: () => runPublishScheduled(), event: "publish-scheduled" },
-  "status-watchdog": { run: () => runStatusWatchdog(), event: "status-watchdog" },
-} as const;
+const TRIGGERS: Record<string, { run: () => Promise<unknown>; event: string; job: string }> =
+  Object.fromEntries(
+    CRON_JOBS.map((job) => [job.id, { run: () => job.run(), event: job.id, job: job.id }])
+  );
 
-type TriggerName = keyof typeof TRIGGERS;
+/** Aliases kept so existing cron-job.org entries and docs keep working. */
+const ALIASES: Record<string, string> = {
+  "recover-thumbnails": "thumbnail-recovery",
+  "radio-sweep": "radio-status-sweep",
+};
+
+function resolveTrigger(name: string | null): string | null {
+  if (!name) return null;
+  if (name in TRIGGERS) return name;
+  const alias = ALIASES[name];
+  return alias && alias in TRIGGERS ? alias : null;
+}
 
 async function authorize(request: NextRequest): Promise<boolean> {
   const secret = process.env.CRON_SECRET;
@@ -77,25 +80,47 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
-  const trigger = request.nextUrl.searchParams.get("trigger") as TriggerName | null;
-  if (!trigger || !(trigger in TRIGGERS)) {
+  const requested = request.nextUrl.searchParams.get("trigger");
+  const trigger = resolveTrigger(requested);
+
+  if (!trigger) {
+    // Discovery: everything an external scheduler needs to be configured, plus
+    // the live heartbeat for each job. With no `trigger` this is also how the
+    // admin console reads the schedule.
+    const status = await getCronStatus().catch(() => []);
     return NextResponse.json(
       {
-        error: "Unknown trigger",
-        availableTriggers: Object.keys(TRIGGERS),
+        generatedAt: new Date().toISOString(),
+        schedulers: ["inngest", "cron-job.org"],
+        endpoint: "/api/cron?trigger=<jobId>",
+        auth: "Authorization: Bearer <CRON_SECRET> (or x-cron-secret / ?key=)",
+        jobs: status.map((job) => ({
+          trigger: job.id,
+          name: job.name,
+          cron: job.cron,
+          everyMinutes: job.everyMinutes,
+          essential: job.essential,
+          lastRun: job.lastRun,
+          stale: job.stale,
+          ok: job.ok,
+        })),
+        ...(requested && !trigger ? { unknownTrigger: requested } : {}),
       },
-      { status: 404 }
+      { status: requested && !trigger ? 404 : 200 }
     );
   }
 
   const startedAt = Date.now();
-  const { run, event } = TRIGGERS[trigger];
+  const { run, event, job } = TRIGGERS[trigger]!;
 
   try {
     const result = await run();
+    await recordHeartbeat(job, { ok: true, detail: "run by /api/cron" });
     log.info("cron run complete", { trigger, elapsedMs: Date.now() - startedAt });
-    return NextResponse.json({ success: true, trigger, elapsedMs: Date.now() - startedAt, ...result });
+    const extra = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
+    return NextResponse.json({ success: true, trigger, elapsedMs: Date.now() - startedAt, ...extra });
   } catch (inlineErr) {
+    await recordHeartbeat(job, { ok: false, detail: String(inlineErr).slice(0, 160) });
     log.error("cron run failed, trying Inngest fallback", { trigger, error: String(inlineErr) });
 
     if (process.env.INNGEST_EVENT_KEY) {

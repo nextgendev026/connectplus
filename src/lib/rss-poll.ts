@@ -108,13 +108,19 @@ export const DEFAULT_POLL_INTERVAL_SECONDS = Number(
   process.env.RSS_POLL_INTERVAL_SECONDS ?? 3600
 );
 
-/** Per-run cap on feeds polled in a single cron cycle. When many feeds fall
- * behind (say, after an outage) a run must not try to catch up everything at
- * once — that is exactly what blows the function runtime and origin egress on
- * a free tier. Remaining due feeds are picked up by later cycles. Bounded to
- * [1, 100]; a manual `pollFeeds(feedId)` always ignores the cap. */
-const MAX_FEEDS_PER_POLL_RUN = Math.min(
-  Math.max(Number(process.env.RSS_POLL_MAX_FEEDS_PER_RUN ?? 10) || 10, 1),
+/** Per-run cap on feeds polled in a single unattended cron cycle. When many
+ * feeds fall behind (say, after an outage) a run must not try to catch up
+ * everything at once — that is exactly what blows the function runtime and
+ * origin egress on a free tier. Remaining due feeds are picked up by later
+ * cycles. Bounded to [1, 100].
+ *
+ * This used to default to 10, which starved a registry of ~25 feeds: only the
+ * ten oldest got polled each hour, so the rest looked permanently stuck. The
+ * default now clears a typical registry in one cycle while staying well inside
+ * the serverless budget; attended runs (the admin console) raise it further via
+ * `pollFeeds(..., { maxFeeds })`. */
+export const MAX_FEEDS_PER_POLL_RUN = Math.min(
+  Math.max(Number(process.env.RSS_POLL_MAX_FEEDS_PER_RUN ?? 25) || 25, 1),
   100
 );
 
@@ -147,6 +153,11 @@ export interface PollSummary {
   feedsPolled: number;
   newArticles: number;
   errors: number;
+  /** Feeds that were due when the run started (before the per-run cap). */
+  dueTotal: number;
+  /** Due feeds this run did not reach because of the cap — they need another
+   *  pass (the admin console loops on this, the cron picks them up next hour). */
+  dueRemaining: number;
   details: Array<{
     feedName: string;
     newArticles: number;
@@ -288,7 +299,11 @@ export async function listDueFeeds(feedId?: string): Promise<DueFeed[]> {
 
   const feeds = await prisma.rssFeed.findMany({
     where: feedWhere,
-    orderBy: { lastPolled: "asc" },
+    // Never-polled feeds MUST come first. Postgres sorts NULLs last on ASC, so
+    // a feed added today used to sit behind every already-polled feed and —
+    // with a per-run cap — could wait hours (or a full day of cron gaps)
+    // before its first fetch. `nulls: "first"` makes a new feed due now.
+    orderBy: [{ lastPolled: { sort: "asc", nulls: "first" } }, { id: "asc" }],
     select: {
       id: true,
       name: true,
@@ -591,6 +606,11 @@ export async function pollSingleFeed(
         lastNewArticles: summary.newArticles,
         lastDurationMs: Date.now() - startedAt,
         consecutiveFailures: 0,
+        // Intake verdicts for the health view: what was filtered and why, what
+        // the moderation scanner flagged, and how items were categorised.
+        lastFiltered: Object.keys(filtered).length > 0 ? JSON.stringify(filtered) : null,
+        lastFlagged: flagged,
+        lastCategories: Object.keys(categoryCounts).length > 0 ? JSON.stringify(categoryCounts) : null,
         // Remember the validators so the next cycle can get a cheap 304.
         ...(fetched.etag ? { httpEtag: fetched.etag } : {}),
         ...(fetched.lastModified ? { httpLastModified: fetched.lastModified } : {}),
@@ -686,6 +706,9 @@ export async function recoverMissingThumbnails(
 
   const summary: ThumbnailRecoverySummary = { checked: candidates.length, recovered: 0, failed: 0 };
   let index = 0;
+  // The documented per-run egress ceiling. Without it a limit=100 run fired 100
+  // publisher page downloads; the constant existed but was never consulted.
+  let networkFetches = 0;
 
   for (const article of candidates) {
     index++;
@@ -696,7 +719,8 @@ export async function recoverMissingThumbnails(
     if (inline) {
       image = inline;
       source = "content";
-    } else if (allowNetwork) {
+    } else if (allowNetwork && networkFetches < MAX_THUMB_NETWORK_FETCHES) {
+      networkFetches++;
       image = await fetchOgImage(article.url);
       if (image) source = "og";
     }
@@ -723,8 +747,26 @@ export async function recoverMissingThumbnails(
   }
 
   if (summary.recovered > 0) redisIncr("feed:version").catch(() => {});
-  log.info("thumbnail recovery finished", { ...summary });
+  log.info("thumbnail recovery finished", { ...summary, networkFetches });
   return summary;
+}
+
+/**
+ * Decide which of the due feeds this run will actually poll.
+ *
+ * Extracted as a pure function so the starvation contract can be unit-tested:
+ * an unattended run must cap itself (`dueRemaining` > 0 tells the caller more
+ * work is waiting), a force-run of ONE feed must never be trimmed, and the
+ * caller's cap has to win over the environment's unattended default.
+ */
+export function selectPollBatch(
+  due: DueFeed[],
+  opts: { feedId?: string; maxFeeds?: number } = {}
+): { dueTotal: number; queue: DueFeed[]; dueRemaining: number; cap: number } {
+  const dueTotal = due.length;
+  const cap = Math.min(Math.max(opts.maxFeeds ?? MAX_FEEDS_PER_POLL_RUN, 1), 100);
+  const queue = opts.feedId ? due : due.slice(0, cap);
+  return { dueTotal, queue, dueRemaining: Math.max(0, dueTotal - queue.length), cap };
 }
 
 /**
@@ -734,19 +776,23 @@ export async function recoverMissingThumbnails(
  */
 export async function pollFeeds(
   feedId?: string,
-  onProgress?: (p: { index: number; total: number; summary: FeedSummary }) => void
+  onProgress?: (p: { index: number; total: number; summary: FeedSummary }) => void,
+  opts: {
+    /** Raise (or lower) this run's feed cap. Attended/admin runs pass a larger
+     *  number and loop until `dueRemaining` is zero. */
+    maxFeeds?: number;
+  } = {}
 ): Promise<PollSummary> {
   const due = await listDueFeeds(feedId);
-  if (due.length === 0) {
-    return { feedsPolled: 0, newArticles: 0, errors: 0, details: [] };
+  const { dueTotal, queue, dueRemaining } = selectPollBatch(due, { feedId, maxFeeds: opts.maxFeeds });
+  if (dueTotal === 0) {
+    return { feedsPolled: 0, newArticles: 0, errors: 0, dueTotal: 0, dueRemaining: 0, details: [] };
   }
-
-  const queue = feedId ? due : due.slice(0, MAX_FEEDS_PER_POLL_RUN);
-  if (queue.length < due.length) {
+  if (dueRemaining > 0) {
     log.info("poll cycle capped", {
-      due: due.length,
+      due: dueTotal,
       polledThisRun: queue.length,
-      restLater: due.length - queue.length,
+      restLater: dueRemaining,
     });
   }
 
@@ -791,6 +837,8 @@ export async function pollFeeds(
     feedsPolled: queue.length,
     newArticles: totalNewArticles,
     errors: totalErrors,
+    dueTotal,
+    dueRemaining,
     details: details.map(({ feedName, newArticles, error, status, itemCount, durationMs }) => ({
       feedName,
       newArticles,

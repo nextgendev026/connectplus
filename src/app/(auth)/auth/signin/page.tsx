@@ -197,7 +197,7 @@ export default function SignInPage() {
             </button>
           </form>
 
-          {/* Social sign-in — renders only when the provider is configured. */}
+          {/* Social sign-in — always visible; shows a not-configured state until Google credentials exist. */}
           <div className="mt-6">
             <OAuthButtons callbackUrl="/" />
           </div>

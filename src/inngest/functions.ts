@@ -5,24 +5,29 @@ import { autoTagPost } from "@/lib/auto-tag";
 import { createPublishNotifications } from "@/lib/notifications";
 import { createLogger } from "@/lib/logger";
 import { redisIncr } from "@/lib/redis";
+import { recordHeartbeat } from "@/lib/job-heartbeat";
 
 const log = createLogger("inngest");
 
 /**
- * Publishes stories whose scheduledAt time has arrived. Scheduled every five
- * minutes by cron-job.org (/api/cron?trigger=publish-scheduled) and fired as
- * an Inngest event when cron-job.org's inline run fails.
+ * Publishes stories whose scheduledAt time has arrived.
+ *
+ * Inngest owns the cadence (every 5 min, see CRON_JOBS in lib/cron-schedule);
+ * the event trigger stays so /api/cron and the admin console can run it on
+ * demand. Mirrors the `publish-scheduled` entry in the cron registry.
  */
 export const publishScheduled = inngest.createFunction(
   {
     id: "publish-scheduled",
     name: "Publish scheduled stories",
-    triggers: [{ event: "publish-scheduled" }],
+    triggers: [{ event: "publish-scheduled" }, { cron: "*/5 * * * *" }],
     // Never overlap runs; retry transient DB blips.
     concurrency: 1,
     retries: 3,
   },
   async ({ step }) => {
+    await step.run("heartbeat", () => recordHeartbeat("publish-scheduled"));
+
     const due = await step.run("find-due-posts", async () =>
       prisma.post.findMany({
         where: {
@@ -121,9 +126,8 @@ export const publishScheduled = inngest.createFunction(
 );
 
 /**
- * Polls all active RSS feeds. Triggered by cron-job.org hourly
- * (/api/cron?trigger=rss-poll), manually from the admin panel, or as an
- * Inngest fallback event.
+ * Polls all active RSS feeds. Inngest fires this hourly (cron trigger below);
+ * the event trigger remains for manual admin runs and the safety net.
  *
  * Each feed runs as its OWN step: if a source hangs or a serverless window
  * ends mid-run, Inngest resumes from the next feed instead of losing the
@@ -136,11 +140,13 @@ export const rssPoll = inngest.createFunction(
     // cron-job.org owns the hourly cadence; per-feed lastPolled intervals
     // throttle actual fetches. One run at a time + a cap keeps outbound egress
     // and Postgres writes flat.
-    triggers: [{ event: "rss-poll" }],
+    triggers: [{ event: "rss-poll" }, { cron: "0 * * * *" }],
     concurrency: 1,
     retries: 2,
   },
   async ({ step }) => {
+    await step.run("heartbeat", () => recordHeartbeat("rss-poll"));
+
     const { listDueFeeds, pollSingleFeed, resolveDefaultAuthorId } = await import("@/lib/rss-poll");
 
     const due = await step.run("list-due-feeds", async () => listDueFeeds());
@@ -206,21 +212,23 @@ export const rssPollFeed = inngest.createFunction(
 
 /**
  * Nightly deep-learning pass: sweeps the platform for new memories, trains the
- * hive brain, and ingests unlearned RSS articles. Scheduled nightly by
- * cron-job.org (/api/cron?trigger=hive-sweep); runs via this event as the
- * Inngest fallback when the inline run fails.
+ * hive brain, and ingests unlearned RSS articles.
+ *
+ * Deep pass at 01:00 UTC — lowest-traffic window — never stacked; DB-heavy
+ * steps run serially via step.run already. Inngest cron owns the schedule, the
+ * event trigger stays for on-demand admin runs.
  */
 export const hiveSweep = inngest.createFunction(
   {
     id: "hive-sweep",
     name: "Nightly hive & neural training",
-    // Deep pass at 01:00 UTC — lowest-traffic window — never stacked, DB-heavy
-    // steps run serially via step.run already.
-    triggers: [{ event: "hive-sweep" }],
+    triggers: [{ event: "hive-sweep" }, { cron: "0 1 * * *" }],
     concurrency: 1,
     retries: 2,
   },
   async ({ step }) => {
+    await step.run("heartbeat", () => recordHeartbeat("hive-sweep"));
+
     await step.run("sweep-internal", async () => hiveBrain.sweepInternal());
     await step.run("train-brain", async () => hiveBrain.train());
     await step.run("learn-rss", async () => {
@@ -266,11 +274,13 @@ export const embedPosts = inngest.createFunction(
     name: "Index semantic embeddings",
     // Batches at most 400 posts/run; single concurrency keeps pgvector writes
     // and embedding egress predictable.
-    triggers: [{ event: "embed-posts" }],
+    triggers: [{ event: "embed-posts" }, { cron: "30 1 * * *" }],
     concurrency: 1,
     retries: 2,
   },
   async ({ step }) => {
+    await step.run("heartbeat", () => recordHeartbeat("embed-posts"));
+
     const embedded = await step.run("index-published", async () => {
       const { indexPublishedPosts } = await import("@/lib/neural-vector");
       return indexPublishedPosts(400);
@@ -290,11 +300,13 @@ export const radioStatusSweep = inngest.createFunction(
     name: "Refresh radio station metadata",
     // Every 15 min — plenty for song/listener metadata; a single sweep hits
     // each upstream once with a timeout, keeping free-tier egress flat.
-    triggers: [{ event: "radio-status-sweep" }],
+    triggers: [{ event: "radio-status-sweep" }, { cron: "*/15 * * * *" }],
     concurrency: 1,
     retries: 2,
   },
   async ({ step }) => {
+    await step.run("heartbeat", () => recordHeartbeat("radio-status-sweep"));
+
     const summary = await step.run("sweep-statuses", async () => {
       const { sweepAllStationStatuses } = await import("@/lib/radio-status-fetch");
       return sweepAllStationStatuses();
@@ -314,11 +326,13 @@ export const statusWatchdog = inngest.createFunction(
   {
     id: "status-watchdog",
     name: "Status watchdog alerts",
-    triggers: [{ event: "status-watchdog" }],
+    triggers: [{ event: "status-watchdog" }, { cron: "*/5 * * * *" }],
     concurrency: 1,
     retries: 2,
   },
   async ({ step }) => {
+    await step.run("heartbeat", () => recordHeartbeat("status-watchdog"));
+
     const alerts = await step.run("probe-services", async () => {
       const { runChecks, alertRecipients, alertWebhookUrl } = await import("@/lib/status-alerts");
       const checks = await runChecks();
@@ -394,6 +408,8 @@ export const statusDailySnapshot = inngest.createFunction(
     retries: 2,
   },
   async ({ step }) => {
+    await step.run("heartbeat", () => recordHeartbeat("status-daily-snapshot"));
+
     return step.run("snapshot", async () => {
       const { runChecks, recordAndReadHistory } = await import("@/lib/status");
       const checks = await runChecks();
@@ -419,11 +435,13 @@ export const thumbnailRecovery = inngest.createFunction(
   {
     id: "thumbnail-recovery",
     name: "Recover missing thumbnails",
-    triggers: [{ event: "recover-thumbnails" }],
+    triggers: [{ event: "recover-thumbnails" }, { cron: "15 */6 * * *" }],
     concurrency: 1,
     retries: 2,
   },
   async ({ step }) => {
+    await step.run("heartbeat", () => recordHeartbeat("thumbnail-recovery"));
+
     const summary = await step.run("recover", async () => {
       const { recoverMissingThumbnails } = await import("@/lib/rss-poll");
       return recoverMissingThumbnails({ limit: 20 });
@@ -435,6 +453,160 @@ export const thumbnailRecovery = inngest.createFunction(
       });
     }
     return summary;
+  }
+);
+
+/**
+ * Whole-registry RSS drain.
+ *
+ * The admin console used to drive this by looping an inline 300s HTTP request,
+ * so a large backlog could not be worked through without pinning a request —
+ * and any mid-run failure lost the remaining feeds. Here every feed is its own
+ * Inngest step and progress is mirrored to Redis, so the console keeps its live
+ * progress stream while the actual work survives restarts and serverless limits.
+ */
+export const rssDrain = inngest.createFunction(
+  {
+    id: "rss-drain",
+    name: "Drain the whole RSS registry",
+    triggers: [{ event: "rss-drain" }],
+    // One drain at a time: the registry is finite and hammering every source in
+    // parallel is exactly what the per-feed stagger exists to avoid.
+    concurrency: 1,
+    retries: 1,
+  },
+  async ({ event, step }) => {
+    const runId = (event.data as { runId?: string } | undefined)?.runId;
+    if (!runId) return { error: "missing runId" };
+
+    const { listDueFeeds, pollSingleFeed, resolveDefaultAuthorId } = await import("@/lib/rss-poll");
+    const { startDrain, recordDrainFeed, finishDrain, failDrain, isDrainCancelled } = await import("@/lib/rss-drain");
+
+    try {
+      const due = await step.run("list-due-feeds", async () => listDueFeeds());
+      const authorId = await step.run("resolve-author", async () => resolveDefaultAuthorId());
+      await step.run("mark-start", async () => startDrain(runId, due.length));
+
+      let newArticles = 0;
+      let errors = 0;
+      let cancelled = false;
+
+      for (const [i, feed] of due.entries()) {
+        // Cooperative cancel: plain (un-memoized) read so a flag set mid-run is
+        // seen. Already-polled feeds stay polled; the rest keep their old
+        // lastPolled, so a later drain resumes exactly where this one stopped.
+        if (await isDrainCancelled(runId)) {
+          cancelled = true;
+          break;
+        }
+        if (i > 0) await step.sleep(`stagger-${feed.id}`, "500ms");
+        const summary = await step.run(`drain-feed-${feed.id}`, async () => {
+          const result = await pollSingleFeed(feed, authorId);
+          await recordDrainFeed(
+            runId,
+            {
+              name: result.feedName,
+              status: result.status ?? (result.error ? "ERROR" : "OK"),
+              newArticles: result.newArticles,
+              items: result.itemCount,
+              durationMs: result.durationMs,
+              error: result.error,
+            },
+            i + 1,
+            feed.id
+          );
+          return result;
+        });
+        newArticles += summary.newArticles;
+        if (summary.error) errors += 1;
+      }
+
+      await step.run("mark-finish", async () =>
+        finishDrain(runId, { total: due.length, newArticles, errors, dueRemaining: 0, cancelled })
+      );
+
+      if (newArticles > 0) {
+        await step.run("neural-learn", async () => {
+          const { neuralMind } = await import("@/lib/neural-mind");
+          await neuralMind.learnFromRssArticles();
+        });
+      }
+
+      return { runId, feedsPolled: due.length, newArticles, errors, cancelled };
+    } catch (err) {
+      await failDrain(runId, err instanceof Error ? err.message : "drain failed").catch(() => {});
+      throw err;
+    }
+  }
+);
+
+/**
+ * Sports intelligence sweep. Folds every fixture the hub has seen into neural
+ * memory, regenerates betting picks and grades the ones that have finished, so
+ * the hive mind's sports corpus (and its accuracy record) keeps improving
+ * without a single request from a browser.
+ */
+export const sportsIntel = inngest.createFunction(
+  {
+    id: "sports-intel",
+    name: "Sports intelligence & betting picks",
+    triggers: [{ event: "sports-intel" }, { cron: "*/30 * * * *" }],
+    concurrency: 1,
+    retries: 2,
+  },
+  async ({ step }) => {
+    await step.run("heartbeat", () => recordHeartbeat("sports-intel"));
+
+    const result = await step.run("analyse-fixtures", async () => {
+      const { runSportsIntelligence } = await import("@/lib/sports-intelligence");
+      return runSportsIntelligence({ limit: 40, teach: true });
+    });
+
+    return result;
+  }
+);
+
+/**
+ * Livescore heartbeat. Keeps the merged snapshot cache warm and grades finished
+ * fixtures every couple of minutes so the board is never serving stale state to
+ * the first visitor after a deploy.
+ */
+export const sportsLive = inngest.createFunction(
+  {
+    id: "sports-live",
+    name: "Livescore snapshot & settlement",
+    triggers: [{ event: "sports-live" }, { cron: "*/2 * * * *" }],
+    concurrency: 1,
+    retries: 1,
+  },
+  async ({ step }) => {
+    await step.run("heartbeat", () => recordHeartbeat("sports-live"));
+    return step.run("refresh-board", async () => {
+      const { runSportsLive } = await import("@/lib/cron-jobs");
+      return runSportsLive();
+    });
+  }
+);
+
+/**
+ * Favourite alerts. Fans a reader's starred fixtures and followed teams out into
+ * notifications; the (user, match, event) ledger keeps it idempotent, so running
+ * it every five minutes never double-sends.
+ */
+export const sportsNotify = inngest.createFunction(
+  {
+    id: "sports-notify",
+    name: "Favourite match notifications",
+    triggers: [{ event: "sports-notify" }, { cron: "*/5 * * * *" }],
+    concurrency: 1,
+    retries: 1,
+  },
+  async ({ step }) => {
+    await step.run("heartbeat", () => recordHeartbeat("sports-notify"));
+    return step.run("fan-out", async () => {
+      const { runSportsNotify } = await import("@/lib/cron-jobs");
+      return runSportsNotify();
+    });
   }
 );
 
@@ -464,11 +636,15 @@ export const functions = [
   publishScheduled,
   rssPoll,
   rssPollFeed,
+  rssDrain,
   hiveSweep,
   embedPosts,
   neuralLearn,
   radioStatusSweep,
   thumbnailRecovery,
+  sportsLive,
+  sportsNotify,
+  sportsIntel,
   statusWatchdog,
   statusDailySnapshot,
 ];

@@ -1,12 +1,14 @@
-# Cloudflare edge cache
+# Cloudflare edge cache + livescore tier
 
-A single-purpose Cloudflare Worker that sits in front of the Vercel deployment
-and answers anonymous traffic from Cloudflare's cache.
+A single-purpose Cloudflare Worker that sits in front of the Vercel deployment,
+answers anonymous traffic from Cloudflare's cache, and serves the live scores
+board from the edge.
 
 ```
 reader ──▶ Cloudflare edge (Worker) ──▶ Vercel origin
                  │
-                 └─ HIT: never touches Vercel
+                 ├─ HIT: never touches Vercel
+                 └─ HIT-STALE: instant answer, refresh runs behind the reader
 ```
 
 ## Why
@@ -33,9 +35,48 @@ cover requests are answered at the edge, not re-fetched and re-resized.
 | `/api/trending/topics` | 120s | identical for every anonymous reader |
 | `/api/posts/check` | 30s | |
 | `/api/subscription/plans` | 600s | |
+| **`/__livescore`** (→ `/api/sports/live`) | **15s / 45s SWR** | the live board |
+| **`/api/sports/predictions`** | **30s / 90s SWR** | the tips board |
+| **`/api/sports/referrals`** | **300s / 900s SWR** | partner offers |
 
 Never cached: `/api/auth*`, `/api/upload`, `/api/track`, `/api/stripe*`,
-`/api/status/*`, `/api/rss*`, every non-GET method.
+`/api/status/*`, `/api/rss*`, the reader-scoped sports routes
+(`/api/sports/follows`, `/api/sports/reminders`, `/api/sports/track`), every
+non-GET method.
+
+## The livescore tier
+
+The live board polls on a timer — every 15s while a match is in play. That is
+the traffic shape that melts a serverless origin: N viewers × 4 requests/minute
+each, all asking for a payload that is byte-identical for every one of them. A
+hundred people watching a derby is ~400 origin invocations a minute for the same
+JSON.
+
+So sports JSON gets its own cache class with three properties:
+
+1. **A short `ttl`** (15s) — a goal can land any second.
+2. **A much longer `swr` window** (45s). An entry past `ttl` is served
+   *immediately* as `HIT-STALE` while a refresh runs in `ctx.waitUntil`. Nobody
+   ever waits on the origin, and the next caller gets the refreshed copy. A
+   15-second-old score beats a spinner every time.
+3. **A canonical alias, `/__livescore`.** The board's real query string is
+   open-ended and every distinct query is a distinct cache entry, so a caller
+   that appends cache-busting params would shred the cache into one useless
+   entry per viewer. The alias keeps only the params that change the payload
+   (`sport`, `date`) and snaps them to a closed set — cardinality is
+   "2 sports × distinct dates", nothing else.
+
+Point the app at it with `NEXT_PUBLIC_EDGE_URL`; leave that unset and the board
+falls back to the app's own `/api/sports/live` route, same payload, no edge tier.
+
+```bash
+NEXT_PUBLIC_EDGE_URL=https://connectplus-edge.<subdomain>.workers.dev
+```
+
+The tier answers cross-origin with `Access-Control-Allow-Origin: *`. That is
+safe for the same reason it is cacheable at all: it only ever carries the
+anonymous, identical-for-everyone payload. Reader-scoped sports routes are in
+`NEVER_CACHE` and never reach this path.
 
 ## Safety model
 
@@ -96,9 +137,17 @@ Every response carries `X-Edge-Cache`:
 | Value | Meaning |
 | --- | --- |
 | `HIT` | served from the edge, Vercel untouched |
+| `HIT-STALE` | served past its TTL; a refresh is running behind the reader |
 | `MISS` | fetched from the origin, then stored |
 | `MISS-UNCACHEABLE` | origin response can't be cached |
 | `BYPASS` | credentialed/write/never-cache request passed through |
+
+`X-Edge-Age` carries the age in seconds for the sports tier, which is the
+number to watch when tuning the TTLs.
+
+```bash
+curl -sI https://connectplus-edge.connectplusapp.workers.dev/__livescore?sport=football
+```
 
 `/__edge` is also the endpoint the app's `/status` page probes when `EDGE_URL`
 is set.

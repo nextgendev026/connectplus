@@ -21,6 +21,8 @@ import {
   Menu,
   X,
   Settings2,
+  Plug,
+  Trophy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Logo from "@/components/ui/Logo";
@@ -35,11 +37,13 @@ const ADMIN_LINKS = [
   { href: "/admin/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/admin/content", label: "Content Console", icon: FileText },
   { href: "/admin/ads", label: "Monetization", icon: Megaphone },
+  { href: "/admin/sports", label: "Sports & Betting", icon: Trophy },
   { href: "/admin/subscriptions", label: "Subscriptions", icon: CreditCard },
   { href: "/admin/categories", label: "Categories", icon: FolderTree },
   { href: "/admin/users", label: "Users & Nodes", icon: Users },
   { href: "/admin/rss", label: "RSS Feeds", icon: Rss },
-  { href: "/admin/settings", label: "Settings & Integrations", icon: Settings2 },
+  { href: "/admin/integrations", label: "Integrations", icon: Plug },
+  { href: "/admin/settings", label: "Settings", icon: Settings2 },
 ];
 
 function isActive(href: string, pathname: string): boolean {

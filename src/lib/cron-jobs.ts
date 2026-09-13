@@ -151,6 +151,79 @@ export async function runRecoverThumbnails(limit = 20): Promise<ThumbnailRecover
   return summary;
 }
 
+/**
+ * Sports intelligence sweep: settle finished picks, teach the hive mind the
+ * latest fixtures, and regenerate predictions. Runs inline for cron-job.org and
+ * as per-feed-style Inngest steps when the queue is available.
+ */
+export async function runSportsIntel(limit = 40): Promise<{
+  generated: number;
+  skipped: number;
+  settled: number;
+  taught: number;
+}> {
+  const { runSportsIntelligence } = await import("@/lib/sports-intelligence");
+  return runSportsIntelligence({ limit, teach: true });
+}
+
+/**
+ * Livescore heartbeat.
+ *
+ * Keeps the board warm and the picks fresh at a faster cadence than the 30-minute
+ * intelligence sweep: it refreshes the snapshot cache (so a visitor never pays
+ * the multi-source fan-out latency) and grades anything that has finished. It
+ * deliberately generates only a small batch of picks — the expensive training
+ * pass belongs to `sports-intel`.
+ */
+export async function runSportsLive(minutesAhead = 180): Promise<{
+  matches: number;
+  live: number;
+  settled: number;
+  refreshed: number;
+  sources: string[];
+}> {
+  const [{ getSportsHub }, { settlePredictions, runSportsIntelligence }] = await Promise.all([
+    import("@/lib/sports"),
+    import("@/lib/sports-intelligence"),
+  ]);
+
+  // `persist: false` — the analyser pass below writes the fixtures it ranks, so
+  // mirroring the whole board here would double the write load for no gain.
+  const hub = await getSportsHub({ fresh: true, persist: false });
+  const settled = await settlePredictions();
+  // Bounded top-up: enough to cover new fixtures arriving in the window without
+  // re-running the whole model on a two-minute cadence.
+  const refreshed = await runSportsIntelligence({ limit: 12, teach: false });
+
+  log.info("sports live sweep", {
+    matches: hub.matches.length,
+    live: hub.liveCount,
+    settled,
+    generated: refreshed.generated,
+    sources: hub.sources,
+    minutesAhead,
+  });
+
+  return {
+    matches: hub.matches.length,
+    live: hub.liveCount,
+    settled,
+    refreshed: refreshed.refreshed + refreshed.generated,
+    sources: hub.sources,
+  };
+}
+
+/** Fan the readers' favourites out into in-app notifications. */
+export async function runSportsNotify(): Promise<{
+  considered: number;
+  sent: number;
+  byEvent: Record<string, number>;
+}> {
+  const { notifySportsFavourites } = await import("@/lib/sports-notifications");
+  const result = await notifySportsFavourites();
+  return { considered: result.considered, sent: result.sent, byEvent: result.byEvent };
+}
+
 /** Refresh every station's now-playing/listener metadata into the Redis cache. */
 export async function runRadioSweep(): Promise<{ total: number; live: number; withMeta: number; errors: string[] }> {
   return sweepAllStationStatuses();

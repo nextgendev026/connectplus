@@ -4,27 +4,34 @@ import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Download, Home, Radio, PenLine, LayoutGrid, UserRound } from "lucide-react";
+import { Download, Home, Radio, PenLine, Trophy, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { promptInstall, useInstallPrompt } from "@/lib/installPrompt";
 
+/**
+ * Five fixed slots plus the conditional install button — the widest a tab bar
+ * can go before 10px labels start colliding on a 360px phone. "Sports" takes the
+ * slot the generic Browse tab used to hold, because the live scores desk is a
+ * headline surface of the app and was otherwise unreachable from the bottom bar.
+ * Categories, Trending and Pricing all stay one tap away in the top drawer.
+ */
 const ITEMS = [
   { href: "/", label: "Home", icon: Home },
   { href: "/radio", label: "Radio", icon: Radio },
   { href: "/studio", label: "Write", icon: PenLine, writing: true },
-  { href: "/categories", label: "Browse", icon: LayoutGrid },
+  { href: "/sports", label: "Scores", icon: Trophy },
   { href: "/auth/signin", label: "Profile", icon: UserRound },
 ];
 
+/** Paths that keep a tab lit, so a sub-page never leaves the bar with no active tab. */
+const TAB_MATCHERS: Record<string, (pathname: string) => boolean> = {
+  "/": (p) =>
+    p === "/" || p.startsWith("/categories") || p.startsWith("/tags") || p.startsWith("/search"),
+};
+
 function isTabActive(pathname: string, href: string): boolean {
-  if (href === "/") return pathname === "/";
-  if (href === "/categories") {
-    return (
-      pathname.startsWith("/categories") ||
-      pathname.startsWith("/tags") ||
-      pathname.startsWith("/search")
-    );
-  }
+  const matcher = TAB_MATCHERS[href];
+  if (matcher) return matcher(pathname);
   return pathname.startsWith(href);
 }
 

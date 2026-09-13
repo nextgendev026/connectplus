@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { triggerRssPoll } from "@/lib/inngest-trigger";
 import { recoverMissingThumbnails } from "@/lib/rss-poll";
 
-// Cron entrypoint. When Inngest Cloud is connected (INNGEST_EVENT_KEY set) it
-// routes into the Inngest queue; otherwise it polls inline so RSS automation
-// keeps working. Free Vercel scheduling is limited to 1 cron/day, so daily
-// granularity is the floor here and Inngest provides the finer cadence.
+// Legacy/manual RSS trigger. Inngest's own hourly cron now owns the schedule
+// (src/inngest/functions.ts); this endpoint remains for external schedulers and
+// the admin console. When Inngest Cloud is connected it routes the poll into
+// the queue, otherwise it polls inline so RSS automation keeps working either
+// way. Vercel's single cron slot is spent on /api/cron/safety-net instead.
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);

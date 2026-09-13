@@ -3,8 +3,8 @@
   "regions": ["fra1"],
   "crons": [
     {
-      "path": "/api/rss/cron?trigger=rss-poll",
-      "schedule": "0 0 * * *"
+      "path": "/api/cron/safety-net",
+      "schedule": "15 0 * * *"
     }
   ],
   "headers": [

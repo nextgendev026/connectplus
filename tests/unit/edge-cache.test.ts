@@ -13,6 +13,19 @@ const ENV = { ORIGIN: "https://origin.test" };
 
 const stored = new Map<string, Response>();
 const originFetches: string[] = [];
+/** Promises the worker handed to `ctx.waitUntil` — background revalidations. */
+const background: Promise<unknown>[] = [];
+
+const CTX = {
+  waitUntil: (promise: Promise<unknown>) => {
+    background.push(promise);
+  },
+};
+
+/** Let every queued background refresh settle before asserting on it. */
+async function settleBackground(): Promise<void> {
+  await Promise.allSettled([...background]);
+}
 
 const cacheStorage = {
   default: {
@@ -34,7 +47,7 @@ function originReturns(body: string, contentType: string, init: ResponseInit = {
 }
 
 async function request(path: string, headers: HeadersInit = {}): Promise<Response> {
-  return (await worker.fetch(new Request(`https://edge.test${path}`, { headers }), ENV)) as Response;
+  return (await worker.fetch(new Request(`https://edge.test${path}`, { headers }), ENV, CTX)) as Response;
 }
 
 function ttlOf(res: Response): number {
@@ -67,6 +80,12 @@ describe("edge cache policy", () => {
     expect(originFetches).toHaveLength(1);
   });
 
+  it("pins the fallback TTL constant the worker's numbers are derived from", () => {
+    // Guards against a refactor silently collapsing the tiers to one TTL.
+    originReturns("<html>", "text/html");
+    return request("/trending").then((res) => expect(ttlOf(res)).toBe(60));
+  });
+
   it("keeps content-hashed build output immutable", async () => {
     originReturns("js", "application/javascript");
     const res = await request("/_next/static/immutable/chunk.js");
@@ -82,7 +101,9 @@ describe("edge cache policy", () => {
   it("version-stamps the cache key so a policy change drops stale entries", async () => {
     originReturns("<html>", "text/html");
     await request("/trending");
-    expect([...stored.keys()]).toEqual([expect.stringContaining("__edge=std&v=2")]);
+    // Asserted as a shape, not a literal: the value is meant to be bumped
+    // whenever the caching rules change (v3 introduced the livescore tier).
+    expect([...stored.keys()]).toEqual([expect.stringMatching(/__edge=std&v=\d+$/)]);
   });
 
   it("never stores a credentialed request", async () => {
@@ -98,5 +119,124 @@ describe("edge cache policy", () => {
     const res = await request("/");
     expect(res.headers.get("x-edge-cache")).toBe("MISS-UNCACHEABLE");
     expect(stored.size).toBe(0);
+  });
+});
+
+describe("livescore edge tier", () => {
+  const LIVE_URL = "/__livescore?sport=football&date=2026-09-13";
+
+  /** Pre-seed the cache with an entry the worker considers `ageSeconds` old. */
+  function seedCached(key: string, ageSeconds: number, body = '{"matches":[]}') {
+    const date = new Date(Date.now() - ageSeconds * 1000).toUTCString();
+    stored.set(
+      key,
+      new Response(body, {
+        status: 200,
+        headers: { "Content-Type": "application/json", Date: date },
+      })
+    );
+  }
+
+  it("rewrites the alias to the live API and caches it as the live variant", async () => {
+    originReturns('{"matches":[]}', "application/json");
+    const res = await request(LIVE_URL);
+
+    expect(res.headers.get("x-edge-cache")).toBe("MISS");
+    expect(ttlOf(res)).toBe(15);
+    // The origin sees the real API path, never the alias.
+    expect(originFetches[0]).toBe("https://origin.test/api/sports/live?sport=football&date=2026-09-13");
+    expect([...stored.keys()]).toEqual([
+      expect.stringContaining("https://edge.test/__livescore?sport=football&date=2026-09-13&__edge=live"),
+    ]);
+  });
+
+  it("answers cross-origin so the browser can read the poll", async () => {
+    originReturns('{"matches":[]}', "application/json");
+    const res = await request(LIVE_URL);
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    // Credentialed CORS would be a promise the worker does not keep — it
+    // bypasses any request carrying a Cookie.
+    expect(res.headers.get("access-control-allow-credentials")).toBeNull();
+  });
+
+  it("snaps the query to a closed set so cache-busting params cannot shred the cache", async () => {
+    originReturns('{"matches":[]}', "application/json");
+
+    // A caller appending junk, an unknown sport and a malformed date must all
+    // land on the same origin fetch as the canonical request.
+    await request("/__livescore?sport=football&date=2026-09-13&_cb=99123&utm_source=x");
+    await request("/__livescore?sport=netball&date=not-a-date");
+
+    expect(originFetches).toEqual([
+      "https://origin.test/api/sports/live?sport=football&date=2026-09-13",
+      "https://origin.test/api/sports/live?sport=football",
+    ]);
+  });
+
+  it("serves a fresh entry from the edge without touching the origin", async () => {
+    originReturns('{"matches":[]}', "application/json");
+    await request(LIVE_URL);
+    const before = originFetches.length;
+
+    const second = await request(LIVE_URL);
+    expect(second.headers.get("x-edge-cache")).toBe("HIT");
+    expect(originFetches).toHaveLength(before);
+  });
+
+  it("serves a stale entry immediately and refreshes behind the reader", async () => {
+    // Past the 15s TTL but inside the 45s stale window.
+    seedCached(
+      "https://edge.test/__livescore?sport=football&date=2026-09-13&__edge=live&v=3",
+      30,
+      '{"matches":["stale"]}'
+    );
+    originReturns('{"matches":["fresh"]}', "application/json");
+
+    const res = await request(LIVE_URL);
+
+    // The reader gets the stale copy at once, and the origin is hit in the
+    // background rather than making them wait for it.
+    expect(res.headers.get("x-edge-cache")).toBe("HIT-STALE");
+    // A range, not an exact 30: `Date` headers only carry whole seconds, so the
+    // age can round either side depending on where the clock was mid-test.
+    const age = Number(res.headers.get("x-edge-age"));
+    expect(age).toBeGreaterThanOrEqual(30);
+    expect(age).toBeLessThanOrEqual(31);
+    expect(await res.json()).toEqual({ matches: ["stale"] });
+
+    await settleBackground();
+    expect(originFetches).toHaveLength(1);
+
+    // The refresh replaced the stored entry, so the next caller is current.
+    const next = await request(LIVE_URL);
+    expect(next.headers.get("x-edge-cache")).toBe("HIT");
+    expect(await next.json()).toEqual({ matches: ["fresh"] });
+  });
+
+  it("refetches synchronously once the stale window has passed", async () => {
+    // Older than ttl + swr (15 + 45), so it is no longer worth serving.
+    seedCached(
+      "https://edge.test/__livescore?sport=football&date=2026-09-13&__edge=live&v=3",
+      120,
+      '{"matches":["ancient"]}'
+    );
+    originReturns('{"matches":["fresh"]}', "application/json");
+
+    const res = await request(LIVE_URL);
+    expect(res.headers.get("x-edge-cache")).toBe("MISS");
+    expect(originFetches).toHaveLength(1);
+  });
+
+  it("never caches reader-scoped sports routes", async () => {
+    originReturns('{"reminders":[]}', "application/json");
+    const res = await request("/api/sports/reminders");
+    expect(res.headers.get("x-edge-cache")).toBe("BYPASS");
+    expect(stored.size).toBe(0);
+  });
+
+  it("advertises the alias on the liveness probe", async () => {
+    const res = await request("/__edge");
+    const body = (await res.json()) as { livescore: string };
+    expect(body.livescore).toBe("https://edge.test/__livescore");
   });
 });
