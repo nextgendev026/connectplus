@@ -11,6 +11,49 @@ import { cacheGet, cacheSet, redisDel } from "./redis";
  * marked `isSecret` and masked in the admin UI.
  */
 
+/** What the site is called when nothing has been configured. */
+export const DEFAULT_SITE_ORIGIN = "https://connectplusapp.vercel.app";
+
+/** A loopback origin — a developer's machine, never a place readers can reach. */
+function isLoopbackOrigin(value: string): boolean {
+  try {
+    const { hostname } = new URL(value.includes("://") ? value : `https://${value}`);
+    return (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "0.0.0.0" ||
+      hostname === "::1" ||
+      hostname.endsWith(".localhost") ||
+      hostname.endsWith(".local") ||
+      /^10\.|^192\.168\.|^172\.(1[6-9]|2\d|3[01])\./.test(hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The origin this deployment may present to the public.
+ *
+ * `siteUrl` is the base of every canonical, sitemap entry, RSS link and share
+ * card, and it defaults to the developer's own `AUTH_URL`. That default is fine
+ * on a laptop and actively harmful anywhere else: a local run against the
+ * shared database seeded `http://localhost:64691` into the live settings, which
+ * told every search engine that each page's canonical address was a port on
+ * somebody's machine. So a loopback value is never published — the deployment's
+ * own host is used instead, and the loopback value survives only when nothing
+ * else is known, which means true local development.
+ */
+export function publicSiteOrigin(configured?: string | null): string {
+  const deploymentHost = process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL;
+  const fromDeployment = deploymentHost ? `https://${deploymentHost.replace(/^https?:\/\//, "")}` : "";
+  const candidate = (configured ?? "").trim();
+
+  if (candidate && !isLoopbackOrigin(candidate)) return candidate.replace(/\/+$/, "");
+  if (fromDeployment) return fromDeployment.replace(/\/+$/, "");
+  return (candidate || DEFAULT_SITE_ORIGIN).replace(/\/+$/, "");
+}
+
 export interface SettingDef {
   key: string;
   defaultValue: string;
@@ -54,7 +97,7 @@ export const SETTINGS_CATALOG: SettingDef[] = [
   },
   {
     key: "siteUrl",
-    defaultValue: process.env.AUTH_URL ?? "https://connectplusapp.vercel.app",
+    defaultValue: publicSiteOrigin(process.env.AUTH_URL),
     group: "general",
     label: "Canonical site URL",
     hint: "Used to build absolute links, sitemaps and canonical URLs.",
@@ -592,7 +635,7 @@ export async function getSiteConfig(): Promise<SiteConfig> {
     siteDescription:
       s.siteDescription ||
       "Homegrown stories, tech, and ideas from East Africa's Silicon Savanna — Nairobi to Kigali, Kampala to Dar es Salaam.",
-    siteUrl: s.siteUrl || process.env.AUTH_URL || "https://connectplusapp.vercel.app",
+    siteUrl: publicSiteOrigin(s.siteUrl || process.env.AUTH_URL),
     contactEmail: s.contactEmail || "hello@connectplus.io",
     ogImage: s.ogImage || "/pwa-512.png",
     twitterHandle: s.twitterHandle || "@connectplus",
