@@ -315,11 +315,13 @@ export const SETTINGS_CATALOG: SettingDef[] = [
   },
   {
     key: "radioDirectStream",
-    defaultValue: "false",
+    defaultValue: "true",
     group: "plugins",
     label: "Direct radio streams (HD)",
-    hint: "Bypass the same-origin proxy for radio so bitrate is never throttled by serverless limits. Clearer HD audio; station hosts see listener IPs directly.",
+    hint:
+      "Play the station's own mount in the browser instead of through /api/radio/stream. Full bitrate with no serverless ceiling, and the listener's own connection — not this app's function region — is what the station (and any ad-inserting relay on the way) geolocates. http-only mounts still go through the proxy, because a page served over https may not play an http media subresource, and the player falls back to the proxy automatically when a direct channel fails. Turn this off to route every stream through this origin again: lower fidelity, but station hosts never see a listener's IP.",
     type: "boolean",
+    isPublic: true,
   },
 
   // ── API keys / third-party services ─────────────────────────────────────
@@ -612,6 +614,13 @@ export type SiteConfig = {
   maintenanceMessage: string;
   features: {
     radio: boolean;
+    /**
+     * Radio transport, public because the browser has to choose it per channel:
+     * `true` prefers the station's own https mount and keeps the same-origin
+     * proxy for http-only mounts and as the automatic fallback — see the
+     * `radioDirectStream` setting.
+     */
+    radioDirect: boolean;
     brainChat: boolean;
     signups: boolean;
     comments: boolean;
@@ -650,6 +659,7 @@ export async function getSiteConfig(): Promise<SiteConfig> {
       "We're doing some maintenance — some features may be temporarily unavailable.",
     features: {
       radio: bool(s.enableRadio, true),
+      radioDirect: bool(s.radioDirectStream, true),
       brainChat: bool(s.enableBrainChat, true),
       signups: bool(s.enableSignups, true),
       comments: bool(s.enableComments, true),

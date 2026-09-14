@@ -307,7 +307,7 @@ export default function ModerationQueue() {
                       type="checkbox"
                       checked={selectedItems.size === filteredItems.length && filteredItems.length > 0}
                       onChange={toggleSelectAll}
-                      className="h-3.5 w-3.5 rounded border-surface-600 bg-surface-800 accent-brand-500"
+                      className="h-3.5 w-3.5 rounded border-surface-700 bg-surface-800 accent-brand-500"
                     />
                   </div>
                   <div>Content</div>
@@ -339,7 +339,7 @@ export default function ModerationQueue() {
                           checked={selectedItems.has(item.id)}
                           onChange={() => toggleSelect(item.id)}
                           onClick={(e) => e.stopPropagation()}
-                          className="h-3.5 w-3.5 rounded border-surface-600 bg-surface-800 accent-brand-500"
+                          className="h-3.5 w-3.5 rounded border-surface-700 bg-surface-800 accent-brand-500"
                         />
                       </div>
                       <div className="min-w-0">
@@ -366,7 +366,7 @@ export default function ModerationQueue() {
                           <p className="truncate text-xs font-medium text-surface-200">
                             {item.author.name}
                           </p>
-                          <p className="type-caption text-surface-600">
+                          <p className="type-caption text-surface-400">
                             @{item.author.username}
                           </p>
                         </div>
@@ -420,7 +420,7 @@ export default function ModerationQueue() {
 
                 {filteredItems.length === 0 && (
                   <div className="flex flex-col items-center justify-center rounded-lg border border-surface-800 bg-surface-900/50 py-16">
-                    <Filter className="mb-3 h-8 w-8 text-surface-600" />
+                    <Filter className="mb-3 h-8 w-8 text-surface-400" />
                     <p className="text-sm font-medium text-surface-300">No items match your filters</p>
                   </div>
                 )}
@@ -457,9 +457,9 @@ export default function ModerationQueue() {
                       <div className="flex items-center gap-2 text-xs text-surface-500">
                         <User className="h-3 w-3" />
                         <span>{selectedDetail.author.name}</span>
-                        <span className="text-surface-700">|</span>
+                        <span className="text-surface-300">|</span>
                         <span>@{selectedDetail.author.username}</span>
-                        <span className="text-surface-700">|</span>
+                        <span className="text-surface-300">|</span>
                         <span>{timeAgo(selectedDetail.createdAt)}</span>
                       </div>
                     </div>
@@ -515,11 +515,11 @@ export default function ModerationQueue() {
                   </>
                 ) : (
                   <div className="rounded-xl bg-surface-900/50 border border-surface-800 p-8 text-center">
-                    <Eye className="mx-auto mb-3 h-8 w-8 text-surface-600" />
+                    <Eye className="mx-auto mb-3 h-8 w-8 text-surface-400" />
                     <p className="text-sm font-medium text-surface-400">
                       Select an item to view details
                     </p>
-                    <p className="text-xs text-surface-600 mt-1">
+                    <p className="text-xs text-surface-400 mt-1">
                       Click any row to see details
                     </p>
                   </div>

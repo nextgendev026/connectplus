@@ -292,7 +292,7 @@ export default function AiPipelinesPage() {
                   );
                 })}
               </div>
-              <p className="mt-3 type-meta text-surface-600">
+              <p className="mt-3 type-meta text-surface-400">
                 CTR compares impressions → clicks per variant. A winner can be promoted by changing the weights in{" "}
                 <code className="rounded bg-surface-800 px-1">src/lib/feed-ranker.ts</code>.
               </p>

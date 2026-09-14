@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Activity, CalendarDays, LineChart, Radio, Sparkles, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -34,10 +34,18 @@ const TAB_META: Record<Tab, { label: string; hint: string; icon: typeof Activity
  * active tab lives in the URL (`?tab=tips`) so any view can be shared or linked
  * from a notification.
  *
- * Navigation is deliberately different on a phone and on a desktop. A phone
- * gets a bottom bar, because that is where a thumb already is and this page is
- * long; a desktop gets the strip in the header, where the eye already is. Both
- * drive the same state.
+ * The switcher is a sibling of the hero, not a child of it, and that is load
+ * bearing: a `position: sticky` element only pins inside its nearest scrolling
+ * ancestor, and the hero is `overflow-hidden` so its decorative glows can be
+ * clipped. Nested there, the switcher could never escape the hero's box and
+ * scrolled away with it — which is why the menu felt like it was in the wrong
+ * place on a phone.
+ *
+ * The root carries `.sports-desk`, which is what applies the desk's type scale
+ * (see globals.css): the board is the densest surface in the app and it was
+ * written at 9–11px, so every size here is scaled by one multiplier — 1.1875
+ * after the 5% reduction — and every weight moves one step up in one place
+ * rather than in a hundred class names.
  */
 export default function SportsHub({
   heroAd,
@@ -49,12 +57,40 @@ export default function SportsHub({
   sidebarAd?: ReactNode;
 }) {
   const [tab, setTab] = useState<Tab>("scores");
+  const navRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("tab");
     if (!requested || !TABS.includes(requested as Tab)) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read of the ?tab= deep link
     setTab(requested as Tab);
+  }, []);
+
+  /**
+   * Publish the switcher's real height as `--sports-nav-h`.
+   *
+   * The board toolbars pin at `navbar + switcher`, and that offset used to be a
+   * number written by hand in globals.css. It was wrong in both directions: the
+   * desk's type scale makes the switcher taller than the literal classes
+   * suggest, so on a phone the toolbars pinned *behind* the switcher and on a
+   * tablet they floated in a gap below it. Measuring removes the guess — a copy
+   * tweak, a longer label or a change to the type scale can no longer silently
+   * break the pinning.
+   */
+  useEffect(() => {
+    const el = navRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const publish = () => {
+      const next = `${Math.round(el.getBoundingClientRect().height) / 16}rem`;
+      const root = el.parentElement;
+      if (root && root.style.getPropertyValue("--sports-nav-h") !== next) {
+        root.style.setProperty("--sports-nav-h", next);
+      }
+    };
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(el);
+    return () => observer.disconnect();
   }, []);
 
   function go(next: Tab) {
@@ -69,7 +105,7 @@ export default function SportsHub({
   }
 
   return (
-    <div className="min-h-screen bg-surface-950 pb-28 text-surface-50 sm:pb-16">
+    <div className="sports-desk min-h-screen bg-surface-950 pb-16 text-surface-50">
       <section className="relative overflow-hidden border-b border-surface-800/60 bg-gradient-to-br from-surface-900 via-surface-950 to-surface-900">
         <div
           className="pointer-events-none absolute inset-0 opacity-[0.06]"
@@ -78,7 +114,7 @@ export default function SportsHub({
         <div className="pointer-events-none absolute -left-24 -top-16 h-72 w-72 rounded-full bg-brand-500/15 blur-3xl" />
         <div className="pointer-events-none absolute -right-10 bottom-0 h-64 w-64 rounded-full bg-emerald-500/10 blur-3xl" />
 
-        <div className="relative mx-auto w-full max-w-[1600px] px-3 pb-4 pt-4 sm:px-6 sm:pt-8 xl:px-8">
+        <div className="relative mx-auto w-full max-w-[1600px] px-3 pb-5 pt-4 sm:px-6 sm:pt-8 xl:px-8">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -108,20 +144,29 @@ export default function SportsHub({
               </p>
             </div>
 
-            {/* Desktop tab strip: beside the title, not stretched across it. */}
-            <div className="hidden shrink-0 items-center rounded-2xl border border-surface-800 bg-surface-900/70 p-1 backdrop-blur sm:flex">
-              {TABS.map((id) => (
-                <TabButton
-                  key={id}
-                  id={id}
-                  active={tab === id}
-                  onClick={() => go(id)}
-                />
-              ))}
-            </div>
           </div>
         </div>
       </section>
+
+      {/*
+        The board switcher, pinned directly beneath the hero on every screen.
+
+        Sits outside the hero so `position: sticky` can reach the viewport, at a
+        `top` that keeps it just under the app navbar for the rest of the page —
+        the menu for a board stays with the board it switches rather than
+        scrolling out of reach at the top of a very long page.
+      */}
+      <nav
+        ref={navRef}
+        aria-label="Sports boards"
+        className="sports-nav relative z-40 border-b border-surface-800/60 bg-surface-950/95 shadow-[0_6px_20px_-14px_rgb(0_0_0_/_0.9)] backdrop-blur"
+      >
+        <div className="mx-auto flex w-full max-w-[1600px] items-stretch gap-1 px-3 sm:gap-2 sm:px-6 sm:py-1.5 xl:px-8">
+          {TABS.map((id) => (
+            <TabButton key={id} id={id} active={tab === id} onClick={() => go(id)} />
+          ))}
+        </div>
+      </nav>
 
       {heroAd ? <div className="mx-auto w-full max-w-[1600px] px-3 pt-4 sm:px-6 xl:px-8">{heroAd}</div> : null}
 
@@ -138,44 +183,20 @@ export default function SportsHub({
         )}
       </div>
 
-      {/* ── Mobile navigation ──────────────────────────────────────────────
-          Pinned to the bottom of the viewport: on a page this long, a control
-          at the top is a control the reader has to scroll back to find. */}
-      <nav
-        aria-label="Sports boards"
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-surface-800 bg-surface-950/95 pb-[max(env(safe-area-inset-bottom),0.25rem)] backdrop-blur sm:hidden"
-      >
-        <div className="flex items-stretch">
-          {TABS.map((id) => {
-            const meta = TAB_META[id];
-            const Icon = meta.icon;
-            const active = tab === id;
-            return (
-              <button
-                key={id}
-                role="tab"
-                aria-selected={active}
-                onClick={() => go(id)}
-                className={cn(
-                  "relative flex flex-1 flex-col items-center gap-0.5 px-1 pb-1.5 pt-2 transition active:scale-95",
-                  active ? "text-brand-300" : "text-surface-500"
-                )}
-              >
-                {active ? (
-                  <span className="absolute inset-x-5 top-0 h-0.5 rounded-full bg-brand-400" />
-                ) : null}
-                <Icon className={cn("h-5 w-5 transition", active && "drop-shadow-[0_0_8px_rgba(234,88,12,0.45)]")} />
-                <span className="text-[10px] font-semibold">{meta.label}</span>
-                <span className="text-[9px] text-surface-600">{meta.hint}</span>
-              </button>
-            );
-          })}
-        </div>
-      </nav>
     </div>
   );
 }
 
+/**
+ * One board in the switcher.
+ *
+ * A phone gets a short two-line button — icon over a label — and deliberately
+ * drops the one-word hint, because a 12px hint line plus the desk's type scale
+ * made the bar about 90px tall and ate the top of every board underneath it.
+ * From `sm` up there is room for the full card: hint included, icon beside the
+ * label. Both still stretch to fill the bar, so the four are always one even row
+ * and neither shape jumps as the page scrolls.
+ */
 function TabButton({ id, active, onClick }: { id: Tab; active: boolean; onClick: () => void }) {
   const meta = TAB_META[id];
   const Icon = meta.icon;
@@ -184,22 +205,35 @@ function TabButton({ id, active, onClick }: { id: Tab; active: boolean; onClick:
       onClick={onClick}
       role="tab"
       aria-selected={active}
+      aria-label={`${meta.label} — ${meta.hint}`}
       className={cn(
-        "group flex items-center gap-2.5 rounded-xl px-3 py-2 text-left transition",
-        active ? "bg-brand-500 text-white shadow-lg shadow-brand-500/20" : "text-surface-400 hover:text-surface-50"
+        "group relative flex flex-1 flex-col items-center justify-center gap-1 rounded-xl px-1 py-2 text-center transition duration-200 sm:flex-none sm:flex-row sm:gap-2.5 sm:px-3 sm:text-left",
+        active
+          ? "bg-brand-500 text-white shadow-lg shadow-brand-500/20"
+          : "text-surface-400 hover:bg-surface-900/70 hover:text-surface-50"
       )}
     >
+      {active ? (
+        <span className="absolute inset-x-6 -top-2 h-0.5 rounded-full bg-brand-400 sm:hidden" />
+      ) : null}
       <span
         className={cn(
-          "grid h-8 w-8 shrink-0 place-items-center rounded-lg transition",
+          "grid h-6 w-6 shrink-0 place-items-center rounded-lg transition sm:h-8 sm:w-8",
           active ? "bg-white/15 text-white" : "bg-surface-800/70 text-surface-400 group-hover:text-surface-200"
         )}
       >
-        <Icon className="h-4 w-4" />
+        <Icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
       </span>
       <span className="min-w-0">
-        <span className="flex items-center gap-1.5 text-sm font-semibold">{meta.label}</span>
-        <span className={cn("block truncate text-[10px] uppercase tracking-wider", active ? "text-white/70" : "text-surface-600")}>
+        <span className="flex items-center justify-center gap-1.5 text-[11px] font-semibold sm:justify-start sm:text-sm">
+          {meta.label}
+        </span>
+        <span
+          className={cn(
+            "hidden truncate text-[10px] uppercase tracking-wider sm:block",
+            active ? "text-white/70" : "text-surface-600"
+          )}
+        >
           {meta.hint}
         </span>
       </span>

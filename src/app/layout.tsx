@@ -257,7 +257,13 @@ export default async function RootLayout({
           <RouteProgress />
         </Suspense>
         <ThemeProvider>
-          <RadioPlayerProvider>
+          {/*
+            Radio transport is a server-side setting, so the player is told which
+            route to prefer before it tunes anything: direct playback hands the
+            listener the station's own mount (full bitrate, their own IP), and
+            the proxy remains for http-only mounts and as the automatic fallback.
+          */}
+          <RadioPlayerProvider directEnabled={cfg?.features.radioDirect ?? true}>
             {children}
             <MiniRadioPlayer />
             {cfg?.features.pwa ? <InstallPrompt /> : null}

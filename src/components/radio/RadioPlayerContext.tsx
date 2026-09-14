@@ -12,6 +12,7 @@ import {
 } from "react";
 import {
   STATIONS,
+  canPlayDirect,
   getStationById,
   preferredSourceIndex,
   sourceAdRisk,
@@ -20,6 +21,18 @@ import {
 import type { RadioStation } from "@/lib/radio-stations";
 
 export type StreamState = "idle" | "connecting" | "playing" | "error";
+
+/**
+ * How the current channel reaches the browser.
+ *
+ * `direct` is the station's own mount handed straight to the audio element:
+ * the listener gets the bitrate the station actually serves, and the station —
+ * or an ad-inserting relay in front of it — geolocates the listener rather than
+ * this app's function region. `proxy` is our same-origin relay, which is what
+ * makes http-only mounts playable from an https page at all, and is the
+ * automatic fallback whenever a direct channel will not open.
+ */
+export type StreamTransport = "direct" | "proxy";
 
 export interface NowPlaying {
   song: string | null;
@@ -34,6 +47,15 @@ export interface SignalState {
   bitrateKbps: number | null;
   channelName: string | null;
   probed: boolean;
+  /** Which route the audio is taking right now. */
+  transport: StreamTransport;
+  /**
+   * Whether this channel COULD be direct (it is https). When `transport` is
+   * `proxy` and this is true, the fallback is why; when it is false the mount is
+   * http-only and the proxy is the only route there is. The two read very
+   * differently to a listener deciding whether to retry.
+   */
+  directCapable: boolean;
 }
 
 interface RadioPlayerContextValue {
@@ -66,6 +88,11 @@ function proxyUrl(stationId: string, source: number): string {
   return `/api/radio/stream?stationId=${encodeURIComponent(stationId)}&source=${source}`;
 }
 
+/** Bookkeeping key for "this channel already tried the direct path and failed". */
+function channelKey(stationId: string, source: number): string {
+  return `${stationId}#${source}`;
+}
+
 const RadioPlayerContext = createContext<RadioPlayerContextValue | null>(null);
 
 function safeGetStorage(key: string): string | null {
@@ -86,7 +113,22 @@ function safeSetStorage(key: string, value: string) {
   }
 }
 
-export function RadioPlayerProvider({ children }: { children: ReactNode }) {
+export function RadioPlayerProvider({
+  children,
+  directEnabled = true,
+}: {
+  children: ReactNode;
+  /**
+   * Whether direct playback is allowed at all.
+   *
+   * This is the admin's "Direct radio streams (HD)" switch, read server-side in
+   * the root layout and handed down so the choice is made before the first
+   * channel is tuned. With it off, every station goes through this origin: lower
+   * fidelity and the listener stays anonymous to the station, which is the
+   * trade-off the setting's own hint describes.
+   */
+  directEnabled?: boolean;
+}) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [station, setStation] = useState<RadioStation | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -95,7 +137,31 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
   const [favorites, setFavorites] = useState<string[]>([]);
   const [recentlyPlayed, setRecentlyPlayed] = useState<string[]>([]);
   const [nowPlaying, setNowPlaying] = useState<NowPlaying>({ song: null, listeners: null, meta: false });
-  const [signal, setSignal] = useState<SignalState>({ source: 0, channels: 1, bitrateKbps: null, channelName: null, probed: false });
+  const [signal, setSignal] = useState<SignalState>({
+    source: 0,
+    channels: 1,
+    bitrateKbps: null,
+    channelName: null,
+    probed: false,
+    transport: "proxy",
+    directCapable: false,
+  });
+
+  /**
+   * Channels that have already failed on the direct path, keyed
+   * `stationId#source`.
+   *
+   * A direct mount can refuse a second connection, present a certificate a given
+   * network rejects, or simply be unreachable from where the listener is sitting
+   * — and none of those mean the station is down. Each channel therefore gets
+   * exactly one direct attempt per listening session and then settles on the
+   * proxy: the failure is remembered rather than retried, so a listener never
+   * lands in a loop that alternates between a mount that will not open and a
+   * relay that will.
+   */
+  const directFailedRef = useRef<Set<string>>(new Set());
+  /** The transport the element is currently pointed at (read by onError). */
+  const transportRef = useRef<StreamTransport>("proxy");
 
   const volumeRef = useRef(volume);
   const stationRef = useRef(station);
@@ -132,6 +198,26 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
    * described as being on a break. Everything else keeps the plain reconnect
    * behaviour.
    */
+  /**
+   * Where the element should point for one channel, and which route that is.
+   *
+   * Direct is preferred whenever the mount is https and the channel has not
+   * already burnt its one direct attempt. Everything else — http-only mounts, an
+   * operator who turned direct playback off, a mount that refused us earlier —
+   * goes through the same-origin proxy.
+   */
+  const resolveStream = useCallback(
+    (station: RadioStation, source: number): { url: string; transport: StreamTransport; directCapable: boolean } => {
+      const upstream = stationSources(station)[source] ?? null;
+      const directCapable = upstream ? canPlayDirect(upstream) : false;
+      const direct = directEnabled && directCapable && !directFailedRef.current.has(channelKey(station.id, source));
+      return direct && upstream
+        ? { url: upstream, transport: "direct", directCapable }
+        : { url: proxyUrl(station.id, source), transport: "proxy", directCapable };
+    },
+    [directEnabled]
+  );
+
   const noteStall = useCallback(() => {
     if (pausedByUser.current || streamFailed.current) return;
     if (stallTimer.current) clearTimeout(stallTimer.current);
@@ -147,7 +233,7 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
   const scheduleReconnectRef = useRef<() => void>(() => {});
   // Same indirection for channel failover: the tune callback steps to the
   // next channel on error without referencing itself.
-  const tuneSourceRef = useRef<(station: RadioStation, source: number) => void>(() => {});
+  const tuneSourceRef = useRef<(station: RadioStation, source: number, forceProxy?: boolean) => void>(() => {});
 
   // Auto-reconnect with exponential backoff when a live stream drops.
   //
@@ -174,10 +260,13 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
       // preferred (cleanest) one.
       const resumeSource = playedSourceRef.current ?? preferredSourceIndex(current);
       sourceRef.current = resumeSource;
-      audio.src = proxyUrl(current.id, resumeSource);
+      const target = resolveStream(current, resumeSource);
+      transportRef.current = target.transport;
+      setSignal((prev) => ({ ...prev, source: resumeSource, transport: target.transport, directCapable: target.directCapable }));
+      audio.src = target.url;
       audio.play().catch(() => scheduleReconnectRef.current());
     }, delay);
-  }, []);
+  }, [resolveStream]);
 
   useEffect(() => {
     scheduleReconnectRef.current = scheduleReconnect;
@@ -225,12 +314,23 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
         // empty element → instant error → endless "reconnecting" loop.
         const audio = audioRef.current;
         if (audio && !audio.src) {
-          audio.src = proxyUrl(st.id, 0);
+          // Preload the channel the player would have chosen anyway (cleanest,
+          // then most direct) rather than channel 0: the restored station used to
+          // buffer an ad-prone relay first and only reach the good mount after
+          // the listener pressed play.
+          const source = preferredSourceIndex(st);
+          const target = resolveStream(st, source);
+          sourceRef.current = source;
+          transportRef.current = target.transport;
+          audio.src = target.url;
           audio.volume = volumeRef.current / 100;
         }
       }
     }
-  }, []);
+    // `resolveStream` is listed because the restored channel's ROUTE is resolved
+    // here too, not just its index; `directEnabled` is a server-rendered prop
+    // that cannot change mid-session, so this still runs once in practice.
+  }, [resolveStream]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const updateNowPlaying = useCallback(
@@ -254,8 +354,17 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
     playedSourceRef.current = null;
     if (stallTimer.current) clearTimeout(stallTimer.current);
     setNowPlaying({ song: null, listeners: null, meta: false });
-    setSignal({ source: 0, channels: 1, bitrateKbps: null, channelName: null, probed: false });
+    setSignal({
+      source: 0,
+      channels: 1,
+      bitrateKbps: null,
+      channelName: null,
+      probed: false,
+      transport: "proxy",
+      directCapable: false,
+    });
     sourceRef.current = 0;
+    transportRef.current = "proxy";
     setStation(null);
     setIsPlaying(false);
     setStreamState("idle");
@@ -285,36 +394,68 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
         best: number;
         channels: Array<{ index: number; ok: boolean; bitrateKbps: number | null; stationName: string | null }>;
       };
-      const best = data.channels?.[data.best];
-      setSignal({
-        source: data.best ?? 0,
+      // Read the CHANNEL WE ARE ON, not the one the probe liked best: the badge
+      // describes what the listener is hearing, and those are different channels
+      // whenever the best available mount is not the one playing.
+      const playing = data.channels?.find((c) => c.index === sourceRef.current) ?? data.channels?.[data.best];
+      // Merged, not replaced: the probe knows the station's quality but it has no
+      // idea which route the audio is taking, and replacing the signal wholesale
+      // would make the badge lie the moment a probe landed.
+      setSignal((prev) => ({
+        ...prev,
         channels,
-        bitrateKbps: best?.bitrateKbps ?? null,
-        channelName: best?.stationName ?? null,
+        bitrateKbps: playing?.bitrateKbps ?? null,
+        channelName: playing?.stationName ?? null,
         probed: true,
-      });
+      }));
     } catch {
       // probe is progressive enhancement — playback never depends on it
     }
   }, []);
 
+  /**
+   * Point the element at one channel.
+   *
+   * `forceProxy` is the fallback path: the channel is remembered as having burnt
+   * its direct attempt, so `resolveStream` will not hand out the mount again for
+   * the rest of the session. Failover order is unchanged — a channel that fails
+   * on BOTH routes steps to the next one — but a direct failure costs a proxy
+   * retry of the same channel first, because for an https mount the two failures
+   * have nothing to do with each other.
+   */
   const tuneSource = useCallback(
-    (next: RadioStation, source: number) => {
+    (next: RadioStation, source: number, forceProxy = false) => {
       const audio = audioRef.current;
       if (!audio) return;
       const channels = stationSources(next).length;
+      if (forceProxy) directFailedRef.current.add(channelKey(next.id, source));
+      const target = resolveStream(next, source);
       sourceRef.current = source;
-      setSignal((prev) => ({ ...prev, source, channels, probed: false }));
+      transportRef.current = target.transport;
+      setSignal((prev) => ({
+        ...prev,
+        source,
+        channels,
+        probed: false,
+        transport: target.transport,
+        directCapable: target.directCapable,
+      }));
       retryCount.current = 0;
       streamFailed.current = false;
       setAdBreakSuspected(false);
       if (retryTimer.current) clearTimeout(retryTimer.current);
-      audio.src = proxyUrl(next.id, source);
+      audio.src = target.url;
       audio.volume = volumeRef.current / 100;
       setStreamState("connecting");
       audio.play().catch(() => {
-        // Channel failed — step to the next channel in the chain instead of
-        // dying. Only when every channel fails do we surface the error.
+        // A direct channel that will not start is a transport failure, not a dead
+        // mount — the same channel is still worth trying through the proxy.
+        if (target.transport === "direct") {
+          tuneSourceRef.current(next, source, true);
+          return;
+        }
+        // Otherwise step to the next channel in the chain instead of dying. Only
+        // when every channel fails do we surface the error.
         const following = source + 1;
         if (following < channels) {
           tuneSourceRef.current(next, following);
@@ -327,7 +468,7 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
       });
       void probeSignal(next.id, channels);
     },
-    [probeSignal, scheduleReconnect]
+    [probeSignal, resolveStream, scheduleReconnect]
   );
 
   const playStation = useCallback(
@@ -358,6 +499,11 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
       setRecentlyPlayed(recent);
       safeSetStorage("radio-recently", JSON.stringify(recent));
 
+      // A deliberate tap is a fresh start: a channel that refused direct playback
+      // earlier in the session gets one more chance, because the earlier failure
+      // may have been the network the listener has since left.
+      directFailedRef.current.clear();
+
       // Open the CLEANEST channel available rather than whatever happens to be
       // first: several stations list an ad-injecting relay ahead of a direct
       // broadcaster mount, so "channel 0" was quietly the worst choice.
@@ -374,6 +520,9 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
       const channels = stationSources(current).length;
       if (source < 0 || source >= channels) return;
       pausedByUser.current = false;
+      // Choosing a channel by hand (the signal panel, a retry) also clears the
+      // failure memory, so "try this one again" means what it says.
+      directFailedRef.current.delete(channelKey(current.id, source));
       setStreamState("connecting");
       tuneSource(current, source);
     },
@@ -389,10 +538,14 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
     const current = stationRef.current;
     if (!audio || !current) return;
     // Make sure the element actually carries the current station's source
-    // (covers restore-from-localStorage and any cleared src).
-    const expectedPath = proxyUrl(current.id, sourceRef.current);
+    // (covers restore-from-localStorage and any cleared src), resolved through
+    // the same transport decision the rest of the player uses — a resumed
+    // station must not silently change route.
+    const expected = resolveStream(current, sourceRef.current);
+    const expectedPath = expected.url;
     if (!audio.src || !audio.src.endsWith(expectedPath)) {
       audio.src = expectedPath;
+      transportRef.current = expected.transport;
       audio.volume = volumeRef.current / 100;
     }
     // While the stream is still connecting/buffering the element is paused,
@@ -418,13 +571,19 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
       }
       setStreamState("connecting");
       audio.play().catch(() => {
+        // Same asymmetry as a channel change: a direct resume that will not start
+        // is retried through the proxy before the station is called broken.
+        if (transportRef.current === "direct") {
+          tuneSourceRef.current(current, sourceRef.current, true);
+          return;
+        }
         setStreamState("error");
         setIsPlaying(false);
         streamFailed.current = true;
         scheduleReconnect();
       });
     }
-  }, [scheduleReconnect, streamState]);
+  }, [resolveStream, scheduleReconnect, streamState]);
 
   const setVolume = useCallback((v: number) => {
     setVolumeState(v);
@@ -566,10 +725,30 @@ export function RadioPlayerProvider({ children }: { children: ReactNode }) {
           scheduleReconnect();
         }}
         onError={() => {
-          // Ignore errors while stopped/paused (clearing src fires one) or
-          // when a reconnect is already scheduled — otherwise the UI shows
-          // a fake "Stream reconnecting…" forever.
+          // Ignore errors while stopped/paused — clearing src fires one, and
+          // otherwise the UI shows a fake "Stream reconnecting…" forever.
           if (pausedByUser.current) return;
+
+          // A DIRECT stream that breaks mid-play is retried through the proxy
+          // before the station is called broken, because for an https mount the
+          // two failures have nothing to do with each other: a mount can refuse
+          // a second connection, or a middlebox can drop a TLS session, while the
+          // station is perfectly live. Only the first such failure per channel is
+          // treated this way — see `directFailedRef`.
+          const current = stationRef.current;
+          if (current && transportRef.current === "direct") {
+            const key = channelKey(current.id, sourceRef.current);
+            if (!directFailedRef.current.has(key)) {
+              // Armed first, then cleared by `tuneSource` when it runs: if the
+              // tuning callback has not been wired yet (a preload that failed
+              // before the first effect ran), the reconnect is the safety net
+              // instead of an error state with no way back.
+              scheduleReconnect();
+              tuneSourceRef.current(current, sourceRef.current, true);
+              return;
+            }
+          }
+
           setStreamState("error");
           setIsPlaying(false);
           streamFailed.current = true;

@@ -241,7 +241,7 @@ export default function NeuralChat({ conversationId, onConversationCreated, init
                     <button
                       onClick={() => saveAsDraft(i, msg.content)}
                       disabled={savingIndex === i}
-                      className="flex items-center gap-1 rounded-lg bg-surface-700/60 border border-surface-600/60 px-2 py-1 type-caption text-surface-300 hover:bg-surface-700 disabled:opacity-50 transition-colors"
+                      className="flex items-center gap-1 rounded-lg bg-surface-700/60 border border-surface-700/60 px-2 py-1 type-caption text-surface-300 hover:bg-surface-700 disabled:opacity-50 transition-colors"
                       title="Save this content as a draft post"
                     >
                       {savingIndex === i ? <Loader2 className="h-3 w-3 animate-spin" /> : <FilePlus2 className="h-3 w-3" />}
@@ -249,7 +249,7 @@ export default function NeuralChat({ conversationId, onConversationCreated, init
                     </button>
                     <button
                       onClick={() => copyToClipboard(msg.content)}
-                      className="flex items-center gap-1 rounded-lg bg-surface-700/60 border border-surface-600/60 px-2 py-1 type-caption text-surface-300 hover:bg-surface-700 transition-colors"
+                      className="flex items-center gap-1 rounded-lg bg-surface-700/60 border border-surface-700/60 px-2 py-1 type-caption text-surface-300 hover:bg-surface-700 transition-colors"
                       title="Copy to clipboard"
                     >
                       <Clipboard className="h-3 w-3" />

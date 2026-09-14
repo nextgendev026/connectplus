@@ -11,25 +11,20 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  LineChart,
-  Line,
   PieChart,
   Pie,
   Cell,
   Area,
   AreaChart,
 } from "recharts";
+import { TrendingUp, Eye, MessageSquare, Heart, FileText, Users, BarChart3, Activity } from "lucide-react";
 import {
-  TrendingUp,
-  Eye,
-  MessageSquare,
-  Heart,
-  FileText,
-  Users,
-  BarChart3,
-  Activity,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
+  AdminPage,
+  AdminPanel,
+  AdminSegmented,
+  AdminStat,
+  AdminStatGrid,
+} from "@/components/admin/AdminUI";
 
 interface AnalyticsData {
   summary: {
@@ -63,36 +58,42 @@ interface AnalyticsData {
   authors: { name: string; posts: number; views: number; comments: number }[];
 }
 
-const PIE_COLORS = ["#ff6b00", "#22d3ee", "#a78bfa", "#34d399", "#fbbf24", "#f87171", "#ec4899", "#8b5cf6"];
+/**
+ * Chart colours, read from the theme tokens rather than hardcoded hex.
+ *
+ * Recharts paints into SVG attributes, so a literal `#ff6b00` stays bright
+ * orange on a light canvas — the same wash-out the rest of the app moved away
+ * from. The tokens are RGB triplets, so `rgb(var(--token) / <alpha>)` gives a
+ * series colour that deepens with the theme instead of fighting it.
+ */
+const BRAND = "rgb(var(--brand-500))";
+const BRAND_FILL = "rgb(var(--brand-500) / 0.18)";
+const VIOLET = "rgb(var(--accent-violet))";
+const VIOLET_FILL = "rgb(var(--accent-violet) / 0.12)";
+const CYAN = "rgb(var(--accent-cyan))";
+const CYAN_FILL = "rgb(var(--accent-cyan) / 0.12)";
 
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  trend,
-  color,
-}: {
-  icon: typeof Eye;
-  label: string;
-  value: string | number;
-  trend?: string;
-  color: string;
-}) {
-  return (
-    <div className="rounded-xl border border-surface-700/50 bg-surface-800/50 dark:bg-surface-800/50 p-4">
-      <div className="flex items-center gap-3">
-        <div className={cn("flex h-10 w-10 items-center justify-center rounded-xl", color)}>
-          <Icon className="h-5 w-5 text-white" />
-        </div>
-        <div>
-          <p className="text-2xl font-bold text-surface-50">{typeof value === "number" ? value.toLocaleString() : value}</p>
-          <p className="text-xs text-surface-400">{label}</p>
-        </div>
-      </div>
-      {trend && <p className="mt-2 text-xs text-emerald-400">{trend}</p>}
-    </div>
-  );
-}
+const PIE_COLORS = [
+  BRAND,
+  VIOLET,
+  CYAN,
+  "rgb(var(--accent-amber))",
+  "rgb(var(--accent-coral))",
+  "#34d399",
+  "#ec4899",
+  "#8b5cf6",
+];
+
+/** Grid, axes and tooltip chrome, in one place so the four charts agree. */
+const GRID = "rgb(var(--surface-700) / 0.5)";
+const AXIS_TICK = { fill: "rgb(var(--surface-400))", fontSize: 10 };
+const TOOLTIP_STYLE = {
+  background: "rgb(var(--surface-850))",
+  border: "1px solid rgb(var(--surface-700))",
+  borderRadius: "10px",
+  fontSize: "12px",
+  color: "rgb(var(--foreground))",
+};
 
 export default function AnalyticsPage() {
   const { data: session, status } = useSession();
@@ -128,7 +129,7 @@ export default function AnalyticsPage() {
 
   if (status === "loading" || loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-surface-950">
+      <div className="flex min-h-[60vh] items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand-500/30 border-t-brand-500" />
       </div>
     );
@@ -136,8 +137,8 @@ export default function AnalyticsPage() {
 
   if (!data) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-surface-950">
-        <p className="text-surface-400">No analytics data available</p>
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <p className="text-sm text-surface-400">No analytics data available yet.</p>
       </div>
     );
   }
@@ -145,227 +146,187 @@ export default function AnalyticsPage() {
   const displayData = timeRange === "7d" ? data.dailyData.slice(-7) : data.dailyData;
 
   return (
-    <div className="min-h-screen bg-surface-950">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
-        {/* Header */}
-        <div className="mb-8 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-500/15 border border-brand-500/25">
-              <BarChart3 className="h-5 w-5 text-accent-strong" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-surface-50">Analytics</h1>
-              <p className="text-xs text-surface-400">Article performance and engagement</p>
-            </div>
+    <AdminPage
+      title="Analytics"
+      description="How published work is performing across views, comments and likes."
+      icon={BarChart3}
+      wide
+      actions={
+        <AdminSegmented
+          value={timeRange}
+          onChange={setTimeRange}
+          options={[
+            { value: "7d", label: "7 days" },
+            { value: "30d", label: "30 days" },
+          ]}
+        />
+      }
+    >
+      <AdminStatGrid>
+        <AdminStat icon={FileText} label="Published posts" value={data.summary.totalPosts.toLocaleString()} tone="brand" />
+        <AdminStat
+          icon={Eye}
+          label="Total views"
+          value={data.summary.totalViews.toLocaleString()}
+          tone="info"
+          sub={
+            <span className={data.summary.viewsTrend >= 0 ? "text-positive-strong" : "text-danger-strong"}>
+              {data.summary.viewsTrend >= 0 ? "+" : ""}
+              {data.summary.viewsTrend}% vs last week
+            </span>
+          }
+        />
+        <AdminStat icon={MessageSquare} label="Comments" value={data.summary.totalComments.toLocaleString()} tone="warning" />
+        <AdminStat icon={Heart} label="Likes" value={data.summary.totalLikes.toLocaleString()} tone="danger" />
+      </AdminStatGrid>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <AdminPanel
+          className="lg:col-span-2"
+          title="Views & engagement"
+          description={`Daily totals over the last ${timeRange === "7d" ? "7" : "30"} days`}
+          icon={Activity}
+          flush
+          bodyClassName="p-3 sm:p-4"
+        >
+          <div className="h-64 sm:h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={displayData}>
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
+                <XAxis dataKey="date" tick={AXIS_TICK} tickFormatter={(v) => v.slice(5)} stroke={GRID} />
+                <YAxis tick={AXIS_TICK} stroke={GRID} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} />
+                <Area type="monotone" dataKey="views" stroke={BRAND} fill={BRAND_FILL} strokeWidth={2} />
+                <Area type="monotone" dataKey="comments" stroke={VIOLET} fill={VIOLET_FILL} strokeWidth={1.5} />
+                <Area type="monotone" dataKey="likes" stroke={CYAN} fill={CYAN_FILL} strokeWidth={1.5} />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
-          <div className="flex gap-2">
-            {(["7d", "30d"] as const).map((range) => (
-              <button
-                key={range}
-                onClick={() => setTimeRange(range)}
-                className={cn(
-                  "rounded-lg px-3 py-1.5 text-xs font-medium transition-all border",
-                  timeRange === range
-                    ? "border-brand-500 bg-brand-500/10 text-accent-strong"
-                    : "border-surface-700 bg-surface-900/50 text-surface-400 hover:text-surface-200"
-                )}
-              >
-                {range === "7d" ? "7 Days" : "30 Days"}
-              </button>
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-4">
+            {[
+              { label: "Views", colour: BRAND },
+              { label: "Comments", colour: VIOLET },
+              { label: "Likes", colour: CYAN },
+            ].map((series) => (
+              <span key={series.label} className="flex items-center gap-1.5 text-[11px] text-surface-400">
+                <span className="h-2 w-2 rounded-full" style={{ background: series.colour }} />
+                {series.label}
+              </span>
             ))}
           </div>
-        </div>
+        </AdminPanel>
 
-        {/* Summary Cards */}
-        <div className="mb-8 grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard icon={FileText} label="Published Posts" value={data.summary.totalPosts} color="bg-brand-500" />
-          <StatCard icon={Eye} label="Total Views" value={data.summary.totalViews} trend={`${data.summary.viewsTrend}% this week`} color="bg-cyan-500" />
-          <StatCard icon={MessageSquare} label="Comments" value={data.summary.totalComments} color="bg-violet-500" />
-          <StatCard icon={Heart} label="Likes" value={data.summary.totalLikes} color="bg-rose-500" />
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          {/* Views Over Time */}
-          <div className="lg:col-span-2 rounded-2xl border border-surface-700/50 bg-surface-900/50 p-5">
-            <h3 className="text-sm font-semibold text-surface-300 mb-4 flex items-center gap-2">
-              <Activity className="h-4 w-4 text-accent-strong" />
-              Views & Engagement
-            </h3>
-            <div className="h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={displayData}>                    <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--surface-700) / 0.5)" />
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fill: "rgb(var(--surface-400))", fontSize: 10 }}
-                    tickFormatter={(v) => v.slice(5)}
-                    stroke="rgb(var(--surface-700) / 0.5)"
-                  />
-                  <YAxis tick={{ fill: "rgb(var(--surface-400))", fontSize: 10 }} stroke="rgb(var(--surface-700) / 0.5)" />
-                  <Tooltip
-                    contentStyle={{
-                      background: "rgb(var(--surface-800))",
-                      border: "1px solid rgb(var(--surface-700))",
-                      borderRadius: "8px",
-                      fontSize: "12px",
-                      color: "rgb(var(--foreground))",
-                    }}
-                  />
-                  <Area type="monotone" dataKey="views" stroke="#ff6b00" fill="rgba(255,107,0,0.15)" strokeWidth={2} />
-                  <Area type="monotone" dataKey="comments" stroke="#a78bfa" fill="rgba(167,139,250,0.1)" strokeWidth={1.5} />
-                  <Area type="monotone" dataKey="likes" stroke="#34d399" fill="rgba(52,211,153,0.1)" strokeWidth={1.5} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* Category Breakdown */}
-          <div className="rounded-2xl border border-surface-700/50 bg-surface-900/50 p-5">
-            <h3 className="text-sm font-semibold text-surface-300 mb-4 flex items-center gap-2">
-              <Users className="h-4 w-4 text-accent-strong" />
-              By Category
-            </h3>
-            <div className="h-60">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={data.categories}
-                    dataKey="views"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={80}
-                    innerRadius={40}
-                    paddingAngle={2}
-                  >
-                    {data.categories.map((_, i) => (
-                      <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    contentStyle={{
-                      background: "rgb(var(--surface-800))",
-                      border: "1px solid rgb(var(--surface-700))",
-                      borderRadius: "8px",
-                      fontSize: "12px",
-                      color: "rgb(var(--foreground))",
-                    }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="space-y-2 mt-2">
-              {data.categories.slice(0, 5).map((cat, i) => (
-                <div key={cat.name} className="flex items-center justify-between text-xs">
-                  <span className="flex items-center gap-2 text-surface-300">
-                    <span className="h-2.5 w-2.5 rounded-full" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
-                    {cat.name}
-                  </span>
-                  <span className="text-surface-400">{cat.views.toLocaleString()} views</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Top Posts + Author Performance */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-          {/* Top Posts */}
-          <div className="rounded-2xl border border-surface-700/50 bg-surface-900/50 p-5">
-            <h3 className="text-sm font-semibold text-surface-300 mb-4 flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-accent-strong" />
-              Top Performing Posts
-            </h3>
-            <div className="space-y-3">
-              {data.topPosts.slice(0, 8).map((post, i) => (
-                <div key={post.slug} className="flex items-start gap-3 rounded-lg bg-surface-800/40 px-3 py-2.5">
-                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-500/15 text-[10px] font-bold text-accent-strong shrink-0">
-                    {i + 1}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-medium text-surface-200">{post.title}</p>
-                    <p className="text-[10px] text-surface-500 mt-0.5">
-                      {post.author} · {post.category}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3 text-[10px] text-surface-400 shrink-0">
-                    <span className="flex items-center gap-1"><Eye className="h-3 w-3" />{post.views}</span>
-                    <span className="flex items-center gap-1"><MessageSquare className="h-3 w-3" />{post.comments}</span>
-                    <span className="flex items-center gap-1"><Heart className="h-3 w-3" />{post.likes}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Author Performance */}
-          <div className="rounded-2xl border border-surface-700/50 bg-surface-900/50 p-5">
-            <h3 className="text-sm font-semibold text-surface-300 mb-4 flex items-center gap-2">
-              <Users className="h-4 w-4 text-accent-strong" />
-              Author Performance
-            </h3>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data.authors.slice(0, 6)} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--surface-700)/0.5)" />
-                  <XAxis type="number" tick={{ fill: "rgb(var(--surface-400))", fontSize: 10 }} stroke="rgb(var(--surface-700)/0.5)" />
-                  <YAxis type="category" dataKey="name" tick={{ fill: "rgb(var(--surface-400))", fontSize: 10 }} width={80} stroke="rgb(var(--surface-700)/0.5)" />
-                  <Tooltip
-                    contentStyle={{
-                      background: "rgb(var(--surface-800))",
-                      border: "1px solid rgb(var(--surface-700))",
-                      borderRadius: "8px",
-                      fontSize: "12px",
-                      color: "rgb(var(--foreground))",
-                    }}
-                  />
-                  <Bar dataKey="views" fill="#ff6b00" radius={[0, 4, 4, 0]} />
-                  <Bar dataKey="comments" fill="#a78bfa" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="flex items-center gap-4 mt-2 justify-center">
-              <span className="flex items-center gap-1.5 text-[10px] text-surface-400">
-                <span className="h-2 w-2 rounded-full bg-brand-500" /> Views
-              </span>
-              <span className="flex items-center gap-1.5 text-[10px] text-surface-400">
-                <span className="h-2 w-2 rounded-full bg-violet-500" /> Comments
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Daily Posts Bar Chart */}
-        <div className="rounded-2xl border border-surface-700/50 bg-surface-900/50 p-5 mb-8">
-          <h3 className="text-sm font-semibold text-surface-300 mb-4 flex items-center gap-2">
-            <FileText className="h-4 w-4 text-accent-strong" />
-            Daily Publishing Volume
-          </h3>
-          <div className="h-48">
+        <AdminPanel title="Views by category" icon={Users} flush bodyClassName="p-3 sm:p-4">
+          <div className="h-52">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={displayData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--surface-700)/0.5)" />
-                <XAxis
-                  dataKey="date"
-                  tick={{ fill: "rgb(var(--surface-400))", fontSize: 10 }}
-                  tickFormatter={(v) => v.slice(5)}
-                  stroke="rgb(var(--surface-700)/0.5)"
-                />
-                <YAxis tick={{ fill: "rgb(var(--surface-400))", fontSize: 10 }} stroke="rgb(var(--surface-700)/0.5)" />
-                <Tooltip
-                  contentStyle={{
-                    background: "rgb(var(--surface-800))",
-                    border: "1px solid rgb(var(--surface-700))",
-                    borderRadius: "8px",
-                    fontSize: "12px",
-                    color: "rgb(var(--foreground))",
-                  }}
-                />
-                <Bar dataKey="posts" fill="#ff6b00" radius={[4, 4, 0, 0]} />
+              <PieChart>
+                <Pie
+                  data={data.categories}
+                  dataKey="views"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={78}
+                  innerRadius={44}
+                  paddingAngle={2}
+                  stroke="none"
+                >
+                  {data.categories.map((_, i) => (
+                    <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip contentStyle={TOOLTIP_STYLE} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          {/* A legend list rather than a chart label: it stays readable at 320px. */}
+          <ul className="mt-2 space-y-1.5">
+            {data.categories.slice(0, 5).map((cat, i) => (
+              <li key={cat.name} className="flex items-center justify-between gap-2 text-[11px]">
+                <span className="flex min-w-0 items-center gap-2 text-surface-300">
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{ background: PIE_COLORS[i % PIE_COLORS.length] }}
+                  />
+                  <span className="truncate">{cat.name}</span>
+                </span>
+                <span className="shrink-0 text-surface-400">{cat.views.toLocaleString()}</span>
+              </li>
+            ))}
+          </ul>
+        </AdminPanel>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <AdminPanel title="Top performing posts" icon={TrendingUp} flush>
+          <ul className="divide-y divide-surface-800">
+            {data.topPosts.slice(0, 8).map((post, i) => (
+              <li key={post.slug} className="flex items-center gap-3 px-3.5 py-2.5 sm:px-4">
+                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-brand-500/25 bg-brand-500/10 text-[10px] font-bold text-accent-strong">
+                  {i + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-medium text-surface-100">{post.title}</p>
+                  <p className="truncate text-[11px] text-surface-400">
+                    {post.author} · {post.category}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2.5 text-[11px] text-surface-400">
+                  <span className="flex items-center gap-1">
+                    <Eye className="h-3 w-3" />
+                    {post.views}
+                  </span>
+                  <span className="hidden items-center gap-1 sm:flex">
+                    <MessageSquare className="h-3 w-3" />
+                    {post.comments}
+                  </span>
+                  <span className="hidden items-center gap-1 sm:flex">
+                    <Heart className="h-3 w-3" />
+                    {post.likes}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </AdminPanel>
+
+        <AdminPanel title="Author performance" icon={Users} flush bodyClassName="p-3 sm:p-4">
+          <div className="h-60">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={data.authors.slice(0, 6)} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
+                <XAxis type="number" tick={AXIS_TICK} stroke={GRID} />
+                <YAxis type="category" dataKey="name" tick={AXIS_TICK} width={80} stroke={GRID} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} />
+                <Bar dataKey="views" fill={BRAND} radius={[0, 4, 4, 0]} />
+                <Bar dataKey="comments" fill={VIOLET} radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
-        </div>
+          <div className="mt-2 flex items-center justify-center gap-4">
+            <span className="flex items-center gap-1.5 text-[11px] text-surface-400">
+              <span className="h-2 w-2 rounded-full" style={{ background: BRAND }} /> Views
+            </span>
+            <span className="flex items-center gap-1.5 text-[11px] text-surface-400">
+              <span className="h-2 w-2 rounded-full" style={{ background: VIOLET }} /> Comments
+            </span>
+          </div>
+        </AdminPanel>
       </div>
-    </div>
+
+      <AdminPanel title="Daily publishing volume" icon={FileText} flush bodyClassName="p-3 sm:p-4">
+        <div className="h-44">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={displayData}>
+              <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
+              <XAxis dataKey="date" tick={AXIS_TICK} tickFormatter={(v) => v.slice(5)} stroke={GRID} />
+              <YAxis tick={AXIS_TICK} stroke={GRID} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Bar dataKey="posts" fill={BRAND} radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </AdminPanel>
+    </AdminPage>
   );
 }

@@ -739,7 +739,7 @@ export default function RssAdminPage() {
 
               {feeds.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16">
-                  <Rss className="mb-3 h-8 w-8 text-surface-600" />
+                  <Rss className="mb-3 h-8 w-8 text-surface-400" />
                   <p className="text-sm font-medium text-surface-300">No feeds configured yet</p>
                   <button
                     onClick={() => setShowAddModal(true)}
@@ -829,7 +829,7 @@ export default function RssAdminPage() {
                                 {feed.category}
                               </span>
                             ) : (
-                              <span className="text-xs text-surface-600">-</span>
+                              <span className="text-xs text-surface-400">-</span>
                             )}
                           </td>
                           <td className="px-3 py-3.5 text-sm font-medium text-surface-50 tabular-nums sm:px-5">
@@ -866,7 +866,7 @@ export default function RssAdminPage() {
                                 className={cn(
                                   "rounded-md p-1.5 transition-colors",
                                   pollingFeedId === feed.id
-                                    ? "text-surface-600 cursor-not-allowed"
+                                    ? "text-surface-400 cursor-not-allowed"
                                     : "text-surface-500 hover:bg-surface-800 hover:text-surface-50"
                                 )}
                                 title="Poll this feed"
@@ -965,7 +965,7 @@ export default function RssAdminPage() {
 
               {filteredArticles.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16">
-                  <Download className="mb-3 h-8 w-8 text-surface-600" />
+                  <Download className="mb-3 h-8 w-8 text-surface-400" />
                   <p className="text-sm font-medium text-surface-300">No articles found</p>
                 </div>
               ) : (

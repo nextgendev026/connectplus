@@ -276,7 +276,7 @@ export default function WriterApplicationsAdmin() {
               </div>
               {filtered.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-16">
-                  <PenLine className="mb-3 h-8 w-8 text-surface-600" />
+                  <PenLine className="mb-3 h-8 w-8 text-surface-400" />
                   <p className="text-sm font-medium text-surface-300">No applications here</p>
                 </div>
               )}
@@ -395,7 +395,7 @@ export default function WriterApplicationsAdmin() {
                       value={note}
                       onChange={(e) => setNote(e.target.value)}
                       placeholder="e.g. Share more of your writing so we can review your voice…"
-                      className="w-full rounded-xl bg-surface-800/50 border border-surface-700/50 px-4 py-3 text-sm text-surface-50 placeholder:text-surface-600 outline-none transition-colors focus:border-brand-500/50 focus:ring-1 focus:ring-brand-500/20"
+                      className="w-full rounded-xl bg-surface-800/50 border border-surface-700/50 px-4 py-3 text-sm text-surface-50 placeholder:text-surface-400 outline-none transition-colors focus:border-brand-500/50 focus:ring-1 focus:ring-brand-500/20"
                       rows={3}
                       maxLength={500}
                     />

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronRight, Trophy } from "lucide-react";
 import { liveEndpoint } from "@/lib/sports-endpoint";
+import { TeamCrest } from "./TeamCrest";
 
 /**
  * A deliberately SUBTLE live-scores panel for pages that are not the sports
@@ -78,33 +79,6 @@ function statusText(match: StripMatch): string {
   if (match.status === "HT") return "HT";
   if (!match.kickoff) return "—";
   return new Date(match.kickoff).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-function Crest({ name, logo }: { name: string; logo?: string | null }) {
-  const [failed, setFailed] = useState(false);
-  if (!logo || failed) {
-    return (
-      <span
-        aria-hidden
-        className="grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full bg-surface-800 text-[6px] font-bold text-surface-500"
-      >
-        {name.slice(0, 1).toUpperCase()}
-      </span>
-    );
-  }
-  return (
-    // eslint-disable-next-line @next/next/no-img-element -- third-party crest CDN; the optimizer would add a hop and break on hotlink-protected hosts
-    <img
-      src={logo}
-      alt=""
-      aria-hidden
-      loading="lazy"
-      decoding="async"
-      referrerPolicy="no-referrer"
-      onError={() => setFailed(true)}
-      className="h-3.5 w-3.5 shrink-0 object-contain"
-    />
-  );
 }
 
 export default function LiveScoresStrip({ sport = "football" }: { sport?: string }) {
@@ -189,14 +163,14 @@ export default function LiveScoresStrip({ sport = "football" }: { sport?: string
 
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-1.5">
-                  <Crest name={match.homeTeam} logo={match.homeLogo} />
+                  <TeamCrest name={match.homeTeam} logo={match.homeLogo} size="xs" />
                   <span className="truncate text-[11px] text-surface-200">{match.homeTeam}</span>
                   <span className="ml-auto pl-1.5 text-[11px] font-bold tabular-nums text-surface-50">
                     {match.homeScore ?? "–"}
                   </span>
                 </span>
                 <span className="mt-0.5 flex items-center gap-1.5">
-                  <Crest name={match.awayTeam} logo={match.awayLogo} />
+                  <TeamCrest name={match.awayTeam} logo={match.awayLogo} size="xs" />
                   <span className="truncate text-[11px] text-surface-300">{match.awayTeam}</span>
                   <span className="ml-auto pl-1.5 text-[11px] font-bold tabular-nums text-surface-100">
                     {match.awayScore ?? "–"}

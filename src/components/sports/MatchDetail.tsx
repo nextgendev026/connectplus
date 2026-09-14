@@ -8,6 +8,7 @@ import {
   Info,
   Loader2,
   MapPin,
+  Radio,
   RefreshCw,
   Sparkles,
   Target,
@@ -127,7 +128,7 @@ interface MatchPayload {
   predictions: ApiPrediction[];
 }
 
-type TabKey = "analysis" | "timeline" | "stats" | "lineups" | "momentum" | "shots" | "h2h" | "model";
+type TabKey = "analysis" | "commentary" | "timeline" | "stats" | "lineups" | "momentum" | "shots" | "h2h" | "model";
 
 interface TabDef {
   key: TabKey;
@@ -219,6 +220,7 @@ export default function MatchDetail({ match, pollSeconds = 30 }: { match: MatchR
     const available = (name: string) => c[name] === true;
     const defs: TabDef[] = [
       { key: "analysis", label: "Analysis", icon: Sparkles, available: (detail?.insights.length ?? 0) > 0 || detail?.found === true },
+      { key: "commentary", label: "Commentary", icon: Radio, available: (detail?.commentary.length ?? 0) > 0 },
       { key: "timeline", label: "Timeline", icon: Timer, available: available("timeline") },
       { key: "stats", label: "Stats", icon: BarChart3, available: available("teamStats") },
       { key: "lineups", label: "Lineups", icon: Users, available: available("lineups") },
@@ -282,6 +284,8 @@ export default function MatchDetail({ match, pollSeconds = 30 }: { match: MatchR
               />
             ) : active === "analysis" ? (
               <AnalysisTab detail={detail} predictions={payload?.predictions ?? []} />
+            ) : active === "commentary" ? (
+              <CommentaryTab detail={detail} live={live} />
             ) : active === "timeline" ? (
               <TimelineTab detail={detail} />
             ) : active === "stats" ? (
@@ -539,6 +543,86 @@ function TimelineTab({ detail }: { detail: MatchDetailPayload }) {
             ))}
           </ul>
         </div>
+      ) : null}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Commentary                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The play-by-play, newest first.
+ *
+ * This is the thing a reader actually watches during a match: not a summary of
+ * what happened but what is happening, line by line. It used to exist only as
+ * eight teaser lines under the timeline, which is a strange place to hide the
+ * one feed that tells you a goal has just been scored — so it is a board of its
+ * own, newest first, with a live marker while the match is running and the
+ * whole feed rather than the last eight lines of it.
+ */
+function CommentaryTab({ detail, live }: { detail: MatchDetailPayload; live: boolean }) {
+  // Newest first. A commentary feed is read from the top while a match is on,
+  // and the provider hands it over oldest-first.
+  const feed = useMemo(() => [...detail.commentary].reverse(), [detail.commentary]);
+  const [limit, setLimit] = useState(30);
+
+  if (feed.length === 0) {
+    return (
+      <p className="text-xs text-surface-500">
+        No commentary has been published for this fixture yet. It appears once the match kicks off.
+      </p>
+    );
+  }
+
+  const shown = feed.slice(0, limit);
+
+  return (
+    <div className="space-y-2.5">
+      <div className="flex items-center gap-2">
+        {live ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-red-400">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
+            Live
+          </span>
+        ) : null}
+        <span className="text-[10px] text-surface-500">
+          {feed.length} update{feed.length === 1 ? "" : "s"} · newest first
+        </span>
+      </div>
+
+      <ul className="space-y-1.5">
+        {shown.map((line, i) => (
+          <li
+            key={`${line.minute}-${line.text.slice(0, 24)}-${i}`}
+            className={cn(
+              "flex gap-2.5 rounded-lg border border-surface-800/50 bg-surface-900/30 px-2.5 py-2",
+              // The newest line is the one a reader's eye goes to, so it is the
+              // only one that is emphasised.
+              i === 0 && "border-brand-500/30 bg-brand-500/[0.06]"
+            )}
+          >
+            <span
+              className={cn(
+                "w-9 shrink-0 text-[11px] font-bold tabular-nums",
+                i === 0 ? "text-brand-300" : "text-surface-500"
+              )}
+            >
+              {line.minute || "—"}
+            </span>
+            <span className="min-w-0 text-[11px] leading-relaxed text-surface-300">{line.text}</span>
+          </li>
+        ))}
+      </ul>
+
+      {feed.length > limit ? (
+        <button
+          onClick={() => setLimit((n) => n + 40)}
+          className="w-full rounded-lg border border-surface-800 px-3 py-2 text-[11px] font-medium text-surface-400 transition hover:border-brand-500/50 hover:text-surface-100"
+        >
+          Show {Math.min(40, feed.length - limit)} earlier updates
+        </button>
       ) : null}
     </div>
   );

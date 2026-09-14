@@ -474,7 +474,7 @@ export default function AdminSettingsPage() {
             {/* Grouped sections */}
             {grouped.length === 0 && (
               <div className="rounded-2xl border border-dashed border-surface-700 py-16 text-center">
-                <Search className="mx-auto mb-3 h-8 w-8 text-surface-600" />
+                <Search className="mx-auto mb-3 h-8 w-8 text-surface-400" />
                 <p className="text-sm text-surface-500">No settings match “{query}”.</p>
               </div>
             )}

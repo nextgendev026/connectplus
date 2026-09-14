@@ -268,7 +268,7 @@ export default function AdminCommandCenter() {
                           ? "border-brand-500/20 bg-brand-500/5 hover:border-brand-500/40"
                           : node.status === "syncing"
                             ? "border-amber-500/20 bg-amber-500/5 hover:border-amber-500/40"
-                            : "border-surface-700 bg-surface-800/50 hover:border-surface-600"
+                            : "border-surface-700 bg-surface-800/50 hover:border-surface-700"
                       )}
                     >
                       <div className="flex items-center gap-2">

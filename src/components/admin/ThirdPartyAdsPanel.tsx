@@ -131,13 +131,13 @@ export default function ThirdPartyAdsPanel() {
   const ctr = (s: Slot) => (s.impressions > 0 ? ((s.clicks / s.impressions) * 100).toFixed(2) : "0.00");
 
   return (
-    <section className="rounded-2xl border border-surface-200/70 bg-white p-5 dark:border-surface-800 dark:bg-surface-900">
+    <section className="rounded-2xl border p-5 border-surface-800 bg-surface-900">
       <div className="flex items-start gap-3">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-cyan/10 border border-accent-cyan/20">
           <Globe className="h-5 w-5 text-accent-cyan" />
         </div>
         <div>
-          <h2 className="text-base font-bold text-surface-900 dark:text-surface-50">
+          <h2 className="text-base font-bold text-surface-50">
             Third-party networks
           </h2>
           <p className="text-xs text-surface-500 mt-0.5 leading-relaxed">
@@ -150,7 +150,7 @@ export default function ThirdPartyAdsPanel() {
       {error && (
         <div className="mt-4 flex items-start gap-2 rounded-xl border border-red-500/25 bg-red-500/10 px-3.5 py-2.5">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-red-400" />
-          <p className="text-[11px] leading-relaxed text-red-500 dark:text-red-300">{error}</p>
+          <p className="text-[11px] leading-relaxed text-red-300">{error}</p>
         </div>
       )}
 
@@ -169,19 +169,19 @@ export default function ThirdPartyAdsPanel() {
           slots.map((s) => (
             <div
               key={s.id}
-              className="flex flex-wrap items-center gap-3 rounded-xl border border-surface-200/70 p-3.5 dark:border-surface-800"
+              className="flex flex-wrap items-center gap-3 rounded-xl border p-3.5 border-surface-800"
             >
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-semibold text-surface-900 dark:text-surface-50">
+                  <span className="truncate text-sm font-semibold text-surface-50">
                     {s.name}
                   </span>
                   <span
                     className={cn(
                       "rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase",
                       s.isActive
-                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                        : "border-surface-300 bg-surface-100 text-surface-500 dark:border-surface-700 dark:bg-surface-800"
+                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                        : "text-surface-500 border-surface-700 bg-surface-800"
                     )}
                   >
                     {s.isActive ? "live" : "paused"}
@@ -210,7 +210,7 @@ export default function ThirdPartyAdsPanel() {
                   type="button"
                   disabled={saving}
                   onClick={() => void toggle(s)}
-                  className="rounded-lg border border-surface-200 p-1.5 text-surface-500 transition hover:text-brand-500 disabled:opacity-50 dark:border-surface-700"
+                  className="rounded-lg border p-1.5 text-surface-500 transition hover:text-brand-500 disabled:opacity-50 border-surface-700"
                   title={s.isActive ? "Pause slot" : "Activate slot"}
                 >
                   <Power className="h-3.5 w-3.5" />
@@ -219,7 +219,7 @@ export default function ThirdPartyAdsPanel() {
                   type="button"
                   disabled={saving}
                   onClick={() => void remove(s.id)}
-                  className="rounded-lg border border-surface-200 p-1.5 text-surface-500 transition hover:text-red-500 disabled:opacity-50 dark:border-surface-700"
+                  className="rounded-lg border p-1.5 text-surface-500 transition hover:text-red-500 disabled:opacity-50 border-surface-700"
                   title="Delete slot"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -231,7 +231,7 @@ export default function ThirdPartyAdsPanel() {
       </div>
 
       {/* Add / update form */}
-      <div className="mt-5 rounded-xl border border-surface-200/70 p-4 dark:border-surface-800">
+      <div className="mt-5 rounded-xl border p-4 border-surface-800">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-surface-500">
           Add a network slot
         </h3>
@@ -243,7 +243,7 @@ export default function ThirdPartyAdsPanel() {
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               placeholder="sidebar-banner"
-              className="mt-1 w-full rounded-lg border border-surface-200 bg-transparent px-3 py-2 text-sm text-surface-900 outline-none focus:border-brand-500/50 dark:border-surface-700 dark:text-surface-50"
+              className="mt-1 w-full rounded-lg border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand-500/50 border-surface-700 text-surface-50"
             />
           </label>
 
@@ -252,7 +252,7 @@ export default function ThirdPartyAdsPanel() {
             <select
               value={form.slot}
               onChange={(e) => setForm({ ...form, slot: e.target.value })}
-              className="mt-1 w-full rounded-lg border border-surface-200 bg-transparent px-3 py-2 text-sm text-surface-900 outline-none focus:border-brand-500/50 dark:border-surface-700 dark:text-surface-50"
+              className="mt-1 w-full rounded-lg border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand-500/50 border-surface-700 text-surface-50"
             >
               {(placements.length ? placements : [form.slot]).map((p) => (
                 <option key={p} value={p} className="bg-surface-900">
@@ -267,7 +267,7 @@ export default function ThirdPartyAdsPanel() {
             <select
               value={form.provider}
               onChange={(e) => setForm({ ...form, provider: e.target.value })}
-              className="mt-1 w-full rounded-lg border border-surface-200 bg-transparent px-3 py-2 text-sm text-surface-900 outline-none focus:border-brand-500/50 dark:border-surface-700 dark:text-surface-50"
+              className="mt-1 w-full rounded-lg border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand-500/50 border-surface-700 text-surface-50"
             >
               {Object.entries(PROVIDER_LABEL).map(([v, label]) => (
                 <option key={v} value={v} className="bg-surface-900">
@@ -285,7 +285,7 @@ export default function ThirdPartyAdsPanel() {
               value={form.adUnitId}
               onChange={(e) => setForm({ ...form, adUnitId: e.target.value })}
               placeholder="ca-pub-XXXXXXXXXXXXXXXX"
-              className="mt-1 w-full rounded-lg border border-surface-200 bg-transparent px-3 py-2 text-sm text-surface-900 outline-none focus:border-brand-500/50 dark:border-surface-700 dark:text-surface-50"
+              className="mt-1 w-full rounded-lg border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand-500/50 border-surface-700 text-surface-50"
             />
           </label>
 
@@ -298,7 +298,7 @@ export default function ThirdPartyAdsPanel() {
               onChange={(e) => setForm({ ...form, scriptTag: e.target.value })}
               rows={4}
               placeholder={'<ins class="adsbygoogle" …></ins>\n<script>(adsbygoogle = window.adsbygoogle || []).push({});</script>'}
-              className="mt-1 w-full rounded-lg border border-surface-200 bg-transparent px-3 py-2 font-mono text-[11px] leading-relaxed text-surface-900 outline-none focus:border-brand-500/50 dark:border-surface-700 dark:text-surface-50"
+              className="mt-1 w-full rounded-lg border bg-transparent px-3 py-2 font-mono text-[11px] leading-relaxed outline-none focus:border-brand-500/50 border-surface-700 text-surface-50"
             />
           </label>
         </div>

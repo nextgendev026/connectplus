@@ -2,6 +2,13 @@ import { prisma } from "@/lib/prisma";
 import { cacheGet, cacheSet } from "@/lib/redis";
 import { createLogger } from "@/lib/logger";
 import { openFootballProvider } from "@/lib/sports-openfootball";
+import {
+  apisportsConfigured as apiSportsConfigured,
+  apiSportsFixtureOdds,
+  apiSportsIdFromExternal,
+  apiSportsProvider,
+  APISPORTS_ODDS_MAX_LOOKUPS,
+} from "@/lib/sports-apisports";
 
 /**
  * Sports livescore data layer.
@@ -504,9 +511,24 @@ const sportsDbProvider: SportsProvider = {
 /* Keyless sources                                                     */
 /* ------------------------------------------------------------------ */
 
-/** ESPN's public scoreboard API needs no key and covers live state, minute,
- *  scores and (for many leagues) a draft of the odds. */
+/**
+ * ESPN's public scoreboard API needs no key and carries live state, minute,
+ * scores and — unlike every other keyless source we have — a price.
+ *
+ * That last part is why this list is worth keeping long. The American and
+ * European majors set the tone of the board, but the fixtures underneath them
+ * are what the desk is for, and a league that is not fetched here is a league
+ * whose model cannot see the market it is supposed to beat: `sports-intelligence`
+ * prices its edge against these odds, and an unpriced league silently falls
+ * back to "No published odds to price an edge against".
+ *
+ * Every slug below was checked against the live feed and returns events with an
+ * `odds` block attached. Cup competitions are included deliberately: a knockout
+ * night is when a price is most asked for, and `uefa.europa.conf` alone prices
+ * eighteen fixtures a round.
+ */
 export const ESPN_SOCCER_LEAGUES: Record<string, string> = {
+  // The majors.
   "eng.1": "Premier League",
   "eng.2": "Championship",
   "esp.1": "LaLiga",
@@ -518,33 +540,133 @@ export const ESPN_SOCCER_LEAGUES: Record<string, string> = {
   "por.1": "Primeira Liga",
   "usa.1": "MLS",
   "mex.1": "Liga MX",
+  // The rest of Europe, where the second tiers and the smaller top flights are
+  // the ones no other keyless source prices at all.
+  "eng.3": "League One",
+  "eng.4": "League Two",
+  "ita.2": "Serie B",
+  "ger.2": "2. Bundesliga",
+  "fra.2": "Ligue 2",
+  "ned.2": "Eerste Divisie",
+  "mex.2": "Liga MX Expansion",
+  "sco.1": "Scottish Premiership",
+  "bel.1": "Belgian Pro League",
+  "tur.1": "Turkish Super Lig",
+  "aut.1": "Austrian Bundesliga",
+  "sui.1": "Swiss Super League",
+  "den.1": "Danish Superliga",
+  "swe.1": "Allsvenskan",
+  "nor.1": "Eliteserien",
+  "gre.1": "Greek Super League",
+  "rou.1": "Romanian Liga I",
+  "rus.1": "Russian Premier League",
+  "isr.1": "Israeli Premier League",
+  // The Americas and Asia, where a reader is likelier to be betting a late
+  // kick-off than a Saturday 3pm.
+  "bra.1": "Brazilian Serie A",
+  "bra.2": "Brazilian Serie B",
+  "arg.1": "Argentine Primera Division",
+  "chi.1": "Chilean Primera Division",
+  "col.1": "Colombian Primera A",
+  "ecu.1": "Ecuadorian Serie A",
+  "per.1": "Peruvian Primera Division",
+  "uru.1": "Uruguayan Primera Division",
+  "par.1": "Paraguayan Primera Division",
+  "bol.1": "Bolivian Primera Division",
+  "ven.1": "Venezuelan Primera Division",
+  "jpn.1": "J1 League",
+  "ksa.1": "Saudi Pro League",
+  "usa.usl.1": "USL Championship",
+  // Continental competitions and the domestic cups that fill a midweek.
   "uefa.champions": "UEFA Champions League",
   "uefa.europa": "UEFA Europa League",
+  "uefa.europa.conf": "UEFA Conference League",
+  "uefa.nations": "UEFA Nations League",
   "fifa.world": "FIFA World Cup",
+  "caf.champions": "CAF Champions League",
+  "afc.champions": "AFC Champions League Elite",
+  "afc.cup": "AFC Champions League Two",
+  "concacaf.champions": "Concacaf Champions Cup",
+  "conmebol.libertadores": "CONMEBOL Libertadores",
+  "conmebol.sudamericana": "CONMEBOL Sudamericana",
+  "eng.fa": "FA Cup",
+  "eng.league_cup": "EFL Cup",
 };
 
 export const ESPN_BASKETBALL_LEAGUES: Record<string, string> = {
   "nba": "NBA",
   "wnba": "WNBA",
   "mens-college-basketball": "NCAA Basketball",
+  "womens-college-basketball": "NCAA Women's Basketball",
+  "nba-dleague": "NBA G League",
 };
+
+/** How many ESPN scoreboards may be in flight at once. See `mapLimit`. */
+const ESPN_FETCH_CONCURRENCY = 12;
+
+/** How many extra leagues one odds backfill may ask for. */
+const ODDS_BACKFILL_MAX_LEAGUES = 12;
 
 const ESPN_COUNTRY: Record<string, string> = {
   "eng.1": "England",
   "eng.2": "England",
+  "eng.3": "England",
+  "eng.4": "England",
+  "eng.fa": "England",
+  "eng.league_cup": "England",
   "esp.1": "Spain",
   "esp.2": "Spain",
   "ita.1": "Italy",
+  "ita.2": "Italy",
   "ger.1": "Germany",
+  "ger.2": "Germany",
   "fra.1": "France",
+  "fra.2": "France",
   "ned.1": "Netherlands",
+  "ned.2": "Netherlands",
   "por.1": "Portugal",
   "usa.1": "United States",
+  "usa.usl.1": "United States",
   "mex.1": "Mexico",
+  "mex.2": "Mexico",
+  "sco.1": "Scotland",
+  "bel.1": "Belgium",
+  "tur.1": "Turkey",
+  "aut.1": "Austria",
+  "sui.1": "Switzerland",
+  "den.1": "Denmark",
+  "swe.1": "Sweden",
+  "nor.1": "Norway",
+  "gre.1": "Greece",
+  "rou.1": "Romania",
+  "rus.1": "Russia",
+  "isr.1": "Israel",
+  "bra.1": "Brazil",
+  "bra.2": "Brazil",
+  "arg.1": "Argentina",
+  "chi.1": "Chile",
+  "col.1": "Colombia",
+  "ecu.1": "Ecuador",
+  "per.1": "Peru",
+  "uru.1": "Uruguay",
+  "par.1": "Paraguay",
+  "bol.1": "Bolivia",
+  "ven.1": "Venezuela",
+  "jpn.1": "Japan",
+  "ksa.1": "Saudi Arabia",
   "uefa.champions": "Europe",
   "uefa.europa": "Europe",
+  "uefa.europa.conf": "Europe",
+  "uefa.nations": "Europe",
+  "caf.champions": "Africa",
+  "afc.champions": "Asia",
+  "afc.cup": "Asia",
+  "concacaf.champions": "North America",
+  "conmebol.libertadores": "South America",
+  "conmebol.sudamericana": "South America",
   "nba": "United States",
   "wnba": "United States",
+  "nba-dleague": "United States",
 };
 
 /**
@@ -714,6 +836,51 @@ export function mapEspnEvent(row: unknown, league: string, sport: string): Norma
   };
 }
 
+/**
+ * Run `tasks` with at most `limit` in flight.
+ *
+ * The league registry is deliberately long, and an unbounded `Promise.all` over
+ * fifty scoreboards opens fifty sockets at once — enough to get us throttled by
+ * a public API that owes us nothing, and enough to make a serverless invocation
+ * look like a burst. Twelve at a time keeps the wall-clock the same without the
+ * burst.
+ */
+async function mapLimit<T, R>(items: readonly T[], limit: number, run: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    for (;;) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      out[index] = await run(items[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+/**
+ * One league's scoreboard for a day, normalised. Empty on any failure.
+ *
+ * The league is passed to the mapper as its **slug**, not its display name.
+ * `mapEspnEvent` stores whatever it is given in the external id, and the deep
+ * view is addressed by parsing that id back — `espn:<slug>:<eventId>`. Handing
+ * it a name like "Copa MX" produces an id whose middle segment cannot be
+ * resolved back to a slug, so the fixture is found and then thrown away, which
+ * looks exactly like not finding it at all.
+ */
+async function espnScoreboard(slug: string, sport: string, day: string, timeoutMs = 8000): Promise<NormalizedMatch[]> {
+  const sportPath = sport === "basketball" ? "basketball" : "soccer";
+  const res = await fetch(
+    `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/${slug}/scoreboard?dates=${day}&limit=100`,
+    { signal: AbortSignal.timeout(timeoutMs), cache: "no-store" }
+  );
+  if (!res.ok) throw new Error(`espn ${slug} HTTP ${res.status}`);
+  const body = (await res.json()) as { events?: unknown[] };
+  const rows = Array.isArray(body.events) ? body.events : [];
+  return rows.map((row) => mapEspnEvent(row, slug, sport)).filter(isMatch);
+}
+
 const espnProvider: SportsProvider = {
   id: "espn",
   label: "ESPN scoreboard",
@@ -722,30 +889,24 @@ const espnProvider: SportsProvider = {
   keyless: true,
   supportsDate: true,
   async fetchMatches({ date, sport }) {
-    const day = date.toISOString().slice(0, 10).replace(/-/g, "");
+    const day = espnDay(date);
     const leagues = sport === "basketball" ? ESPN_BASKETBALL_LEAGUES : ESPN_SOCCER_LEAGUES;
-    const sportPath = sport === "basketball" ? "basketball" : "soccer";
+    const slugs = Object.keys(leagues);
 
-    const results = await Promise.allSettled(
-      Object.keys(leagues).map(async (slug) => {
-        const res = await fetch(
-          `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/${slug}/scoreboard?dates=${day}&limit=100`,
-          { signal: AbortSignal.timeout(8000), cache: "no-store" }
-        );
-        if (!res.ok) throw new Error(`espn ${slug} HTTP ${res.status}`);
-        const body = (await res.json()) as { events?: unknown[] };
-        const rows = Array.isArray(body.events) ? body.events : [];
-        return rows
-          .map((row) => mapEspnEvent(row, leagues[slug] ?? slug, sport))
-          .filter(isMatch);
-      })
-    );
+    const settled = await mapLimit(slugs, ESPN_FETCH_CONCURRENCY, async (slug) => {
+      try {
+        return { ok: true as const, matches: await espnScoreboard(slug, sport, day) };
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+      }
+    });
 
     const matches: NormalizedMatch[] = [];
-    for (const r of results) if (r.status === "fulfilled") matches.push(...r.value);
-    if (matches.length === 0 && results.every((r) => r.status === "rejected")) {
-      const first = results[0] as PromiseRejectedResult | undefined;
-      throw new Error(first ? String(first.reason) : "espn unavailable");
+    for (const r of settled) if (r.ok) matches.push(...r.matches);
+    // Every league failing is ESPN being unreachable, not a quiet day: surface it
+    // so the source report shows a red light instead of "contributed 0".
+    if (settled.length > 0 && settled.every((r) => !r.ok)) {
+      throw new Error(settled[0] && !settled[0].ok ? settled[0].error : "espn unavailable");
     }
     return matches;
   },
@@ -996,6 +1157,474 @@ export function coalesceMatches(
   return { matches: [...byKey.values()], contributed };
 }
 
+/* ------------------------------------------------------------------ */
+/* The odds backfill                                                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * ESPN is the only keyless source we have that publishes a price, and it only
+ * publishes one for the leagues it was asked about. That made the model's market
+ * view a function of a hand-written list: a fixture from TheSportsDB or the
+ * OpenFootball archive arrived with `oddsHome: null`, `sports-intelligence`
+ * priced no edge against it, and the prediction fell back to its own priors with
+ * the rationale "No published odds to price an edge against" — the single
+ * biggest thing standing between a pick and an opinion about the market.
+ *
+ * So the list is no longer the whole story. Whatever leagues the other sources
+ * actually synced, the ones left unpriced get resolved against ESPN's own live
+ * league registry and fetched, and the fixtures are matched back by the same
+ * loose identity the merge uses. Coverage then follows the data instead of
+ * following our typing.
+ *
+ * Two rules keep it honest:
+ *
+ *   1. A price is only ever *copied* from a feed that published it. Where no
+ *      keyless source prices a competition — the Egyptian, Ukrainian and Baltic
+ *      leagues, which come from the fixture archive and are on no free pricing
+ *      feed — the odds stay null and the pick says so. Synthesising a plausible
+ *      1.85 would make every "value" figure downstream a fiction.
+ *   2. Ambiguity loses. A competition name that matches two registry entries is
+ *      not resolved at all: fetching the wrong league costs a request, but
+ *      attaching its prices to the wrong fixture would silently corrupt a pick.
+ */
+
+interface LeagueEntry {
+  slug: string;
+  name: string;
+}
+
+const LEAGUE_REGISTRY_TTL_MS = 12 * 60 * 60 * 1000;
+let leagueRegistry: { at: number; soccer: LeagueEntry[]; basketball: LeagueEntry[] } | null = null;
+
+/** The hand-written lists, shaped as a registry, for when the lookup fails. */
+function fallbackRegistry(sport: string): LeagueEntry[] {
+  const source = sport === "basketball" ? ESPN_BASKETBALL_LEAGUES : ESPN_SOCCER_LEAGUES;
+  return Object.entries(source).map(([slug, name]) => ({ slug, name }));
+}
+
+/**
+ * ESPN's own list of the leagues it carries — 200-odd of them, with slugs.
+ *
+ * Asking the provider is what makes the backfill dynamic: our registry names
+ * the leagues we fetch every tick, this one names every league we *could* price,
+ * including the cups and second tiers that only matter on the day they play.
+ * Cached for twelve hours because it changes about once a season, and falls back
+ * to the hand-written lists so a lookup failure degrades to today's behaviour
+ * rather than to no odds at all.
+ */
+async function espnLeagueRegistry(sport: string): Promise<LeagueEntry[]> {
+  const now = Date.now();
+  if (leagueRegistry && now - leagueRegistry.at < LEAGUE_REGISTRY_TTL_MS) {
+    return sport === "basketball" ? leagueRegistry.basketball : leagueRegistry.soccer;
+  }
+
+  const path = sport === "basketball" ? "basketball" : "soccer";
+  try {
+    const res = await fetch(
+      `https://site.web.api.espn.com/apis/site/v2/leagues/dropdown?sport=${path}&limit=400`,
+      { signal: AbortSignal.timeout(6000), cache: "no-store" }
+    );
+    if (!res.ok) throw new Error(`registry HTTP ${res.status}`);
+    const body = (await res.json()) as { leagues?: { slug?: string; name?: string }[] };
+    const entries = (body.leagues ?? [])
+      .map((l) => ({ slug: (l.slug ?? "").trim(), name: (l.name ?? "").trim() }))
+      .filter((l) => l.slug && l.name);
+    if (entries.length === 0) throw new Error("registry empty");
+
+    leagueRegistry = {
+      at: now,
+      soccer: path === "soccer" ? entries : (leagueRegistry?.soccer ?? []),
+      basketball: path === "basketball" ? entries : (leagueRegistry?.basketball ?? []),
+    };
+    return entries;
+  } catch (err) {
+    log.warn("espn league registry lookup failed", {
+      sport,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return fallbackRegistry(sport);
+  }
+}
+
+/** Words that appear in half the league names and so identify none of them. */
+const COMPETITION_STOPWORDS = new Set([
+  "the", "of", "de", "da", "do", "league", "liga", "ligue", "football", "soccer",
+  "cup", "copa", "coupe", "taca", "pokal", "super", "premier", "division", "championship",
+]);
+
+function competitionTokens(name: string): Set<string> {
+  const cleaned = (name ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  return new Set(cleaned.split(" ").filter((token) => token && !COMPETITION_STOPWORDS.has(token)));
+}
+
+/** How much a provider's competition name looks like a registry entry, 0–1. */
+function leagueAffinity(tokens: Set<string>, entryTokens: Set<string>): number {
+  if (tokens.size === 0 || entryTokens.size === 0) return 0;
+  let shared = 0;
+  for (const token of tokens) if (entryTokens.has(token)) shared += 1;
+  if (shared === 0) return 0;
+  // Jaccard, so "Greek Super League 2" does not swallow "Greek Super League"
+  // just because the shorter name is wholly contained in the longer one.
+  const union = tokens.size + entryTokens.size - shared;
+  return shared / union;
+}
+
+const LEAGUE_MATCH_THRESHOLD = 0.6;
+
+/**
+ * The single registry entry a competition refers to, or null.
+ *
+ * `hint` short-circuits the scoring when the fixture already carries an ESPN
+ * slug (fixtures mapped by this adapter store one in `competitionId`), which is
+ * exact rather than inferred.
+ */
+function resolveLeague(
+  competition: string,
+  hint: string | null | undefined,
+  registry: LeagueEntry[]
+): LeagueEntry | null {
+  const direct = hint ? registry.find((entry) => entry.slug === hint) : undefined;
+  if (direct) return direct;
+
+  const tokens = competitionTokens(competition);
+  if (tokens.size === 0) return null;
+
+  let best: LeagueEntry | null = null;
+  let bestScore = 0;
+  let runnerUp = 0;
+  for (const entry of registry) {
+    const score = leagueAffinity(tokens, competitionTokens(entry.name));
+    if (score > bestScore) {
+      runnerUp = bestScore;
+      best = entry;
+      bestScore = score;
+    } else if (score > runnerUp) {
+      runnerUp = score;
+    }
+  }
+
+  if (!best || bestScore < LEAGUE_MATCH_THRESHOLD) return null;
+  // A tie is not a match — see rule 2 above.
+  if (bestScore - runnerUp < 0.05) return null;
+  return best;
+}
+
+/**
+ * Fill in the prices the merge could not find, for whatever is on the board.
+ *
+ * Runs after the sources have been coalesced, so it sees the real fixture list
+ * and only the leagues it actually contains. Leagues already fetched by the ESPN
+ * provider are skipped — their fixtures are priced or genuinely unpriced, and
+ * asking again would cost a request to learn nothing.
+ */
+export async function backfillOdds(
+  matches: NormalizedMatch[],
+  ctx: { date: Date; sport: string }
+): Promise<{ matches: NormalizedMatch[]; priced: number; leagues: string[] }> {
+  const unchanged = { matches, priced: 0, leagues: [] as string[] };
+  if (matches.length === 0) return unchanged;
+  if (ctx.sport !== "football" && ctx.sport !== "basketball") return unchanged;
+
+  const already = new Set(
+    Object.keys(ctx.sport === "basketball" ? ESPN_BASKETBALL_LEAGUES : ESPN_SOCCER_LEAGUES)
+  );
+  const unpriced = matches.filter(
+    (m) => m.oddsHome == null || m.oddsDraw == null || m.oddsAway == null
+  );
+  if (unpriced.length === 0) return unchanged;
+
+  const registry = await espnLeagueRegistry(ctx.sport);
+  const wanted = new Map<string, LeagueEntry>();
+  for (const match of unpriced) {
+    if (already.has(match.competitionId ?? "")) continue;
+    const entry = resolveLeague(match.competition, match.competitionId, registry);
+    if (entry) wanted.set(entry.slug, entry);
+  }
+  if (wanted.size === 0) return unchanged;
+
+  const day = espnDay(ctx.date);
+  const chosen = [...wanted.values()].slice(0, ODDS_BACKFILL_MAX_LEAGUES);
+  const fetched = await mapLimit(chosen, ESPN_FETCH_CONCURRENCY, async (entry) => {
+    try {
+      return await espnScoreboardCached(entry.slug, ctx.sport, day, 6000);
+    } catch (err) {
+      log.warn("odds backfill source failed", {
+        league: entry.slug,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [] as NormalizedMatch[];
+    }
+  });
+
+  // Two indexes: the fixture's own key (teams + day), and the team pair alone so
+  // a kick-off that lands on a different UTC day between providers — a 21:00
+  // Buenos Aires kick-off is the next day in UTC — still finds its price.
+  const byKey = new Map<string, NormalizedMatch>();
+  const byPair = new Map<string, { kickoff: number; match: NormalizedMatch }[]>();
+  for (const batch of fetched) {
+    for (const priced of batch) {
+      if (priced.oddsHome == null && priced.oddsDraw == null && priced.oddsAway == null) continue;
+      byKey.set(fixtureKey(priced), priced);
+      const pair = `${teamSlug(priced.homeTeam)}|${teamSlug(priced.awayTeam)}`;
+      const list = byPair.get(pair) ?? [];
+      list.push({ kickoff: priced.kickoff ? new Date(priced.kickoff).getTime() : 0, match: priced });
+      byPair.set(pair, list);
+    }
+  }
+  if (byKey.size === 0) return unchanged;
+
+  let priced = 0;
+  const next = matches.map((match) => {
+    if (match.oddsHome != null && match.oddsDraw != null && match.oddsAway != null) return match;
+    let quote = byKey.get(fixtureKey(match));
+    if (!quote) {
+      const pair = `${teamSlug(match.homeTeam)}|${teamSlug(match.awayTeam)}`;
+      const at = match.kickoff ? new Date(match.kickoff).getTime() : 0;
+      quote = byPair
+        .get(pair)
+        ?.slice()
+        .sort((a, b) => Math.abs(a.kickoff - at) - Math.abs(b.kickoff - at))
+        .find((candidate) => Math.abs(candidate.kickoff - at) <= 36 * 60 * 60 * 1000)?.match;
+    }
+    if (!quote) return match;
+    priced += 1;
+    return {
+      ...match,
+      oddsHome: match.oddsHome ?? quote.oddsHome ?? null,
+      oddsDraw: match.oddsDraw ?? quote.oddsDraw ?? null,
+      oddsAway: match.oddsAway ?? quote.oddsAway ?? null,
+    };
+  });
+
+  return { matches: next, priced, leagues: chosen.map((entry) => entry.slug) };
+}
+
+/**
+ * Fill in prices for the fixtures this feed itself brought in.
+ *
+ * The ESPN backfill above prices whatever ESPN's registry can name — the FKF
+ * Premier League is not on it, which is exactly the league API-Sports exists
+ * for. Fixtures whose `externalId` is an API-Sports id (`apisports:<n>`) are
+ * priced from API-Sports' own `/odds` endpoint, one call per fixture, capped at
+ * `APISPORTS_ODDS_MAX_LOOKUPS` so a busy FKF matchday can never blow the daily
+ * budget the whole provider hangs off. Each unpriced fixture is visited at most
+ * once; a fixture that already carries a price is left untouched.
+ */
+async function backfillApiSportsOdds(
+  matches: NormalizedMatch[],
+  ctx: { date: Date; sport: string }
+): Promise<{ matches: NormalizedMatch[]; priced: number; lookups: number }> {
+  const unchanged = { matches, priced: 0, lookups: 0 };
+  if (matches.length === 0 || !apiSportsConfigured()) return unchanged;
+  // The 1X2 market this desk prices is a football concept today.
+  if (ctx.sport !== "football") return unchanged;
+
+  const unpriced = matches.filter(
+    (m) =>
+      m.provider === "apisports" &&
+      (m.oddsHome == null || m.oddsDraw == null || m.oddsAway == null)
+  );
+  if (unpriced.length === 0) return unchanged;
+
+  const next = [...matches];
+  const byId = new Map(next.map((m) => [m.externalId, m]));
+  let priced = 0;
+  let lookups = 0;
+
+  for (const match of unpriced) {
+    if (lookups >= APISPORTS_ODDS_MAX_LOOKUPS) break;
+    const fixtureId = apiSportsIdFromExternal(match.externalId);
+    if (!fixtureId) continue;
+    lookups += 1;
+    const odds = await apiSportsFixtureOdds(fixtureId).catch(() => null);
+    if (!odds || odds.home <= 1 || odds.draw <= 1 || odds.away <= 1) continue;
+    const target = byId.get(match.externalId);
+    if (!target) continue;
+    target.oddsHome = odds.home;
+    target.oddsDraw = odds.draw;
+    target.oddsAway = odds.away;
+    priced += 1;
+  }
+
+  return priced > 0 ? { matches: next, priced, lookups } : unchanged;
+}
+
+/* ------------------------------------------------------------------ */
+/* Pipeline counters                                                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Two numbers the console cannot get from the database.
+ *
+ * Whether a fixture has a *price* and whether it has a *deep read* are the two
+ * things that decide whether a pick is an opinion about the market or a guess,
+ * and neither is stored: the odds column says null for a fixture nobody priced
+ * and for one that was never looked at. These counters record what the pipeline
+ * did this process, so an operator can see the work happening rather than
+ * inferring it from an absence — which is the same failure mode as the edge
+ * cron that reported nothing in particular.
+ */
+const pipelineCounters = { oddsBackfilled: 0, deepDataResolved: 0 };
+
+/** What the odds backfill and the deep-data resolver have done this process. */
+export function sportsEngineCounters(): { oddsBackfilled: number; deepDataResolved: number } {
+  return { ...pipelineCounters };
+}
+
+/* ------------------------------------------------------------------ */
+/* Resolving a fixture to an ESPN event                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * ESPN's summary endpoint is the only keyless source for the deep view — the
+ * timeline, the 28 team statistics, the lineups, the play-by-play commentary and
+ * the goal coordinates the shot map is drawn from. It addresses a fixture by
+ * ESPN's own event id, though, and only fixtures ESPN itself returned carry one.
+ * The result was that the match centre's timeline, stats, lineups, momentum and
+ * shot map were all blank for every fixture that arrived from TheSportsDB, the
+ * OpenFootball archive or football-data.org — which is most of the board — with a
+ * note telling the reader that deep data "is only available for fixtures served
+ * by ESPN's public feed".
+ *
+ * It is available for far more than that. ESPN runs a scoreboard for most of the
+ * leagues we carry, so a fixture can be *found* rather than merely looked up: the
+ * competition gives the league, the league's scoreboard for that day gives the
+ * events, and the fixture is matched to one of them by the same loose team-name
+ * identity the merge already trusts. That turns a blank match centre into a
+ * timeline, live stats and commentary.
+ */
+
+/** One league-day of scoreboards, shared by the odds backfill and this resolver. */
+const scoreboardCache = new Map<string, { at: number; matches: NormalizedMatch[] }>();
+const SCOREBOARD_TTL_MS = 45_000;
+const SCOREBOARD_CACHE_MAX = 240;
+
+async function espnScoreboardCached(
+  slug: string,
+  sport: string,
+  day: string,
+  timeoutMs = 8000
+): Promise<NormalizedMatch[]> {
+  const key = `${sport}|${slug}|${day}`;
+  const hit = scoreboardCache.get(key);
+  if (hit && Date.now() - hit.at < SCOREBOARD_TTL_MS) return hit.matches;
+
+  const matches = await espnScoreboard(slug, sport, day, timeoutMs);
+  if (scoreboardCache.size >= SCOREBOARD_CACHE_MAX) {
+    // Drop the oldest entry rather than clearing: clearing throws away the
+    // leagues the current matchday is actually using.
+    let oldestKey: string | null = null;
+    let oldestAt = Number.POSITIVE_INFINITY;
+    for (const [k, v] of scoreboardCache) {
+      if (v.at < oldestAt) {
+        oldestAt = v.at;
+        oldestKey = k;
+      }
+    }
+    if (oldestKey) scoreboardCache.delete(oldestKey);
+  }
+  scoreboardCache.set(key, { at: Date.now(), matches });
+  return matches;
+}
+
+const ESPN_EVENT_TTL_MS = 10 * 60 * 1000;
+const ESPN_EVENT_CACHE_MAX = 400;
+const espnEventCache = new Map<string, { at: number; externalId: string | null }>();
+
+/** `YYYYMMDD` for a provider date, which is what ESPN's `dates` filter wants. */
+function espnDay(date: Date): string {
+  return date.toISOString().slice(0, 10).replace(/-/g, "");
+}
+
+/**
+ * Find the ESPN event that corresponds to a fixture from any other source.
+ *
+ * Returns the ESPN-style external id (`espn:<league>:<eventId>`) so the caller
+ * can hand it straight to the same parser the native ESPN fixtures use, or null
+ * when the fixture is not on ESPN at all — a lower-league game the archive
+ * carries and ESPN does not. Null is a real answer and the UI says so; guessing
+ * would attach another match's timeline to this one.
+ */
+export async function resolveEspnEventId(input: {
+  externalId: string;
+  homeTeam: string;
+  awayTeam: string;
+  competition?: string | null;
+  competitionId?: string | null;
+  kickoff?: Date | string | null;
+  sport?: string;
+}): Promise<string | null> {
+  // A native ESPN fixture already has its id; there is nothing to resolve.
+  if (/^espn:[^:]+:/.test(input.externalId)) return input.externalId;
+
+  const sport = input.sport === "basketball" ? "basketball" : "football";
+  const path = sport === "basketball" ? "basketball" : "soccer";
+
+  const kickoff = input.kickoff ? new Date(input.kickoff) : null;
+  const day = kickoff && !Number.isNaN(kickoff.getTime()) ? espnDay(kickoff) : null;
+  const pair = `${teamSlug(input.homeTeam)}|${teamSlug(input.awayTeam)}`;
+  if (!pair.replace(/\|/g, "")) return null;
+
+  const registry = await espnLeagueRegistry(sport);
+  const entry = resolveLeague(input.competition ?? "", input.competitionId, registry);
+  if (!entry) return null;
+
+  const cacheKey = `${entry.slug}|${day ?? "any"}|${pair}`;
+  const cached = espnEventCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < ESPN_EVENT_TTL_MS) return cached.externalId;
+
+  // One day is the normal case; the neighbours cover a provider that stamps a
+  // late kick-off on the following (or previous) UTC day, and a fixture with no
+  // kick-off at all falls back to today.
+  const days = day
+    ? [day, espnDay(new Date(new Date(kickoff!).getTime() - 86_400_000)), espnDay(new Date(new Date(kickoff!).getTime() + 86_400_000))]
+    : [espnDay(new Date())];
+
+  let found: string | null = null;
+  for (const probe of days) {
+    let matches: NormalizedMatch[];
+    try {
+      matches = await espnScoreboardCached(entry.slug, sport, probe, 6000);
+    } catch (err) {
+      log.warn("espn event lookup failed", {
+        league: entry.slug,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      break;
+    }
+    const hits = matches.filter(
+      (m) => `${teamSlug(m.homeTeam)}|${teamSlug(m.awayTeam)}` === pair
+    );
+    if (hits.length === 1) {
+      found = hits[0]!.externalId;
+      break;
+    }
+    // Two events on the same day with the same two clubs is a data problem, not
+    // a match — take the first day that resolves and stop.
+    if (hits.length > 1) break;
+  }
+
+  if (espnEventCache.size >= ESPN_EVENT_CACHE_MAX) {
+    let oldestKey: string | null = null;
+    let oldestAt = Number.POSITIVE_INFINITY;
+    for (const [k, v] of espnEventCache) {
+      if (v.at < oldestAt) {
+        oldestAt = v.at;
+        oldestKey = k;
+      }
+    }
+    if (oldestKey) espnEventCache.delete(oldestKey);
+  }
+  espnEventCache.set(cacheKey, { at: Date.now(), externalId: found });
+  if (found) pipelineCounters.deepDataResolved += 1;
+  return found;
+}
+
 function mapSportsDbEvent(row: unknown, fallbackDay?: string): NormalizedMatch | null {
   const e = row as Record<string, unknown>;
   const home = String(e.strHomeTeam ?? "");
@@ -1228,6 +1857,10 @@ function round2(n: number): number {
 /* ------------------------------------------------------------------ */
 
 const PROVIDERS: SportsProvider[] = [
+  // The credentialed feed, and the only source that carries the FKF Premier
+  // League with live minutes + basketball in one shape — first in the array so
+  // it wins the priority-1 tie with football-data.
+  apiSportsProvider,
   footballDataProvider,
   sportsDbProvider,
   espnProvider,
@@ -1288,17 +1921,19 @@ export function providerInfo(): ProviderInfo[] {
     active: lastSourceReport.find((r) => r.id === p.id)?.ok ?? false,
     contributed: lastSourceReport.find((r) => r.id === p.id)?.contributed ?? 0,
     hint:
-      p.id === "football-data"
-        ? "Set SPORTS_API_KEY to a free football-data.org token (highest priority when present)."
-        : p.id === "sportsdb"
-          ? "Works with the public key; set SPORTSDB_API_KEY for a patron key and more coverage."
-          : p.id === "espn"
-            ? "Keyless ESPN scoreboard — live state and odds for the big leagues."
-            : p.id === "openligadb"
-              ? "Keyless German-league feed, used as a second opinion on Bundesliga days."
-              : p.id === "openfootball"
-                ? "Keyless public-domain fixture archive — fills in scheduled fixtures for the weeks ahead, never results."
-                : "Zero-config fallback used only when every live source fails.",
+      p.id === "apisports"
+        ? "API-Sports key (APISPORTS_API_KEY) — FKF Premier League, live minutes and basketball; budget-governed at 100 calls/day on the Free plan."
+        : p.id === "football-data"
+          ? "Set SPORTS_API_KEY to a free football-data.org token (highest priority when present)."
+          : p.id === "sportsdb"
+            ? "Works with the public key; set SPORTSDB_API_KEY for a patron key and more coverage."
+            : p.id === "espn"
+              ? "Keyless ESPN scoreboard — live state and odds for the big leagues."
+              : p.id === "openligadb"
+                ? "Keyless German-league feed, used as a second opinion on Bundesliga days."
+                : p.id === "openfootball"
+                  ? "Keyless public-domain fixture archive — fills in scheduled fixtures for the weeks ahead, never results."
+                  : "Zero-config fallback used only when every live source fails.",
   }));
 }
 
@@ -1534,7 +2169,50 @@ async function fetchHubSnapshot(ctx: {
   for (const row of report) row.contributed = coalesced.contributed.get(row.id) ?? 0;
   lastSourceReport = report;
 
+  // Price whatever the merge could not. Without this the model only ever sees a
+  // market for the leagues ESPN was hand-listed for, and every other fixture is
+  // predicted with its back to the prices (see the odds backfill section).
   let matches = coalesced.matches;
+  try {
+    const odds = await backfillOdds(matches, { date, sport });
+    if (odds.priced > 0) {
+      matches = odds.matches;
+      pipelineCounters.oddsBackfilled += odds.priced;
+      log.info("odds backfilled", { sport, priced: odds.priced, leagues: odds.leagues });
+      const espnRow = report.find((r) => r.id === "espn");
+      if (espnRow) espnRow.contributed += odds.priced;
+    }
+  } catch (err) {
+    // A missing price is a degraded model, never a broken page.
+    log.warn("odds backfill failed", {
+      sport,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  // The merge's ESPN backfill cannot price what this feed alone carries — the
+  // FKF Premier League is not on ESPN's registry — so fixtures API-Sports
+  // brought in get their prices from API-Sports' own /odds endpoint, capped by
+  // the same daily budget that governs everything else in that module.
+  try {
+    const apiPrices = await backfillApiSportsOdds(matches, { date, sport });
+    if (apiPrices.priced > 0) {
+      matches = apiPrices.matches;
+      pipelineCounters.oddsBackfilled += apiPrices.priced;
+      log.info("api-sports odds backfilled", {
+        sport,
+        priced: apiPrices.priced,
+        lookups: apiPrices.lookups,
+      });
+      const apiRow = report.find((r) => r.id === "apisports");
+      if (apiRow) apiRow.contributed += apiPrices.priced;
+    }
+  } catch (err) {
+    // A missing price is a degraded model, never a broken page.
+    log.warn("api-sports odds backfill failed", {
+      sport,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
   let usedProvider =
     sources.find((p) => matches.some((m) => m.provider === p.id))?.id ?? sources[0]?.id ?? DEMO_PROVIDER_ID;
   let stale = false;
@@ -1784,6 +2462,72 @@ export function recordMatchView(meta: {
       },
     })
     .catch(() => {});
+}
+
+/**
+ * How much of today's board the model can actually see, per competition.
+ *
+ * This is the console's answer to a question the aggregates cannot answer:
+ * `matches` and `predictions` both count fine while every pick on the board is
+ * being made without a price to compare against. A competition with fixtures and
+ * no prices is where the model is flying blind, and naming those competitions is
+ * what turns "coverage is 40%" into something an operator can act on.
+ */
+export interface SportsCoverage {
+  from: string;
+  to: string;
+  matches: number;
+  /** All three legs of a 1X2 price present — the pick can see the market. */
+  priced: number;
+  partial: number;
+  unpriced: number;
+  /** Fixtures ESPN itself returned, so the deep read needs no lookup. */
+  nativeDeepData: number;
+  unpricedCompetitions: { competition: string; matches: number }[];
+}
+
+export async function sportsCoverage(): Promise<SportsCoverage> {
+  const from = new Date(Date.now() - 12 * 3_600_000);
+  const to = new Date(Date.now() + 36 * 3_600_000);
+
+  const rows = await prisma.sportsMatch
+    .findMany({
+      where: {
+        kickoff: { gte: from, lte: to },
+        sport: "football",
+      },
+      select: { competition: true, provider: true, oddsHome: true, oddsDraw: true, oddsAway: true },
+      take: 2000,
+    })
+    .catch(() => []);
+
+  let priced = 0;
+  let partial = 0;
+  let unpriced = 0;
+  let nativeDeepData = 0;
+  const blind = new Map<string, number>();
+  for (const row of rows) {
+    const legs = [row.oddsHome, row.oddsDraw, row.oddsAway].filter((v) => v != null).length;
+    if (legs === 3) priced += 1;
+    else if (legs === 0) unpriced += 1;
+    else partial += 1;
+    if (legs < 3) blind.set(row.competition, (blind.get(row.competition) ?? 0) + 1);
+    if (row.provider === "espn") nativeDeepData += 1;
+  }
+
+  return {
+    from: from.toISOString(),
+    to: to.toISOString(),
+    matches: rows.length,
+    priced,
+    partial,
+    unpriced,
+    nativeDeepData,
+    unpricedCompetitions: [...blind.entries()]
+      .map(([competition, matches]) => ({ competition, matches }))
+      .sort((a, b) => b.matches - a.matches)
+      .slice(0, 12),
+  };
 }
 
 export async function getSportsStats(): Promise<{

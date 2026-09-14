@@ -300,7 +300,7 @@ export default function UsersManagement() {
                                 {user.isVerified ? (
                                   <CheckCircle className="h-4 w-4 text-accent-strong" />
                                 ) : (
-                                  <div className="h-4 w-4 rounded-full border-2 border-surface-600" />
+                                  <div className="h-4 w-4 rounded-full border-2 border-surface-700" />
                                 )}
                               </div>
                             </td>
@@ -329,7 +329,7 @@ export default function UsersManagement() {
                 </div>
                 {filteredUsers.length === 0 && (
                   <div className="flex flex-col items-center justify-center py-16">
-                    <Users className="mb-3 h-8 w-8 text-surface-600" />
+                    <Users className="mb-3 h-8 w-8 text-surface-400" />
                     <p className="text-sm font-medium text-surface-300">
                       No users match your filters
                     </p>

@@ -17,7 +17,7 @@ import {
 import { cn } from "@/lib/utils";
 import { tipsEndpoint } from "@/lib/sports-endpoint";
 import { explainPick } from "@/lib/pick-insights";
-import { PickReasons } from "./PickReasons";
+import { PickReasons, REASON_ICONS } from "./PickReasons";
 import ReferralCards from "./ReferralCards";
 
 interface TipMatch {
@@ -270,42 +270,70 @@ export default function BettingTips({
           ) : null}
         </div>
 
-        {/* Market chips scroll sideways on a phone instead of wrapping into a
-            second row of buttons that pushes the picks below the fold. */}
-        <div className="mt-3 flex items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:none] sm:flex-wrap">
-          {MARKET_FILTERS.map((f) => (
-            <button
-              key={f.value}
-              onClick={() => setMarket(f.value)}
-              className={cn(
-                "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition",
-                market === f.value
-                  ? "border-emerald-500 bg-emerald-500/15 text-emerald-300"
-                  : "border-surface-800 text-surface-400 hover:border-surface-700 hover:text-surface-50"
-              )}
-            >
-              {f.label}
-            </button>
-          ))}
-          <div className="ml-auto flex shrink-0 items-center rounded-xl border border-surface-800 bg-surface-900/70 p-1">
-            {(
-              [
-                { value: "confidence", label: "Most likely", icon: Flame },
-                { value: "edge", label: "Best price", icon: TrendingUp },
-              ] as const
-            ).map((option) => (
-              <button
-                key={option.value}
-                onClick={() => setSort(option.value)}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition",
-                  sort === option.value ? "bg-emerald-500 text-white" : "text-surface-400 hover:text-surface-50"
-                )}
-              >
-                <option.icon className="h-3.5 w-3.5" />
-                {option.label}
-              </button>
-            ))}
+        {/*
+          Market chips and the sort toggle, in one pinned bar.
+
+          Two things were wrong with this row on a phone. It scrolled away with
+          the page, so changing market meant scrolling back to the top of a long
+          board; and it sat under four stacked header rows, which pushed the
+          first actual pick below the fold. It now pins directly beneath the app
+          navbar — the same treatment the score board's toolbar and the fixture
+          calendar's month stepper get.
+
+          The bar's contents are laid out so they can never widen the page. Four
+          `shrink-0` chips with a `shrink-0` sort toggle in a nowrap flex row
+          measured 799px on a 390px screen: nothing in that row could shrink or
+          wrap, so the overflow escaped every ancestor and the whole document
+          became sideways-scrollable — on every board, not just this one. The
+          chips therefore ride a contained rail and the toggle gets its own row
+          until there is room to sit beside them.
+        */}
+        <div className="sports-toolbar sticky -mx-3 mt-2.5 border-b border-surface-900/60 bg-surface-950/95 px-3 pb-2 pt-2 backdrop-blur sm:-mx-6 sm:px-6">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            {/* A rail, not a wrap: five market names wrap into three ragged rows
+                on a phone. Contained here, so the overflow has somewhere to go
+                and the edge-to-edge bleed reads as "there is more this way". */}
+            <div className="scrollbar-hide -mx-3 flex shrink-0 items-center gap-2 overflow-x-auto px-3 sm:mx-0 sm:flex-1 sm:flex-wrap sm:overflow-visible sm:px-0">
+              {MARKET_FILTERS.map((f) => (
+                <button
+                  key={f.value}
+                  onClick={() => setMarket(f.value)}
+                  className={cn(
+                    "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition",
+                    market === f.value
+                      ? "border-emerald-500 bg-emerald-500/15 text-emerald-300"
+                      : "border-surface-800 text-surface-400 hover:border-surface-700 hover:text-surface-50"
+                  )}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center justify-between gap-2 sm:ml-auto sm:justify-end">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-surface-500 sm:hidden">
+                Sort by
+              </span>
+              <div className="flex items-center rounded-xl border border-surface-800 bg-surface-900/70 p-1">
+                {(
+                  [
+                    { value: "confidence", label: "Most likely", icon: Flame },
+                    { value: "edge", label: "Best price", icon: TrendingUp },
+                  ] as const
+                ).map((option) => (
+                  <button
+                    key={option.value}
+                    onClick={() => setSort(option.value)}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition",
+                      sort === option.value ? "bg-emerald-500 text-white" : "text-surface-400 hover:text-surface-50"
+                    )}
+                  >
+                    <option.icon className="h-3.5 w-3.5" />
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -334,18 +362,26 @@ export default function BettingTips({
             </p>
           </div>
         ) : (
-          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {groups.slice(0, 6).map((group) => (
-              <FixtureTipsCard key={group.key} group={group} />
-            ))}
-            {inlineAd && groups.length > 6 ? (
-              <div className="sm:col-span-2 xl:col-span-3 2xl:col-span-4">{inlineAd}</div>
-            ) : null}
-            {groups.slice(6).map((group) => (
+          /*
+            `auto-rows-fr` gives every row the same height, so a card whose
+            reasons run to four lines sits level with one that has two instead of
+            leaving a ragged bottom edge down the board — and `h-full` on the card
+            makes it fill that row. The sponsored placement is deliberately NOT a
+            cell in this grid: as a full-width row it cut the board in half and
+            left the cards either side of it stranded at different heights, so it
+            now sits below the picks as its own band, where it cannot disturb the
+            rhythm of the thing the reader came for.
+          */
+          <div className="mt-5 grid auto-rows-fr gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            {groups.map((group) => (
               <FixtureTipsCard key={group.key} group={group} />
             ))}
           </div>
         )}
+
+        {inlineAd && !loading && data && data.picks.length > 0 ? (
+          <div className="mt-5">{inlineAd}</div>
+        ) : null}
 
         <div className="mt-6 flex items-start gap-2 rounded-xl border border-surface-800/70 bg-surface-900/40 px-3 py-2.5 text-[11px] leading-relaxed text-surface-500">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
@@ -435,7 +471,7 @@ function FixtureTipsCard({ group }: { group: FixtureGroup }) {
   });
 
   return (
-    <article className="group relative flex flex-col overflow-hidden rounded-2xl border border-surface-800/70 bg-gradient-to-b from-surface-900/70 to-surface-950/60 transition duration-300 hover:border-emerald-500/40 hover:shadow-[0_0_0_1px_rgba(16,185,129,0.1)] motion-safe:animate-rise">
+    <article className="group relative flex h-full flex-col overflow-hidden rounded-2xl border border-surface-800/70 bg-gradient-to-b from-surface-900/70 to-surface-950/60 transition duration-300 hover:border-emerald-500/40 hover:shadow-[0_0_0_1px_rgba(16,185,129,0.1)] motion-safe:animate-rise">
       <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-emerald-500/60 via-brand-500/40 to-transparent" />
 
       <div className="flex items-center justify-between gap-2 border-b border-surface-800/60 px-4 py-2.5">
@@ -476,10 +512,69 @@ function FixtureTipsCard({ group }: { group: FixtureGroup }) {
         </div>
       </div>
 
-      <PickReasons insight={insight} className="mt-3 px-4" />
+      <PickReasons insight={insight} className="mt-3 px-4" limit={3} showNote={false} />
+
+      {/*
+        The full working, one disclosure per card.
+
+        Three reasons is what a reader takes in before they start skimming; the
+        fourth, the model's own audit trail and the raw numbers it worked from
+        are what they want when they are deciding whether to trust the pick. So
+        the card shows the case and keeps the evidence one tap behind it, rather
+        than printing both and reading as a wall of small print — which is what
+        made these cards hard to scan in the first place.
+      */}
+      <details className="mx-4 mt-2 rounded-xl border border-surface-800 bg-surface-900/40">
+        <summary className="flex cursor-pointer list-none items-center gap-1.5 px-2.5 py-2 text-[11px] font-semibold text-surface-400 transition hover:text-surface-200">
+          <ChevronDown className="h-3.5 w-3.5 transition group-open:rotate-180" />
+          The full working
+        </summary>
+        <div className="space-y-2.5 px-2.5 pb-2.5">
+          {insight.reasons.slice(3).map((reason) => {
+            const Icon = REASON_ICONS[reason.icon];
+            return (
+              <div key={reason.label} className="flex gap-2.5">
+                <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-surface-800/80 text-emerald-300">
+                  <Icon className="h-3.5 w-3.5" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-[11px] font-semibold text-surface-200">{reason.label}</span>
+                  <span className="block text-[11px] leading-relaxed text-surface-400">{reason.detail}</span>
+                </span>
+              </div>
+            );
+          })}
+
+          <dl className="grid grid-cols-2 gap-2">
+            <WorkingDetail
+              label="Goals we expect"
+              value={expectedGoals(lead)}
+            />
+            <WorkingDetail
+              label="Price vs our number"
+              value={
+                lead.valueEdge == null
+                  ? "no price to compare"
+                  : `${lead.valueEdge > 0 ? "+" : ""}${lead.valueEdge.toFixed(1)} pts`
+              }
+            />
+            <WorkingDetail label="Kick-off" value={kickoff.text} />
+            <WorkingDetail
+              label="Markets priced"
+              value={`${tips.length} on this match`}
+            />
+          </dl>
+
+          {insight.note ? (
+            <p className="border-t border-surface-800 pt-2 text-[11px] leading-relaxed text-surface-400">
+              {insight.note}
+            </p>
+          ) : null}
+        </div>
+      </details>
 
       {rest.length > 0 ? (
-        <div className="mt-3 space-y-1.5 px-4">
+        <div className="mb-3 mt-3 space-y-1.5 px-4">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-surface-500">Also on this match</p>
           {/*
             Two, not four. A card that explains every market the model priced
@@ -489,11 +584,32 @@ function FixtureTipsCard({ group }: { group: FixtureGroup }) {
             <SecondaryTip key={tip.id} tip={tip} match={match} />
           ))}
         </div>
-      ) : null}
-
-      <div className="h-3" />
+      ) : (
+        /* Keeps the row's bottom edge level whether a card has a second market
+           on it or not — see `auto-rows-fr` on the grid. */
+        <div className="mt-auto" />
+      )}
     </article>
   );
+}
+
+/** One line of the model's working, as a label/value pair. */
+function WorkingDetail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-surface-800/50 px-2 py-1.5">
+      <dt className="text-[10px] uppercase tracking-wide text-surface-500">{label}</dt>
+      <dd className="mt-0.5 text-[11px] font-semibold text-surface-200">{value}</dd>
+    </div>
+  );
+}
+
+/** "2.4 goals", or an honest shrug when the model published none. */
+function expectedGoals(tip: Tip): string {
+  if (typeof tip.expectedHomeGoals !== "number" || typeof tip.expectedAwayGoals !== "number") {
+    return "not published";
+  }
+  const total = Math.round((tip.expectedHomeGoals + tip.expectedAwayGoals) * 10) / 10;
+  return `${total} total (${tip.expectedHomeGoals}–${tip.expectedAwayGoals})`;
 }
 
 /**

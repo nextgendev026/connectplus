@@ -19,7 +19,15 @@ import {
   Languages,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { STATIONS, RADIO_GENRES, RADIO_COUNTRIES, STATION_REGIONS } from "@/lib/radio-stations";
+import {
+  STATIONS,
+  RADIO_GENRES,
+  RADIO_COUNTRIES,
+  STATION_REGIONS,
+  HD_FLOOR_KBPS,
+  canPlayDirect,
+  isHdStation,
+} from "@/lib/radio-stations";
 import type { RadioStation } from "@/lib/radio-stations";
 import { useRadioPlayer } from "@/components/radio/RadioPlayerContext";
 import { RadioPlayerBar } from "@/components/radio/RadioPlayerBar";
@@ -61,6 +69,66 @@ interface CardSignal {
   listeners: number | null;
   meta: boolean;
   live: boolean;
+}
+
+/**
+ * What a card can honestly claim about its own audio.
+ *
+ * Every value here is measured rather than asserted: `bitrateKbps` is what the
+ * mount served when it was probed (`npm run radio:check` re-probes the whole dial
+ * and fails when a mount drops below its declared number), `official` means the
+ * broadcaster's own host rather than a relay that sells listener time, and
+ * `adFree` means there is no advertising in the path at all — the one property
+ * that makes a station immune to being served a geo-targeted spot for the wrong
+ * country. A station is never badged "HD" for being modern; it is badged HD when
+ * it clears the floor.
+ */
+function QualityBadges({ station }: { station: RadioStation }) {
+  const hd = isHdStation(station);
+  const direct = canPlayDirect(station.streamUrl);
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      {hd ? (
+        <span
+          className="rounded-md border border-emerald-500/30 bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-300"
+          title={`The mount serves ${station.bitrateKbps} kbps`}
+        >
+          HD {station.bitrateKbps}k
+        </span>
+      ) : station.bitrateKbps !== undefined ? (
+        <span
+          className="rounded-md border border-surface-700 bg-surface-800/60 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-surface-400"
+          title={`The broadcaster only publishes ${station.bitrateKbps} kbps for this station`}
+        >
+          {station.bitrateKbps} kbps
+        </span>
+      ) : null}
+      {station.adFree ? (
+        <span
+          className="rounded-md border border-sky-500/30 bg-sky-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-sky-300"
+          title="No advertising anywhere in the stream"
+        >
+          No ads
+        </span>
+      ) : null}
+      {station.official ? (
+        <span
+          className="rounded-md border border-surface-700 bg-surface-800/60 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-surface-400"
+          title="The broadcaster's own mount, not a third-party relay"
+        >
+          Official
+        </span>
+      ) : null}
+      {direct ? (
+        <span
+          className="rounded-md border border-surface-700 bg-surface-800/60 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-surface-400"
+          title="Played straight from the station, so you get its full bitrate"
+        >
+          Direct
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 function SignalDot({ live, meta }: { live: boolean; meta: boolean }) {
@@ -122,6 +190,9 @@ function StationCard({
               </button>
             </div>
             <p className="truncate text-xs text-surface-400">{station.genre}</p>
+            <div className="mt-1.5">
+              <QualityBadges station={station} />
+            </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-surface-500">
               <span className="inline-flex items-center gap-0.5">
                 <MapPin className="h-3 w-3" />
@@ -216,6 +287,11 @@ export default function RadioPage() {
   const [activeGenre, setActiveGenre] = useState<string>("All");
   const [activeCountry, setActiveCountry] = useState<string>("All");
   const [activeRegion, setActiveRegion] = useState<string>("All");
+  // Quality filters, off by default: this is an East African dial first, and
+  // hiding the local stations behind a quality toggle by default would be a
+  // strange way to treat the audience it exists for.
+  const [hdOnly, setHdOnly] = useState(false);
+  const [adFreeOnly, setAdFreeOnly] = useState(false);
 
   const currentStation = player.station;
   const nowPlaying = player.nowPlaying;
@@ -266,12 +342,14 @@ export default function RadioPage() {
         const matchesGenre = activeGenre === "All" || station.genre.toLowerCase().includes(activeGenre.toLowerCase());
         const matchesCountry = activeCountry === "All" || station.country === activeCountry;
         const matchesRegion = activeRegion === "All" || station.region === activeRegion;
-        return matchesSearch && matchesGenre && matchesCountry && matchesRegion;
+        const matchesQuality =
+          (!hdOnly || isHdStation(station)) && (!adFreeOnly || station.adFree === true);
+        return matchesSearch && matchesGenre && matchesCountry && matchesRegion && matchesQuality;
       })
         // Live channels first — the dial leads with stations that are
         // verifiably on air right now.
         .sort((a, b) => Number(signals[b.id]?.live ?? false) - Number(signals[a.id]?.live ?? false)),
-    [searchQuery, activeGenre, activeCountry, activeRegion, signals]
+    [searchQuery, activeGenre, activeCountry, activeRegion, hdOnly, adFreeOnly, signals]
   );
 
   const liveCount = useMemo(() => Object.values(signals).filter((s) => s.live).length, [signals]);
@@ -494,6 +572,36 @@ export default function RadioPage() {
                 </option>
               ))}
             </select>
+
+            {/* The two properties a listener actually asks for once they have
+                been served a spot in the wrong language: is it high quality, and
+                does the station sell airtime at all. */}
+            <button
+              onClick={() => setHdOnly((v) => !v)}
+              aria-pressed={hdOnly}
+              title={`Stations whose mount serves at least ${HD_FLOOR_KBPS} kbps`}
+              className={cn(
+                "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-all",
+                hdOnly
+                  ? "border-emerald-500 bg-emerald-500/15 text-emerald-300"
+                  : "border-surface-800 bg-surface-900/50 text-surface-400 hover:border-surface-700 hover:text-surface-200"
+              )}
+            >
+              HD only
+            </button>
+            <button
+              onClick={() => setAdFreeOnly((v) => !v)}
+              aria-pressed={adFreeOnly}
+              title="Stations with no advertising in the stream at all"
+              className={cn(
+                "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-all",
+                adFreeOnly
+                  ? "border-sky-500 bg-sky-500/15 text-sky-300"
+                  : "border-surface-800 bg-surface-900/50 text-surface-400 hover:border-surface-700 hover:text-surface-200"
+              )}
+            >
+              No ads
+            </button>
           </div>
 
           <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
@@ -592,7 +700,7 @@ export default function RadioPage() {
             {
               icon: Headphones,
               title: "Real-time, anywhere",
-              body: "Streams play through our proxy with auto-reconnect and live now-playing metadata — right in your browser.",
+              body: "Streams play straight from the station where the mount allows it, so you hear the broadcaster's own bitrate. The relay is only there for http-only mounts and as the automatic fallback.",
             },
           ].map((f) => (
             <div key={f.title} className="rounded-2xl border border-surface-800/60 bg-surface-900/40 p-5">

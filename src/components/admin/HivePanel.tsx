@@ -163,7 +163,7 @@ export default function HivePanel() {
         {sweepResult && (
           <p className="type-caption text-surface-500 leading-relaxed">{sweepResult}</p>
         )}
-        <p className="text-[9px] text-surface-600 text-center">
+        <p className="text-[9px] text-surface-400 text-center">
           The hive brain auto-learns topics, entities and sentiment from every published post, comment and RSS import.
         </p>
       </div>

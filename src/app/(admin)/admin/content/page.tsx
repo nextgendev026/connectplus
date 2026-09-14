@@ -161,7 +161,7 @@ export default function AdminContentPage() {
     <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="flex items-center gap-2 text-xl font-bold text-surface-900 sm:text-2xl dark:text-surface-50">
+          <h1 className="flex items-center gap-2 text-xl font-bold sm:text-2xl text-surface-50">
             <Star className="h-5 w-5 text-brand-500" />
             Content Console
           </h1>
@@ -171,19 +171,19 @@ export default function AdminContentPage() {
         </div>
         <button
           onClick={() => void load()}
-          className="inline-flex items-center justify-center gap-2 rounded-xl border border-surface-200 px-3 py-2 text-sm font-medium text-surface-600 transition hover:border-brand-500/50"
+          className="inline-flex items-center justify-center gap-2 rounded-xl border border-surface-800 px-3 py-2 text-sm font-medium text-surface-400 transition hover:border-brand-500/50"
         >
           <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} /> Refresh
         </button>
       </header>
 
       {error ? (
-        <p className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">
+        <p className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400">
           {error}
         </p>
       ) : null}
       {notice ? (
-        <p className="mt-4 flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400">
+        <p className="mt-4 flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-400">
           <CheckCircle2 className="h-4 w-4" /> {notice}
         </p>
       ) : null}
@@ -238,7 +238,7 @@ export default function AdminContentPage() {
             "inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-medium transition",
             featuredOnly
               ? "border-brand-500 bg-brand-500/10 text-brand-600"
-              : "border-surface-200 text-surface-600 hover:border-surface-300"
+              : "border-surface-800 text-surface-400 hover:border-surface-700"
           )}
         >
           <Star className={cn("h-4 w-4", featuredOnly && "fill-current")} />
@@ -249,7 +249,7 @@ export default function AdminContentPage() {
       {/* Bulk bar */}
       {selected.size > 0 ? (
         <div className="mt-3 flex flex-wrap items-center gap-2 rounded-2xl border border-brand-500/30 bg-brand-500/5 p-3">
-          <span className="text-sm font-medium text-surface-700 dark:text-surface-200">
+          <span className="text-sm font-medium text-surface-200">
             {selected.size} selected
           </span>
           <button
@@ -270,7 +270,7 @@ export default function AdminContentPage() {
             disabled={working}
             value=""
             onChange={(e) => e.target.value && void bulk({ categoryId: e.target.value }, "Categorised")}
-            className="rounded-lg border border-surface-200 bg-white px-2.5 py-1.5 text-xs font-medium text-surface-700 dark:bg-surface-900 dark:text-surface-100"
+            className="rounded-lg border border-surface-800 px-2.5 py-1.5 text-xs font-medium bg-surface-900 text-surface-100"
           >
             <option value="">Move to category…</option>
             {categories.map((c) => (
@@ -284,8 +284,8 @@ export default function AdminContentPage() {
       ) : null}
 
       {/* List */}
-      <div className="mt-4 overflow-hidden rounded-2xl border border-surface-200/70">
-        <div className="hidden items-center gap-3 border-b border-surface-200/70 bg-surface-100/60 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-surface-500 sm:flex dark:bg-surface-900/40">
+      <div className="mt-4 overflow-hidden rounded-2xl border border-surface-800/60">
+        <div className="hidden items-center gap-3 border-b border-surface-800/60 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-surface-500 sm:flex bg-surface-900/40">
           <button onClick={toggleAll} className="shrink-0" aria-label="Select all">
             {allSelected ? <CheckSquare className="h-4 w-4 text-brand-500" /> : <Square className="h-4 w-4" />}
           </button>
@@ -304,7 +304,7 @@ export default function AdminContentPage() {
           posts.map((post) => (
             <div
               key={post.id}
-              className="flex flex-col gap-3 border-b border-surface-200/60 px-3 py-3 last:border-b-0 sm:flex-row sm:items-center dark:border-surface-800"
+              className="flex flex-col gap-3 border-b px-3 py-3 last:border-b-0 sm:flex-row sm:items-center border-surface-800"
             >
               <button onClick={() => toggleOne(post.id)} className="hidden shrink-0 sm:block" aria-label="Select post">
                 {selected.has(post.id) ? (
@@ -328,22 +328,22 @@ export default function AdminContentPage() {
                   <img
                     src={post.coverImage}
                     alt=""
-                    className="h-11 w-16 shrink-0 rounded-lg border border-surface-200 object-cover"
+                    className="h-11 w-16 shrink-0 rounded-lg border border-surface-800 object-cover"
                   />
                 ) : (
-                  <div className="flex h-11 w-16 shrink-0 items-center justify-center rounded-lg border border-surface-200 bg-surface-100 text-surface-400">
+                  <div className="flex h-11 w-16 shrink-0 items-center justify-center rounded-lg border border-surface-800 bg-surface-800 text-surface-400">
                     {post.sourceUrl ? <Rss className="h-4 w-4" /> : <PenLine className="h-4 w-4" />}
                   </div>
                 )}
 
                 <div className="min-w-0">
-                  <p className="line-clamp-2 text-sm font-medium text-surface-900 dark:text-surface-50">{post.title}</p>
+                  <p className="line-clamp-2 text-sm font-medium text-surface-50">{post.title}</p>
                   <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-surface-500">
                     <span>@{post.author.username}</span>
                     <span>·</span>
                     <span>{timeAgo(post.publishedAt ?? post.createdAt)}</span>
                     {post.source ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-surface-200/60 px-1.5 py-0.5 text-[10px] font-medium text-surface-600">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-surface-800/60 px-1.5 py-0.5 text-[10px] font-medium text-surface-400">
                         <Rss className="h-3 w-3" /> {post.source}
                       </span>
                     ) : null}
@@ -356,7 +356,7 @@ export default function AdminContentPage() {
                 <select
                   value={post.category?.id ?? ""}
                   onChange={(e) => void quickCategorise(post, e.target.value)}
-                  className="rounded-lg border border-surface-200 bg-white px-2 py-1.5 text-xs text-surface-700 dark:bg-surface-900 dark:text-surface-100"
+                  className="rounded-lg border border-surface-800 px-2 py-1.5 text-xs bg-surface-900 text-surface-100"
                 >
                   <option value="">Uncategorised</option>
                   {categories.map((c) => (
@@ -373,7 +373,7 @@ export default function AdminContentPage() {
                     "inline-flex items-center gap-1 rounded-lg border px-2 py-1.5 text-xs font-medium transition",
                     post.featured
                       ? "border-brand-500 bg-brand-500/10 text-brand-600"
-                      : "border-surface-200 text-surface-500 hover:border-brand-500/50"
+                      : "border-surface-800 text-surface-500 hover:border-brand-500/50"
                   )}
                 >
                   <Star className={cn("h-3.5 w-3.5", post.featured && "fill-current")} />
@@ -384,7 +384,7 @@ export default function AdminContentPage() {
                   href={`/article/${post.slug}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 rounded-lg border border-surface-200 px-2 py-1.5 text-xs font-medium text-surface-500 transition hover:border-surface-300"
+                  className="inline-flex items-center gap-1 rounded-lg border border-surface-800 px-2 py-1.5 text-xs font-medium text-surface-500 transition hover:border-surface-700"
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
                   View
@@ -434,10 +434,10 @@ export default function AdminContentPage() {
 }
 
 const inputCls =
-  "w-full rounded-xl border border-surface-200 bg-white px-3 py-2.5 text-sm text-surface-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:bg-surface-900 dark:text-surface-50";
+  "w-full rounded-xl border border-surface-800 px-3 py-2.5 text-sm outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 bg-surface-900 text-surface-50";
 
 const bulkBtn =
-  "inline-flex items-center gap-1.5 rounded-lg border border-surface-200 bg-white px-2.5 py-1.5 text-xs font-medium text-surface-700 transition hover:border-brand-500/50 disabled:opacity-50 dark:bg-surface-900 dark:text-surface-100";
+  "inline-flex items-center gap-1.5 rounded-lg border border-surface-800 px-2.5 py-1.5 text-xs font-medium transition hover:border-brand-500/50 disabled:opacity-50 bg-surface-900 text-surface-100";
 
 const pageBtn =
-  "inline-flex items-center gap-1 rounded-lg border border-surface-200 px-2.5 py-1.5 text-xs font-medium text-surface-600 transition hover:border-brand-500/50";
+  "inline-flex items-center gap-1 rounded-lg border border-surface-800 px-2.5 py-1.5 text-xs font-medium text-surface-400 transition hover:border-brand-500/50";

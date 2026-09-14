@@ -7,6 +7,8 @@ import {
   getSportsStats,
   lastSportsSources,
   providerInfo,
+  sportsCoverage,
+  sportsEngineCounters,
   REFERRAL_PLACEMENTS,
   slugify,
   sportsDbKeyState,
@@ -37,7 +39,7 @@ export async function GET() {
 
   try {
     const since = new Date(Date.now() - 14 * DAY_MS);
-    const [stats, trends, referrals, predictions, activity, provider] = await Promise.all([
+    const [stats, trends, referrals, predictions, activity, provider, coverage] = await Promise.all([
       getSportsStats(),
       sportsTrends(),
       prisma.bettingReferral.findMany({ orderBy: [{ weight: "desc" }, { createdAt: "desc" }] }).catch(() => []),
@@ -59,6 +61,9 @@ export async function GET() {
         })
         .catch(() => []),
       Promise.resolve(providerInfo()),
+      // What the model could actually see on today's board, and what the odds
+      // backfill and deep-data resolver have done since this process started.
+      sportsCoverage().catch(() => null),
     ]);
 
     // Source health + notification activity: what the merged board actually
@@ -96,6 +101,8 @@ export async function GET() {
       provider,
       sources: lastSportsSources(),
       sportsDbKey: sportsDbKeyState(),
+      coverage,
+      engine: sportsEngineCounters(),
       notifications: {
         sent24h,
         reminders: reminderCount,

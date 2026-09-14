@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getStationById, stationSources } from "@/lib/radio-stations";
+import {
+  getStationById,
+  sourceAdRisk,
+  sourceIsDirect,
+  stationSources,
+  type RadioStation,
+} from "@/lib/radio-stations";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -77,7 +83,7 @@ export async function GET(request: NextRequest) {
   const hit = probeCache.get(station.id);
   if (hit && hit.expiresAt > Date.now()) {
     return NextResponse.json(
-      { stationId: station.id, best: bestIndex(hit.data), channels: hit.data },
+      { stationId: station.id, best: bestIndex(station, hit.data), channels: hit.data },
       { headers: { "Cache-Control": "public, s-maxage=120, stale-while-revalidate=300" } }
     );
   }
@@ -90,12 +96,39 @@ export async function GET(request: NextRequest) {
   probeCache.set(station.id, { expiresAt: Date.now() + PROBE_TTL_MS, data: channels });
 
   return NextResponse.json(
-    { stationId: station.id, best: bestIndex(channels), channels },
+    { stationId: station.id, best: bestIndex(station, channels), channels },
     { headers: { "Cache-Control": "public, s-maxage=120, stale-while-revalidate=300" } }
   );
 }
 
-function bestIndex(channels: ProbeResult[]): number {
-  const live = channels.findIndex((c) => c.ok);
-  return live === -1 ? 0 : live;
+/**
+ * The channel worth opening, now that the probe knows which ones actually answer.
+ *
+ * This used to be "the first that responds", which is not the same question: a
+ * station whose channel 0 is a working-but-ad-injecting relay and whose channel 1
+ * is the broadcaster's own 320 kbps mount would have been steered to the relay on
+ * every visit. The ranking is the player's own (see `preferredSourceIndex`), with
+ * the probe's measured quality substituted for the guess — ad risk first, then
+ * whether the browser can take the mount directly, then bitrate, then the
+ * station's curated order.
+ */
+function bestIndex(station: RadioStation, channels: ProbeResult[]): number {
+  let best = -1;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (const c of channels) {
+    if (!c.ok) continue;
+    const quality = Math.min(c.bitrateKbps ?? 0, 5_000);
+    const score =
+      sourceAdRisk(station, c.index) * 1_000_000 +
+      (sourceIsDirect(station, c.index) ? 0 : 100_000) +
+      (5_000 - quality) * 10 +
+      c.index;
+    if (score < bestScore) {
+      bestScore = score;
+      best = c.index;
+    }
+  }
+  // Nothing answered: fall back to the station's own preference order, so the
+  // caller still gets a channel index rather than a silent zero.
+  return best === -1 ? 0 : best;
 }

@@ -1,3 +1,5 @@
+import { AD_FREE_STATIONS } from "@/lib/radio-adfree";
+
 export interface RadioStation {
   id: string;
   name: string;
@@ -19,6 +21,31 @@ export interface RadioStation {
   programming: string[];
   favorite: boolean;
   verified: boolean;
+  /**
+   * The bitrate the PRIMARY mount is known to serve, in kbps.
+   *
+   * Declared rather than guessed, and verified: `npm run radio:check` probes
+   * every channel and fails when a live mount drops below the number here. It is
+   * what lets the dial say "192 kbps" instead of "HD", and it is the floor that
+   * turns "the stream got worse" from an invisible regression into a red check.
+   * Omitted where no measurement exists — an absent value is honest, a made-up
+   * one is not.
+   */
+  bitrateKbps?: number;
+  /**
+   * True when the primary mount belongs to the broadcaster (its own host or its
+   * own CDN), rather than to a third-party relay that monetises listener time.
+   * It is what separates "ad-free because the station is ad-free" from "ad-free
+   * until the relay feels like it".
+   */
+  official?: boolean;
+  /**
+   * True when the station carries no advertising at all — licence-funded public
+   * broadcasters and listener-supported services. These are the stations that
+   * cannot serve a German spot to a Kenyan listener no matter where the request
+   * comes from, which is the whole reason the roster exists.
+   */
+  adFree?: boolean;
 }
 
 /**
@@ -43,7 +70,7 @@ export function stationSources(station: RadioStation): string[] {
  * uses to (a) prefer a cleaner channel and (b) stop re-dialling a rail that is
  * almost certainly playing a spot rather than music.
  */
-const AD_PRONE_HOSTS = [
+export const AD_PRONE_HOSTS = [
   "zeno.fm",
   "radiojar.com",
   "radioking.com",
@@ -52,6 +79,14 @@ const AD_PRONE_HOSTS = [
   "streamingv2.shoutcast.com",
   "radioca.st",
   "nextradio.live",
+  // StreamTheWorld (Targetspot) is the professional end of the market rather
+  // than a free relay, and it is the clearest case of the problem this list
+  // exists to catch: it sells geo-targeted audio spots, choosing the creative
+  // from the connecting IP. Two stations on the dial are served from it (Cool FM
+  // and METRO FM), so a listener in Nairobi was the wrong audience for the spot
+  // it picked. It is ad risk 2 like the free relays — the ad is not a fault, it
+  // is the business model — and the player says so on a long stall.
+  "streamtheworld.com",
 ];
 
 /** Higher risk = more likely to interrupt a listener with a paid spot. */
@@ -68,16 +103,65 @@ export function sourceAdRisk(station: RadioStation, index: number): number {
 }
 
 /**
- * The channel to open first: the cleanest mount available, tie-broken by the
- * station's own preference order (so a direct primary still beats a fallback).
+ * Whether a channel can be played straight from the station's server.
+ *
+ * This is the switch that decides everything about the listening experience,
+ * and it is not a preference — it is a browser rule. A page served over https
+ * may not play an http media subresource, and a good number of Kenyan and
+ * Rwandan mounts are http-only, which is the entire reason the same-origin
+ * proxy exists. Everything else is better direct: the listener gets the
+ * bitrate the station actually serves instead of what a serverless function can
+ * forward in its execution window, and the station (and any ad-inserting relay
+ * in front of it) geolocates the LISTENER rather than this app's function
+ * region — which is what made an East African audience hear German spots.
+ */
+export function canPlayDirect(url: string): boolean {
+  try {
+    return new URL(url).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** Whether a channel is one the browser can be handed directly. */
+export function sourceIsDirect(station: RadioStation, index: number): boolean {
+  const url = stationSources(station)[index];
+  return url ? canPlayDirect(url) : false;
+}
+
+/**
+ * A station counts as HD from 128 kbps up.
+ *
+ * 128 is the line the dial already uses everywhere else: the proxy negotiates
+ * 128k mounts comfortably, the published Kenyan CDN mounts cluster around it
+ * (Capital 128, Milele 128, Kameme 128), and below it a station is on the AAC
+ * ladder for bad connections rather than for listeners who asked for quality.
+ */
+export const HD_FLOOR_KBPS = 128;
+
+export function isHdStation(station: RadioStation): boolean {
+  return (station.bitrateKbps ?? 0) >= HD_FLOOR_KBPS;
+}
+
+/**
+ * The channel to open first.
+ *
+ * Three things are ranked, in this order, and the order is the point:
+ *
+ *  1. **Ad risk.** A relay that sells listener time can open a session with a
+ *     spot, so it loses to any mount that does not, however fast it is.
+ *  2. **Direct playability.** An https mount can be handed to the browser
+ *     (full bitrate, listener's own IP); an http one can only go through the
+ *     proxy. Among equally clean channels the playable one wins.
+ *  3. **The station's own order.** Only now does the curated sequence break
+ *     ties, so a primary still beats a fallback when they are otherwise equal.
  */
 export function preferredSourceIndex(station: RadioStation): number {
   const sources = stationSources(station);
   let best = 0;
   let bestScore = Number.POSITIVE_INFINITY;
   for (let i = 0; i < sources.length; i++) {
-    // Ad risk dominates; index only breaks ties, preserving the curated order.
-    const score = sourceAdRisk(station, i) * 10 + i;
+    const score = sourceAdRisk(station, i) * 100 + (sourceIsDirect(station, i) ? 0 : 10) + i;
     if (score < bestScore) {
       bestScore = score;
       best = i;
@@ -97,6 +181,16 @@ export const RADIO_GENRES = [
   "Gospel",
   "Bongo Flava",
   "Afrobeats",
+  // Genres the ad-free roster brought with it. Kept beside the regional ones
+  // rather than in a second filter row: a listener looking for jazz does not
+  // care which curation a station came from.
+  "Jazz",
+  "Funk / Soul",
+  "Reggae",
+  "World",
+  "Eclectic",
+  "Ambient / Electronic",
+  "Indie / Alternative",
 ] as const;
 
 export const RADIO_COUNTRIES = [
@@ -108,6 +202,9 @@ export const RADIO_COUNTRIES = [
   "Nigeria",
   "South Africa",
   "Ghana",
+  "United States",
+  "France",
+  "United Kingdom",
   "International",
 ] as const;
 
@@ -124,9 +221,24 @@ export const STATION_REGIONS = [
   "Johannesburg",
   "Accra",
   "London",
+  "Paris",
+  "San Francisco",
+  "California",
+  "Seattle",
 ] as const;
 
-export const STATIONS: RadioStation[] = [
+/**
+ * The regional core of the dial: East African stations, first-party mounts
+ * wherever the broadcaster publishes one.
+ *
+ * A note on provenance, because the two curations are not the same thing. Where
+ * a station is marked `official`, the URL is the broadcaster's own mount (its
+ * own host, or the CDN account it runs — Royal Media's Atunwa/StreamGuys,
+ * Nation's StreamGuys, RBA's own Icecast, Crown Media's own server). Where the
+ * mark is absent, the station is reached through a third-party relay that
+ * monetises listener time, and the player treats it accordingly.
+ */
+const REGIONAL_STATIONS: RadioStation[] = [
   /* ============================== KENYA ============================== */
   {
     id: "capital-fm",
@@ -138,6 +250,8 @@ export const STATIONS: RadioStation[] = [
     language: "English",
     frequency: "98.4 FM",
     streamUrl: "https://atunwadigital.streamguys1.com/capitalfm",
+    bitrateKbps: 128,
+    official: true,
     color: "#ef4444",
     icon: "C",
     tagline: "Kenya's #1 hit music station",
@@ -146,25 +260,11 @@ export const STATIONS: RadioStation[] = [
     favorite: true,
     verified: true,
   },
-  {
-    id: "nrg-radio",
-    name: "NRG Radio",
-    country: "Kenya",
-    city: "Nairobi",
-    region: "Nairobi",
-    genre: "Indie / Trending",
-    language: "English / Sheng",
-    frequency: "90.9 FM",
-    streamUrl: "https://streamingv2.shoutcast.com/nrg-radio-ke",
-    fallbacks: ["https://stream.zeno.fm/cmgkmed5u18uv"],
-    color: "#a855f7",
-    icon: "N",
-    logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23a855f7'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='16' fill='white' text-anchor='middle'%3ENRG%3C/text%3E%3C/svg%3E",
-    tagline: "The future sound of Kenya",
-    programming: ["NRG Breakfast", "New Music", "Gen-Z Talk"],
-    favorite: true,
-    verified: true,
-  },
+  /* NRG Radio was removed here rather than repaired. Its Shoutcast mount now
+   * answers 404, and its declared fallback serves a different station entirely
+   * (`icy-name: KENYA1 FM KENYA`) — every route to it is wrong, and a card that
+   * plays the wrong station is worse than an absent card. Re-add it when a mount
+   * can be verified: `npm run radio:check` is what says so. */
   {
     id: "radio-47",
     name: "Radio 47",
@@ -194,6 +294,9 @@ export const STATIONS: RadioStation[] = [
     language: "English",
     frequency: "105.3 FM",
     streamUrl: "https://atunwadigital.streamguys1.com/classic105",
+    // The highest-bitrate Kenyan mount on the dial: 192 kbps MP3.
+    bitrateKbps: 192,
+    official: true,
     color: "#dc2626",
     icon: "105",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23dc2626'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='16' fill='white' text-anchor='middle'%3E105%3C/text%3E%3C/svg%3E",
@@ -211,7 +314,14 @@ export const STATIONS: RadioStation[] = [
     genre: "Urban / R&B",
     language: "English / Sheng",
     frequency: "100.0 FM",
-    streamUrl: "https://atunwadigital.streamguys1.com/kiss100fm",
+    // `kissfm` is Kiss 100's live mount; the `kiss100fm` mount this entry used
+    // to lead with now answers 502 on every request, so it moved to the fallback
+    // chain where it belongs. Same host, same broadcaster, and it serves the
+    // 128 kbps AAC the live mount does (reported as 127, as these mounts are).
+    streamUrl: "https://atunwadigital.streamguys1.com/kissfm",
+    fallbacks: ["https://atunwadigital.streamguys1.com/kiss100fm"],
+    bitrateKbps: 128,
+    official: true,
     color: "#f43f5e",
     icon: "K",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23f43f5e'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='24' fill='white' text-anchor='middle'%3EK%3C/text%3E%3C/svg%3E",
@@ -230,6 +340,8 @@ export const STATIONS: RadioStation[] = [
     language: "English / Sheng",
     frequency: "96.0 FM",
     streamUrl: "https://atunwadigital.streamguys1.com/hot96",
+    bitrateKbps: 50,
+    official: true,
     color: "#f97316",
     icon: "96",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23f97316'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3E96%3C/text%3E%3C/svg%3E",
@@ -248,6 +360,8 @@ export const STATIONS: RadioStation[] = [
     language: "Swahili",
     frequency: "95.1 FM",
     streamUrl: "https://atunwadigital.streamguys1.com/milelefm",
+    bitrateKbps: 128,
+    official: true,
     color: "#eab308",
     icon: "M",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23eab308'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='24' fill='white' text-anchor='middle'%3EM%3C/text%3E%3C/svg%3E",
@@ -266,6 +380,8 @@ export const STATIONS: RadioStation[] = [
     language: "Swahili",
     frequency: "97.1 FM",
     streamUrl: "https://atunwadigital.streamguys1.com/radiomaisha",
+    bitrateKbps: 128,
+    official: true,
     color: "#14b8a6",
     icon: "RM",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2314b8a6'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3ERM%3C/text%3E%3C/svg%3E",
@@ -284,6 +400,8 @@ export const STATIONS: RadioStation[] = [
     language: "Kikuyu",
     frequency: "98.5 FM",
     streamUrl: "https://atunwadigital.streamguys1.com/inoorofm",
+    bitrateKbps: 66,
+    official: true,
     color: "#16a34a",
     icon: "I",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2316a34a'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='24' fill='white' text-anchor='middle'%3EI%3C/text%3E%3C/svg%3E",
@@ -339,11 +457,69 @@ export const STATIONS: RadioStation[] = [
     language: "Kikuyu",
     frequency: "101.1 FM",
     streamUrl: "https://kamemefm-atunwadigital.streamguys1.com/kamemefm",
+    bitrateKbps: 128,
+    official: true,
     color: "#22c55e",
     icon: "K",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2322c55e'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3EKM%3C/text%3E%3C/svg%3E",
     tagline: "Kikuyu hits, news and talk",
     programming: ["Kikuyu Classics", "Community Talk"],
+    favorite: false,
+    verified: true,
+  },
+
+  /**
+   * The two national stations the dial was advertising but never carried.
+   *
+   * The README has promised "Capital FM, Kiss FM, NRG, Radio Citizen, Clouds"
+   * for as long as it has existed, and Radio Citizen was not in the list — the
+   * two most-listened-to stations in the country were missing from a Kenyan
+   * radio hub. Both arrive from the broadcaster's own CDN (Royal Media's Atunwa
+   * / StreamGuys account, the same one that already serves Inooro, Maisha and
+   * Kameme), so they are official mounts with no relay and no ad layer of ours
+   * in the path.
+   */
+  {
+    id: "radio-citizen",
+    name: "Radio Citizen",
+    country: "Kenya",
+    city: "Nairobi",
+    region: "Nairobi",
+    genre: "News / Talk",
+    language: "Swahili",
+    frequency: "106.7 FM",
+    streamUrl: "https://atunwadigital.streamguys1.com/radiocitizen",
+    // Interchangeable with the 128 kbps mounts around it, and the highest of the
+    // Royal Media services we carry.
+    bitrateKbps: 130,
+    official: true,
+    color: "#1d4ed8",
+    icon: "RC",
+    logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%231d4ed8'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3ERC%3C/text%3E%3C/svg%3E",
+    tagline: "Kenya's number one national station",
+    programming: ["Jambo Kenya", "Waks Tiki Taka", "Mambo Mseto"],
+    favorite: true,
+    verified: true,
+  },
+  {
+    id: "radio-jambo",
+    name: "Radio Jambo",
+    country: "Kenya",
+    city: "Nairobi",
+    region: "Nairobi",
+    genre: "Vernacular",
+    language: "Swahili",
+    frequency: "97.5 FM",
+    streamUrl: "https://atunwadigital.streamguys1.com/radiojambo",
+    // Official, and only 64 kbps — declared as such so the card does not claim HD
+    // it cannot deliver.
+    bitrateKbps: 64,
+    official: true,
+    color: "#0f766e",
+    icon: "RJ",
+    logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230f766e'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3ERJ%3C/text%3E%3C/svg%3E",
+    tagline: "Swahili talk, sport and jambo reggae",
+    programming: ["Swahili Talk", "Sport", "Jambo Reggae"],
     favorite: false,
     verified: true,
   },
@@ -377,7 +553,11 @@ export const STATIONS: RadioStation[] = [
     language: "English",
     frequency: "91.3 FM",
     streamUrl: "https://dc4.serverse.com/proxy/nrgugstream/stream",
-    fallbacks: ["https://stream.zeno.fm/lbca7zintcnuv"],
+    bitrateKbps: 128,
+    // No fallback: the Zeno mount this entry used to fall back to answers
+    // `icy-name: Next Radio` — it is another station's stream entirely, and it is
+    // already carried (correctly) by Next Radio's own entry below. `radio:check`
+    // is what found it.
     color: "#8b5cf6",
     icon: "NU",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%238b5cf6'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3ENU%3C/text%3E%3C/svg%3E",
@@ -396,6 +576,8 @@ export const STATIONS: RadioStation[] = [
     language: "English / Luganda",
     frequency: "98.8 FM",
     streamUrl: "https://spice988fm.radioca.st/stream",
+    // 320 kbps — the best-sounding mount on the regional dial, and still a relay.
+    bitrateKbps: 320,
     color: "#f43f5e",
     icon: "SP",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23f43f5e'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3ESP%3C/text%3E%3C/svg%3E",
@@ -414,6 +596,7 @@ export const STATIONS: RadioStation[] = [
     language: "English / Luganda",
     frequency: "106.1 FM",
     streamUrl: "https://stream.nextradio.live/listen/nextradio/NextHD",
+    bitrateKbps: 192,
     fallbacks: [
       "https://stream-154.zeno.fm/lbca7zintcnuv?zs=P9UBEqoSSr69riqZniMYMw",
       "https://stream-154.zeno.fm/lbca7zintcnuv",
@@ -436,6 +619,7 @@ export const STATIONS: RadioStation[] = [
     language: "English / Luganda",
     frequency: "88.2 FM",
     streamUrl: "https://s44.myradiostream.com:8138/stream",
+    bitrateKbps: 48,
     fallbacks: ["http://s44.myradiostream.com:8138/stream"],
     color: "#f97316",
     icon: "S",
@@ -457,6 +641,7 @@ export const STATIONS: RadioStation[] = [
     language: "Swahili / English",
     frequency: "Digital",
     streamUrl: "https://eatv.radioca.st/stream",
+    bitrateKbps: 64,
     color: "#10b981",
     icon: "EA",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2310b981'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3EEA%3C/text%3E%3C/svg%3E",
@@ -475,6 +660,7 @@ export const STATIONS: RadioStation[] = [
     language: "Swahili / English",
     frequency: "94.1 FM",
     streamUrl: "https://capitalradio.radioca.st/stream",
+    bitrateKbps: 64,
     color: "#0ea5e9",
     icon: "CT",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230ea5e9'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3ECT%3C/text%3E%3C/svg%3E",
@@ -493,6 +679,8 @@ export const STATIONS: RadioStation[] = [
     language: "Swahili",
     frequency: "103.4 FM",
     streamUrl: "https://radio.crownmedia.co.tz:8443/crown",
+    bitrateKbps: 128,
+    official: true,
     color: "#84cc16",
     icon: "CR",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2384cc16'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3ECR%3C/text%3E%3C/svg%3E",
@@ -511,6 +699,7 @@ export const STATIONS: RadioStation[] = [
     language: "Swahili",
     frequency: "102.5 FM",
     streamUrl: "http://eu6.fastcast4u.com:5306/;",
+    bitrateKbps: 128,
     color: "#8b5cf6",
     icon: "CF",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%238b5cf6'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3ECF%3C/text%3E%3C/svg%3E",
@@ -531,7 +720,12 @@ export const STATIONS: RadioStation[] = [
     language: "Kinyarwanda / French",
     frequency: "95.0 FM",
     streamUrl: "https://listen.rba.co.rw:8008/rwanda/",
-    fallbacks: ["http://stream.zeno.fm/eequgfw72hhvv"],
+    bitrateKbps: 128,
+    official: true,
+    // No fallback: the Zeno mount this used to fall back to serves
+    // `icy-name: Heaven FM Radio`, i.e. a third station. A fallback that plays
+    // something else is worse than no fallback — it turns an outage into a
+    // silent substitution. `radio:check` is what caught it.
     color: "#2563eb",
     icon: "RR",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%232563eb'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3ERR%3C/text%3E%3C/svg%3E",
@@ -549,8 +743,16 @@ export const STATIONS: RadioStation[] = [
     genre: "Pop / Hits",
     language: "Kinyarwanda / English",
     frequency: "90.7 FM",
-    streamUrl: "http://listen.rba.co.rw:8080/",
-    fallbacks: ["http://listen.rba.co.rw:8080/;"],
+    // The trailing `;` is load-bearing. Without it this host answers 302 to its
+    // own Shoutcast web player (`index.html?sid=1`) and serves HTML — a player
+    // page, not audio — which is what the card used to get; with it, the same
+    // server streams `icy-name: 90.7 Magic FM` at 160 kbps.
+    streamUrl: "http://listen.rba.co.rw:8080/;",
+    // 160 kbps from the national broadcaster, but http-only: a page served over
+    // https cannot hand the browser an http media subresource, so this mount is
+    // proxy-only and never takes the direct path.
+    bitrateKbps: 160,
+    official: true,
     color: "#db2777",
     icon: "M",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23db2777'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='24' fill='white' text-anchor='middle'%3EM%3C/text%3E%3C/svg%3E",
@@ -589,6 +791,9 @@ export const STATIONS: RadioStation[] = [
     language: "English / Pidgin",
     frequency: "96.9 FM",
     streamUrl: "http://18063.live.streamtheworld.com:3690/CJMKFMAAC_SC",
+    // StreamTheWorld: geo-targeted ad insertion, and only 32 kbps. The card is
+    // marked with both facts rather than pretending either away.
+    bitrateKbps: 32,
     color: "#06b6d4",
     icon: "CF",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2306b6d4'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3ECF%3C/text%3E%3C/svg%3E",
@@ -607,6 +812,8 @@ export const STATIONS: RadioStation[] = [
     language: "Yoruba / Pidgin",
     frequency: "99.5 FM",
     streamUrl: "https://wazobiafmlagos951-atunwadigital.streamguys1.com/wazobiafmlagos951",
+    bitrateKbps: 128,
+    official: true,
     color: "#16a34a",
     icon: "W",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2316a34a'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='24' fill='white' text-anchor='middle'%3EW%3C/text%3E%3C/svg%3E",
@@ -627,6 +834,7 @@ export const STATIONS: RadioStation[] = [
     language: "English / Zulu",
     frequency: "104.8 FM",
     streamUrl: "http://28503.live.streamtheworld.com:3690/METRO_FMAAC_SC",
+    bitrateKbps: 64,
     color: "#dc2626",
     icon: "M",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23dc2626'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3EMF%3C/text%3E%3C/svg%3E",
@@ -635,24 +843,12 @@ export const STATIONS: RadioStation[] = [
     favorite: false,
     verified: true,
   },
-  {
-    id: "5fm",
-    name: "5FM",
-    country: "South Africa",
-    city: "Johannesburg",
-    region: "Johannesburg",
-    genre: "Pop / Hits",
-    language: "English",
-    frequency: "95.0 FM",
-    streamUrl: "https://cdn.cybercdn.live/Darom_1015FM/Live/icecast.audio",
-    color: "#f97316",
-    icon: "5",
-    logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23f97316'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='24' fill='white' text-anchor='middle'%3E5%3C/text%3E%3C/svg%3E",
-    tagline: "South Africa's youth radio",
-    programming: ["5 Breakfast", "Top 40", "After Dark"],
-    favorite: false,
-    verified: true,
-  },
+  /* 5FM was removed here for the same reason, and it is the case that made the
+   * check worth writing: the "5FM" card was streaming `icy-name: Darom 101.5`,
+   * a different station, from a mount that answered 200 with plausible audio.
+   * Status and content type both looked healthy — only the upstream name gave it
+   * away, which is exactly what `npm run radio:check` compares. SABC's own CDN
+   * refuses unsigned requests (403), so there is no verifiable replacement. */
   {
     id: "jacaranda-fm",
     name: "Jacaranda FM",
@@ -663,6 +859,8 @@ export const STATIONS: RadioStation[] = [
     language: "English / Afrikaans",
     frequency: "94.2 FM",
     streamUrl: "https://live.jacarandafm.com/jacarandahigh.mp3",
+    bitrateKbps: 128,
+    official: true,
     color: "#7c3aed",
     icon: "JF",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%237c3aed'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3EJF%3C/text%3E%3C/svg%3E",
@@ -683,6 +881,7 @@ export const STATIONS: RadioStation[] = [
     language: "English / Twi",
     frequency: "99.7 FM",
     streamUrl: "https://gateway.cdnstream1.com/2808_96.aac",
+    bitrateKbps: 64,
     color: "#2563eb",
     icon: "JF",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%232563eb'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3EJF%3C/text%3E%3C/svg%3E",
@@ -701,6 +900,8 @@ export const STATIONS: RadioStation[] = [
     language: "Twi",
     frequency: "106.3 FM",
     streamUrl: "https://mmg.streamguys1.com/AdomFM-mp3",
+    bitrateKbps: 128,
+    official: true,
     color: "#ef4444",
     icon: "AF",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23ef4444'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3EAF%3C/text%3E%3C/svg%3E",
@@ -721,6 +922,9 @@ export const STATIONS: RadioStation[] = [
     language: "English",
     frequency: "Digital",
     streamUrl: "https://stream.live.vc.bbcmedia.co.uk/bbc_world_service",
+    bitrateKbps: 56,
+    official: true,
+    adFree: true,
     color: "#991b1b",
     icon: "BBC",
     logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23991b1b'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='16' fill='white' text-anchor='middle'%3EBBC%3C/text%3E%3C/svg%3E",
@@ -729,32 +933,25 @@ export const STATIONS: RadioStation[] = [
     favorite: false,
     verified: true,
   },
-  {
-    id: "bbc-east-africa",
-    name: "BBC World Service — East Africa",
-    country: "International",
-    city: "London",
-    region: "London",
-    genre: "News / Talk",
-    language: "English",
-    frequency: "Digital",
-    streamUrl: "https://stream.live.vc.bbcmedia.co.uk/bbc_world_service_east_asia",
-    color: "#2563eb",
-    icon: "F24",
-    logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%232563eb'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='16' fill='white' text-anchor='middle'%3EF24%3C/text%3E%3C/svg%3E",
-    tagline: "BBC's East Africa news feed",
-    programming: ["World News", "Africa Daily", "Focus on Africa"],
-    favorite: false,
-    verified: true,
-  },
+  /* BBC World Service is carried once, above.
+   *
+   * There used to be a second card here promising "East Africa" — first pointing
+   * at the East Asia mount, then at `bbc_world_service_africa`. Both were wrong:
+   * the Africa URL is not a stream at all, it 302s to https://www.bbc.co.uk/ and
+   * answers HTML, and the Asia mount is the same 56 kbps World Service feed the
+   * card above already carries. One service, one card. */
   {
     id: "kbc-english",
-    name: "KBC English Service",
+    // Named for the mount it actually serves: the Zeno relay published to this
+    // station answers `icy-name: KBC Radio Taifa`, KBC's national service — the
+    // card said "English Service" and played Taifa, which is a small lie the
+    // check would flag and a listener would hear.
+    name: "KBC Radio Taifa",
     country: "Kenya",
     city: "Nairobi",
     region: "Nairobi",
     genre: "News / Talk",
-    language: "English / Swahili",
+    language: "Swahili / English",
     frequency: "Digital",
     streamUrl: "http://stream.zeno.fm/ud2u96xst5quv",
     fallbacks: ["https://stream.zeno.fm/ud2u96xst5quv"],
@@ -786,6 +983,15 @@ export const STATIONS: RadioStation[] = [
     verified: true,
   },
 ];
+
+/**
+ * Every station on the dial.
+ *
+ * The regional core leads, so `STATIONS[0]` and the featured card stay East
+ * African — this is an East African radio hub — and the ad-free HD roster
+ * follows it as a distinct curation. `radio:check` walks the combined list.
+ */
+export const STATIONS: RadioStation[] = [...REGIONAL_STATIONS, ...AD_FREE_STATIONS];
 
 export function getStationById(id: string | null): RadioStation | null {
   if (!id) return null;

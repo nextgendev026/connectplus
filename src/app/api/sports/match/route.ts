@@ -76,6 +76,10 @@ export async function GET(request: NextRequest) {
       homeTeam,
       awayTeam,
       competition: row?.competition ?? null,
+      // Both of these are what let a fixture from a non-ESPN source be found on
+      // ESPN's feed, which is what gives it live commentary and stats.
+      competitionId: row?.competitionId ?? null,
+      kickoff: row?.kickoff ?? null,
       status: row?.status ?? null,
       sport,
       fresh,

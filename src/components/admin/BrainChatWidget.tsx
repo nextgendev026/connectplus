@@ -465,7 +465,7 @@ export default function BrainChatWidget() {
           <div className="flex-1 overflow-y-auto space-y-3 p-3">
             {messages.length === 0 && (
               <div className="py-8 text-center">
-                <BrainCircuit className="mx-auto mb-2 h-8 w-8 text-surface-700" />                  <p className="text-sm font-medium text-surface-300">Ask the combined brains anything.</p>
+                <BrainCircuit className="mx-auto mb-2 h-8 w-8 text-surface-300" />                  <p className="text-sm font-medium text-surface-300">Ask the combined brains anything.</p>
                   <p className="type-meta text-surface-500 mt-1">Logical teaching loop ON — every question you ask teaches the brains your phrasing, so they understand you better each time.</p>
               </div>
             )}

@@ -109,6 +109,35 @@ export function RadioPlayerBar() {
                   {signal.bitrateKbps !== null && (
                     <span className="text-surface-500">· {signal.bitrateKbps} kbps</span>
                   )}
+                  {/* Which route the audio is taking.
+
+                      This is the readout that explains the whole transport
+                      change: "Direct HD" means the browser is on the station's
+                      own mount — the bitrate is the broadcaster's, and the
+                      station sees the listener rather than our function region.
+                      "Relayed" says the audio is coming through our proxy, and
+                      the tooltip distinguishes the two reasons that happens: an
+                      http-only mount (which can never be direct from an https
+                      page) or a fallback after a direct attempt failed. */}
+                  {signal.transport === "direct" ? (
+                    <span
+                      className="text-emerald-400"
+                      title="Playing straight from the station — its own bitrate, and the station sees you rather than our server"
+                    >
+                      · Direct HD
+                    </span>
+                  ) : (
+                    <span
+                      className="text-surface-500"
+                      title={
+                        signal.directCapable
+                          ? "This channel is going through the relay"
+                          : "This mount is http-only, so it can only play through the relay"
+                      }
+                    >
+                      · Relayed
+                    </span>
+                  )}
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1.5">
@@ -120,6 +149,35 @@ export function RadioPlayerBar() {
                   )}
                   {signal.bitrateKbps !== null && (
                     <span className="text-surface-500">· {signal.bitrateKbps} kbps</span>
+                  )}
+                  {/* Which route the audio is taking.
+
+                      This is the readout that explains the whole transport
+                      change: "Direct HD" means the browser is on the station's
+                      own mount — the bitrate is the broadcaster's, and the
+                      station sees the listener rather than our function region.
+                      "Relayed" says the audio is coming through our proxy, and
+                      the tooltip distinguishes the two reasons that happens: an
+                      http-only mount (which can never be direct from an https
+                      page) or a fallback after a direct attempt failed. */}
+                  {signal.transport === "direct" ? (
+                    <span
+                      className="text-emerald-400"
+                      title="Playing straight from the station — its own bitrate, and the station sees you rather than our server"
+                    >
+                      · Direct HD
+                    </span>
+                  ) : (
+                    <span
+                      className="text-surface-500"
+                      title={
+                        signal.directCapable
+                          ? "This channel is going through the relay"
+                          : "This mount is http-only, so it can only play through the relay"
+                      }
+                    >
+                      · Relayed
+                    </span>
                   )}
                 </span>
               )}

@@ -16,6 +16,13 @@ export interface PublicSiteConfig {
   maintenanceMessage: string;
   features: {
     radio: boolean;
+    /**
+     * Radio transport. The player reads this to decide whether a channel can be
+     * played straight from the station (full bitrate, listener's own IP) or has
+     * to come through this origin's proxy. Defined in `features` rather than
+     * top-level because it is a feature switch an operator flips in Settings.
+     */
+    radioDirect: boolean;
     brainChat: boolean;
     signups: boolean;
     comments: boolean;
@@ -56,6 +63,7 @@ async function fetchConfig(): Promise<PublicSiteConfig> {
       maintenanceMessage: "",
       features: {
         radio: true,
+        radioDirect: true,
         brainChat: true,
         signups: true,
         comments: true,

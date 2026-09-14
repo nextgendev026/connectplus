@@ -115,14 +115,14 @@ export default function AgentControlPanel({ canWrite = true }: { canWrite?: bool
   return (
     <section
       id="agents"
-      className="rounded-2xl border border-surface-200/70 bg-surface-50 p-4 sm:p-5 dark:border-surface-800 dark:bg-surface-900/40"
+      className="rounded-2xl border p-4 sm:p-5 border-surface-800 bg-surface-900/40"
     >
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-500/10 text-brand-500">
           <Bot className="h-5 w-5" />
         </div>
         <div className="min-w-0">
-          <h2 className="text-base font-bold text-surface-900 dark:text-surface-50">AI Agents</h2>
+          <h2 className="text-base font-bold text-surface-50">AI Agents</h2>
           <p className="text-xs text-surface-500">
             Inject provider keys, pick a model, and set the default AI that powers inline curation, the Brain Copilot and brain training.
           </p>
@@ -131,8 +131,8 @@ export default function AgentControlPanel({ canWrite = true }: { canWrite?: bool
           className={cn(
             "ml-auto rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide",
             active === "builtin"
-              ? "bg-surface-200/70 text-surface-600"
-              : "bg-emerald-500/15 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400"
+              ? "bg-surface-800/70 text-surface-400"
+              : "bg-emerald-500/20 text-emerald-400"
           )}
         >
           <span className="flex items-center gap-1">
@@ -142,7 +142,7 @@ export default function AgentControlPanel({ canWrite = true }: { canWrite?: bool
         </span>
         <button
           onClick={() => void load()}
-          className="rounded-lg border border-surface-200 p-2 text-surface-500 transition hover:border-brand-500/50 dark:border-surface-700"
+          className="rounded-lg border p-2 text-surface-500 transition hover:border-brand-500/50 border-surface-700"
           aria-label="Refresh agents"
         >
           <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
@@ -172,17 +172,17 @@ export default function AgentControlPanel({ canWrite = true }: { canWrite?: bool
                   "rounded-xl border p-3 transition-all duration-200",
                   isDefault
                     ? "border-brand-500/50 bg-brand-500/5 ring-1 ring-brand-500/20"
-                    : "border-surface-200/70 bg-white dark:border-surface-800 dark:bg-surface-900"
+                    : "border-surface-800 bg-surface-900"
                 )}
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-sm font-semibold text-surface-900 dark:text-surface-50">{prov.label}</h3>
+                  <h3 className="text-sm font-semibold text-surface-50">{prov.label}</h3>
                   {prov.hasKey ? (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
                       <KeyRound className="h-3 w-3" /> {prov.keyHint}
                     </span>
                   ) : (
-                    <span className="rounded-full bg-surface-200/70 px-2 py-0.5 text-[10px] font-semibold text-surface-500">
+                    <span className="rounded-full bg-surface-800/70 px-2 py-0.5 text-[10px] font-semibold text-surface-500">
                       no key
                     </span>
                   )}
@@ -194,7 +194,7 @@ export default function AgentControlPanel({ canWrite = true }: { canWrite?: bool
 
                 <div className="mt-2 grid gap-2 sm:grid-cols-2">
                   <label className="block">
-                    <span className="mb-1 block text-[11px] font-medium text-surface-600 dark:text-surface-300">
+                    <span className="mb-1 block text-[11px] font-medium text-surface-300">
                       API key
                     </span>
                     <input
@@ -204,11 +204,11 @@ export default function AgentControlPanel({ canWrite = true }: { canWrite?: bool
                       value={draft.apiKey}
                       onChange={(e) => setDrafts((d) => ({ ...d, [prov.name]: { ...draft, apiKey: e.target.value } }))}
                       placeholder={prov.hasKey ? "Replace key…" : "sk-…"}
-                      className="w-full rounded-lg border border-surface-200 bg-white px-2.5 py-1.5 text-xs text-surface-900 outline-none transition focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30 dark:border-surface-700 dark:bg-surface-950 dark:text-surface-50"
+                      className="w-full rounded-lg border px-2.5 py-1.5 text-xs outline-none transition focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30 border-surface-700 bg-surface-950 text-surface-50"
                     />
                   </label>
                   <label className="block">
-                    <span className="mb-1 block text-[11px] font-medium text-surface-600 dark:text-surface-300">
+                    <span className="mb-1 block text-[11px] font-medium text-surface-300">
                       Model ({prov.models.length} available)
                     </span>
                     <div className="relative">
@@ -216,7 +216,7 @@ export default function AgentControlPanel({ canWrite = true }: { canWrite?: bool
                         disabled={!canWrite}
                         value={draft.model}
                         onChange={(e) => setDrafts((d) => ({ ...d, [prov.name]: { ...draft, model: e.target.value } }))}
-                        className="w-full appearance-none rounded-lg border border-surface-200 bg-white px-2.5 py-1.5 pr-7 text-xs text-surface-900 outline-none transition focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30 dark:border-surface-700 dark:bg-surface-950 dark:text-surface-50"
+                        className="w-full appearance-none rounded-lg border px-2.5 py-1.5 pr-7 text-xs outline-none transition focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30 border-surface-700 bg-surface-950 text-surface-50"
                       >
                         {prov.models.map((m) => (
                           <option key={m} value={m}>{m}</option>
@@ -231,7 +231,7 @@ export default function AgentControlPanel({ canWrite = true }: { canWrite?: bool
                   <p
                     className={cn(
                       "mt-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] font-medium",
-                      result.ok ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-red-500/10 text-red-600"
+                      result.ok ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-600"
                     )}
                   >
                     {result.ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
@@ -250,14 +250,14 @@ export default function AgentControlPanel({ canWrite = true }: { canWrite?: bool
                       Set as Default
                     </button>
                   ) : isDefault ? (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-brand-500/15 px-2.5 py-1 text-[10px] font-semibold text-brand-600 dark:text-brand-400">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-brand-500/15 px-2.5 py-1 text-[10px] font-semibold text-brand-400">
                       <Sparkles className="h-3 w-3" /> Active Default
                     </span>
                   ) : null}
                   <button
                     onClick={() => void act(prov.name, "test")}
                     disabled={busy !== null || !canWrite}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-surface-200 px-2.5 py-1.5 text-xs font-medium text-surface-700 transition hover:border-brand-500/50 disabled:opacity-50 dark:border-surface-700 dark:text-surface-100"
+                    className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition hover:border-brand-500/50 disabled:opacity-50 border-surface-700 text-surface-100"
                   >
                     {busy === `${prov.name}:test` ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -269,7 +269,7 @@ export default function AgentControlPanel({ canWrite = true }: { canWrite?: bool
                   <button
                     onClick={() => void act(prov.name, "save")}
                     disabled={busy !== null || !canWrite}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-surface-900 px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-surface-700 disabled:opacity-50 dark:bg-surface-700 dark:hover:bg-surface-600"
+                    className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-white transition disabled:opacity-50 bg-surface-700 hover:bg-surface-700"
                   >
                     {busy === `${prov.name}:save` ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />

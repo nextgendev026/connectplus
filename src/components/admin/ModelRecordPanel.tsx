@@ -65,22 +65,22 @@ const WINDOWS = [30, 60, 90];
 const VERDICT_COPY: Record<StrategyComparison["verdict"], { label: string; tone: string; blurb: string }> = {
   "beats-line": {
     label: "Beats the line",
-    tone: "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    tone: "border-emerald-500/40 bg-emerald-500/10 text-emerald-400",
     blurb: "The model is clearing the market baseline by a meaningful margin on this sample.",
   },
   "matches-line": {
     label: "Level with the line",
-    tone: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    tone: "border-amber-500/40 bg-amber-500/10 text-amber-400",
     blurb: "The model is statistically indistinguishable from simply backing the favourite.",
   },
   "below-line": {
     label: "Behind the line",
-    tone: "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400",
+    tone: "border-red-500/40 bg-red-500/10 text-red-400",
     blurb: "Following the closing odds is currently outperforming the model. Trust the record, not the narrative.",
   },
   insufficient: {
     label: "Not enough settled picks",
-    tone: "border-surface-300 bg-surface-100 text-surface-600 dark:border-surface-700 dark:bg-surface-800 dark:text-surface-300",
+    tone: "border-surface-700 bg-surface-800 text-surface-300",
     blurb: "At least 20 settled picks on both sides are needed before a comparison means anything.",
   },
 };
@@ -127,7 +127,7 @@ export default function ModelRecordPanel() {
     <div>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="flex items-center gap-2 text-sm font-semibold text-surface-800 dark:text-surface-100">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-surface-100">
             <BarChart3 className="h-4 w-4 text-brand-500" /> Model record
           </h2>
           <p className="mt-1 max-w-2xl text-xs text-surface-500">
@@ -136,7 +136,7 @@ export default function ModelRecordPanel() {
             line.
           </p>
         </div>
-        <div className="flex items-center rounded-xl border border-surface-200 p-1 dark:border-surface-700">
+        <div className="flex items-center rounded-xl border p-1 border-surface-700">
           {WINDOWS.map((w) => (
             <button
               key={w}
@@ -145,7 +145,7 @@ export default function ModelRecordPanel() {
                 "rounded-lg px-3 py-1.5 text-xs font-medium transition",
                 days === w
                   ? "bg-brand-500 text-white"
-                  : "text-surface-500 hover:text-surface-800 dark:hover:text-surface-100"
+                  : "text-surface-500 hover:text-surface-100"
               )}
             >
               {w}d
@@ -159,7 +159,7 @@ export default function ModelRecordPanel() {
           <Loader2 className="h-4 w-4 animate-spin" /> Crunching the record…
         </div>
       ) : error ? (
-        <p className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">
+        <p className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400">
           {error}
         </p>
       ) : data ? (
@@ -199,9 +199,9 @@ export default function ModelRecordPanel() {
           </div>
 
           {/* Strategy comparison — the benchmark */}
-          <section className="mt-5 rounded-2xl border border-surface-200/70 bg-surface-50 p-4 dark:border-surface-800 dark:bg-surface-900/40">
+          <section className="mt-5 rounded-2xl border p-4 border-surface-800 bg-surface-900/40">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="flex items-center gap-2 text-sm font-semibold text-surface-800 dark:text-surface-100">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-surface-100">
                 <Swords className="h-4 w-4 text-brand-500" /> Model vs the closing line
               </h3>
               <span
@@ -219,15 +219,15 @@ export default function ModelRecordPanel() {
               <StrategyCard
                 title="Hive model"
                 summary={data.strategy.model}
-                tone="text-brand-600 dark:text-brand-400"
+                tone="text-brand-400"
                 highlight
               />
               <StrategyCard
                 title="Market baseline"
                 summary={data.strategy.baseline}
-                tone="text-surface-600 dark:text-surface-300"
+                tone="text-surface-300"
               />
-              <div className="rounded-xl border border-surface-200 p-3 dark:border-surface-800">
+              <div className="rounded-xl border p-3 border-surface-800">
                 <p className="text-[11px] font-medium uppercase tracking-wide text-surface-500">Edge</p>
                 <p
                   className={cn(
@@ -235,10 +235,10 @@ export default function ModelRecordPanel() {
                     data.strategy.edgePp == null
                       ? "text-surface-500"
                       : data.strategy.edgePp > 0
-                        ? "text-emerald-600 dark:text-emerald-400"
+                        ? "text-emerald-400"
                         : data.strategy.edgePp < 0
-                          ? "text-red-600 dark:text-red-400"
-                          : "text-surface-600 dark:text-surface-300"
+                          ? "text-red-400"
+                          : "text-surface-300"
                   )}
                 >
                   {data.strategy.edgePp == null
@@ -260,19 +260,19 @@ export default function ModelRecordPanel() {
           </section>
 
           <div className="mt-5 grid gap-5 lg:grid-cols-2">
-            <section className="rounded-2xl border border-surface-200/70 bg-surface-50 p-4 dark:border-surface-800 dark:bg-surface-900/40">
-              <h3 className="text-sm font-semibold text-surface-800 dark:text-surface-100">By strategy</h3>
+            <section className="rounded-2xl border p-4 border-surface-800 bg-surface-900/40">
+              <h3 className="text-sm font-semibold text-surface-100">By strategy</h3>
               <BreakdownTable rows={data.byStrategy} emptyLabel="No settled picks yet." />
             </section>
 
-            <section className="rounded-2xl border border-surface-200/70 bg-surface-50 p-4 dark:border-surface-800 dark:bg-surface-900/40">
-              <h3 className="text-sm font-semibold text-surface-800 dark:text-surface-100">By market</h3>
+            <section className="rounded-2xl border p-4 border-surface-800 bg-surface-900/40">
+              <h3 className="text-sm font-semibold text-surface-100">By market</h3>
               <BreakdownTable rows={data.byMarket} emptyLabel="No settled picks by market yet." />
             </section>
           </div>
 
-          <section className="mt-5 rounded-2xl border border-surface-200/70 bg-surface-50 p-4 dark:border-surface-800 dark:bg-surface-900/40">
-            <h3 className="text-sm font-semibold text-surface-800 dark:text-surface-100">Calibration</h3>
+          <section className="mt-5 rounded-2xl border p-4 border-surface-800 bg-surface-900/40">
+            <h3 className="text-sm font-semibold text-surface-100">Calibration</h3>
             <p className="mt-1 text-xs text-surface-500">
               Each row is a confidence band. A trustworthy model has the observed rate close to the
               stated confidence; the two bars should line up.
@@ -284,12 +284,12 @@ export default function ModelRecordPanel() {
                 {data.calibration.map((bucket) => (
                   <div key={bucket.label}>
                     <div className="flex items-center justify-between text-[11px] text-surface-500">
-                      <span className="font-medium text-surface-700 dark:text-surface-200">{bucket.label}</span>
+                      <span className="font-medium text-surface-200">{bucket.label}</span>
                       <span className="tabular-nums">
                         {bucket.picks} pick{bucket.picks === 1 ? "" : "s"} ·{" "}
                         <span
                           className={cn(
-                            bucket.gap >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"
+                            bucket.gap >= 0 ? "text-emerald-400" : "text-amber-400"
                           )}
                         >
                           {bucket.gap > 0 ? "+" : ""}
@@ -308,13 +308,13 @@ export default function ModelRecordPanel() {
           </section>
 
           <div className="mt-5 grid gap-5 lg:grid-cols-2">
-            <section className="rounded-2xl border border-surface-200/70 bg-surface-50 p-4 dark:border-surface-800 dark:bg-surface-900/40">
-              <h3 className="text-sm font-semibold text-surface-800 dark:text-surface-100">By competition</h3>
+            <section className="rounded-2xl border p-4 border-surface-800 bg-surface-900/40">
+              <h3 className="text-sm font-semibold text-surface-100">By competition</h3>
               <BreakdownTable rows={data.byCompetition} emptyLabel="No settled picks by competition yet." />
             </section>
 
-            <section className="rounded-2xl border border-surface-200/70 bg-surface-50 p-4 dark:border-surface-800 dark:bg-surface-900/40">
-              <h3 className="text-sm font-semibold text-surface-800 dark:text-surface-100">Settled picks per day</h3>
+            <section className="rounded-2xl border p-4 border-surface-800 bg-surface-900/40">
+              <h3 className="text-sm font-semibold text-surface-100">Settled picks per day</h3>
               <div className="mt-4 flex h-28 items-end gap-1">
                 {data.series.map((d) => (
                   <div
@@ -364,11 +364,11 @@ function StrategyCard({
         "rounded-xl border p-3",
         highlight
           ? "border-brand-500/40 bg-brand-500/5"
-          : "border-surface-200 dark:border-surface-800"
+          : "border-surface-800"
       )}
     >
       <p className={cn("text-[11px] font-semibold uppercase tracking-wide", tone)}>{title}</p>
-      <p className="mt-1 text-2xl font-bold tabular-nums text-surface-900 dark:text-surface-50">
+      <p className="mt-1 text-2xl font-bold tabular-nums text-surface-50">
         {summary.accuracy != null ? `${summary.accuracy}%` : "—"}
       </p>
       <p className="text-[11px] text-surface-500">
@@ -384,7 +384,7 @@ function CalibrationBar({ label, value, color }: { label: string; value: number;
   return (
     <div className="flex items-center gap-2">
       <span className="w-12 shrink-0 text-[10px] text-surface-500">{label}</span>
-      <div className="h-2 flex-1 overflow-hidden rounded-full bg-surface-200 dark:bg-surface-800">
+      <div className="h-2 flex-1 overflow-hidden rounded-full bg-surface-800">
         <div className={cn("h-full rounded-full", color)} style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
       </div>
       <span className="w-12 shrink-0 text-right text-[10px] tabular-nums text-surface-500">{value}%</span>
@@ -397,7 +397,7 @@ function BreakdownTable({ rows, emptyLabel }: { rows: BreakdownRow[]; emptyLabel
   return (
     <div className="mt-3 max-h-72 overflow-auto">
       <table className="w-full text-xs">
-        <thead className="sticky top-0 bg-surface-50 dark:bg-surface-900">
+        <thead className="sticky top-0 bg-surface-900">
           <tr className="text-left text-[10px] uppercase tracking-wide text-surface-500">
             <th className="py-1.5 pr-3 font-medium">Group</th>
             <th className="py-1.5 pr-3 text-right font-medium">N</th>
@@ -406,13 +406,13 @@ function BreakdownTable({ rows, emptyLabel }: { rows: BreakdownRow[]; emptyLabel
             <th className="py-1.5 text-right font-medium">Brier</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-surface-200 dark:divide-surface-800">
+        <tbody className="divide-y divide-surface-800">
           {rows.map((row) => (
             <tr key={row.key}>
-              <td className="max-w-[12rem] truncate py-2 pr-3 text-surface-700 dark:text-surface-200">{row.key}</td>
+              <td className="max-w-[12rem] truncate py-2 pr-3 text-surface-200">{row.key}</td>
               <td className="py-2 pr-3 text-right tabular-nums text-surface-500">{row.settled}</td>
               <td className="py-2 pr-3 text-right tabular-nums text-surface-500">{row.won}</td>
-              <td className="py-2 pr-3 text-right font-semibold tabular-nums text-surface-900 dark:text-surface-50">
+              <td className="py-2 pr-3 text-right font-semibold tabular-nums text-surface-50">
                 {row.accuracy}%
               </td>
               <td className="py-2 text-right tabular-nums text-surface-500">{row.brier.toFixed(3)}</td>
@@ -426,12 +426,12 @@ function BreakdownTable({ rows, emptyLabel }: { rows: BreakdownRow[]; emptyLabel
 
 function Stat({ label, value, sub, icon }: { label: string; value: string; sub?: string; icon?: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-surface-200/70 bg-surface-50 p-3 dark:border-surface-800 dark:bg-surface-900/40">
+    <div className="rounded-2xl border p-3 border-surface-800 bg-surface-900/40">
       <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-surface-500">
         {icon}
         {label}
       </div>
-      <p className="mt-1 text-lg font-bold text-surface-900 dark:text-surface-50">{value}</p>
+      <p className="mt-1 text-lg font-bold text-surface-50">{value}</p>
       {sub ? <p className="text-[11px] text-surface-500">{sub}</p> : null}
     </div>
   );

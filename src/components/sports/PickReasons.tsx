@@ -33,13 +33,31 @@ export function PickReasons({
   insight,
   className,
   compact = false,
+  limit,
+  showNote = true,
 }: {
   insight: PickInsight;
   className?: string;
   /** Fewer reasons, no caution block — for a secondary market on a card. */
   compact?: boolean;
+  /**
+   * Cap on how many reasons render here.
+   *
+   * A card that prints all four reasons and its caveat is a card whose bottom
+   * half is a wall of small print; three is where the eye stops reading and
+   * starts skimming. The rest are not dropped — the card puts them behind its
+   * own "full working" disclosure, along with the model's note.
+   */
+  limit?: number;
+  /**
+   * Whether the model's audit trail renders as its own disclosure.
+   *
+   * A card hosting its own "full working" panel sets this false so the reader
+   * gets one disclosure to open rather than two nested ones.
+   */
+  showNote?: boolean;
 }) {
-  const reasons = compact ? insight.reasons.slice(0, 2) : insight.reasons;
+  const reasons = compact ? insight.reasons.slice(0, 2) : insight.reasons.slice(0, limit ?? insight.reasons.length);
 
   return (
     <div className={cn("min-w-0", className)}>
@@ -78,7 +96,7 @@ export function PickReasons({
         </p>
       ) : null}
 
-      {insight.note ? (
+      {showNote && insight.note ? (
         <details className="mt-2">
           <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] font-medium text-surface-500 transition hover:text-surface-300">
             <ChevronDown className="h-3 w-3" />

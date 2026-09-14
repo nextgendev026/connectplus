@@ -31,6 +31,7 @@ import {
 } from "@/lib/sports-sounds";
 import ReferralCards from "./ReferralCards";
 import MatchDetail from "./MatchDetail";
+import { TeamCrest } from "./TeamCrest";
 
 interface Prediction {
   id: string;
@@ -431,8 +432,18 @@ export default function ScoresBoard({
   return (
     <div className="mx-auto grid w-full max-w-[1600px] gap-5 px-3 py-4 sm:gap-6 sm:px-6 sm:py-5 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px] xl:px-8">
       <div className="min-w-0">
-        {/* Day strip — sticky so switching days never means scrolling back up. */}
-        <div className="sticky top-0 z-20 -mx-3 flex items-center gap-2 border-b border-surface-900/60 bg-surface-950/90 px-3 py-2 backdrop-blur sm:-mx-6 sm:px-6">
+        {/* Toolbar — the day strip and the filters in one sticky block.
+
+            These were two separate strips: the day strip pinned itself at
+            `top-0`, which on this app parks it *underneath* the navbar (that
+            one is z-50 and 4rem tall), so the control for choosing a day was
+            invisible and untappable for the whole page; and the sport/live/
+            alerts row was not sticky at all, so it scrolled away the moment the
+            reader moved. Both now live in a single block parked exactly at the
+            navbar's height, which is what makes the toolbar feel attached to
+            the board rather than to the hero above it. */}
+        <div className="sports-toolbar sticky -mx-3 border-b border-surface-900/60 bg-surface-950/95 px-3 pb-1.5 pt-2 backdrop-blur sm:-mx-6 sm:px-6 lg:static lg:border-t lg:pt-3">
+        <div className="flex items-center gap-2 lg:gap-3">
           <button
             onClick={() => setDayOffset((d) => Math.max(-DAYS_BACK, d - 1))}
             disabled={dayOffset <= -DAYS_BACK}
@@ -441,7 +452,7 @@ export default function ScoresBoard({
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
-          <div ref={dayStrip} className="flex flex-1 gap-1.5 overflow-x-auto pb-0.5">
+          <div ref={dayStrip} className="flex flex-1 gap-1.5 overflow-x-auto pb-0.5 lg:overflow-visible lg:flex-wrap lg:justify-start lg:gap-2">
             {Array.from({ length: DAYS_BACK + DAYS_FORWARD + 1 }, (_, i) => i - DAYS_BACK).map((offset) => {
               const d = new Date();
               d.setDate(d.getDate() + offset);
@@ -464,7 +475,8 @@ export default function ScoresBoard({
                     "flex min-w-[62px] shrink-0 flex-col items-center rounded-xl border px-2.5 py-1.5 transition",
                     dayOffset === offset
                       ? "border-brand-500 bg-brand-500/15 text-brand-200"
-                      : "border-surface-800 text-surface-400 hover:border-surface-700 hover:text-surface-50"
+                      : "border-surface-800 text-surface-400 hover:border-surface-700 hover:text-surface-50",
+                    "lg:min-w-0 lg:flex-auto lg:flex-none lg:p-1.5 lg:py-1 lg:w-auto lg:justify-center"
                   )}
                 >
                   <span className="text-[10px] font-medium uppercase tracking-wide">{label}</span>
@@ -487,12 +499,14 @@ export default function ScoresBoard({
           One line, swiped sideways, not four wrapped rows of chips.
           On a phone this used to stack into three or four rows above the first
           fixture — controls the reader sees before they see a single score.
+          On desktop the row wraps into a compact grid instead of scrolling.
         */}
-        <div className="mt-3 flex items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
+        <div className="mt-2 flex items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:none] lg:overflow-visible lg:flex-wrap lg:gap-2 lg:mt-1.5">
           <span
             className={cn(
               "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold",
-              (hub?.liveCount ?? 0) > 0 ? "bg-red-500/15 text-red-400" : "bg-surface-800 text-surface-400"
+              (hub?.liveCount ?? 0) > 0 ? "bg-red-500/15 text-red-400" : "bg-surface-800 text-surface-400",
+              "lg:px-2 lg:py-0.5"
             )}
           >
             <CircleDot className={cn("h-3.5 w-3.5", (hub?.liveCount ?? 0) > 0 && "animate-pulse")} />
@@ -523,7 +537,8 @@ export default function ScoresBoard({
                 onClick={() => setSport(s)}
                 className={cn(
                   "rounded-lg px-3 py-1.5 text-xs font-medium capitalize transition",
-                  sport === s ? "bg-brand-500 text-white" : "text-surface-400 hover:text-surface-50"
+                  sport === s ? "bg-brand-500 text-white" : "text-surface-400 hover:text-surface-50",
+                  "lg:px-2.5 lg:py-1"
                 )}
               >
                 {s}
@@ -538,7 +553,8 @@ export default function ScoresBoard({
               "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition",
               liveOnly
                 ? "border-red-500 bg-red-500/15 text-red-300"
-                : "border-surface-800 text-surface-400 hover:text-surface-50"
+                : "border-surface-800 text-surface-400 hover:text-surface-50",
+              "lg:px-2.5 lg:py-1"
             )}
           >
             <CircleDot className={cn("h-3.5 w-3.5", liveOnly && "animate-pulse")} />
@@ -552,7 +568,8 @@ export default function ScoresBoard({
                 "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition",
                 onlyFollowed
                   ? "border-amber-500 bg-amber-500/15 text-amber-300"
-                  : "border-surface-800 text-surface-400 hover:text-surface-50"
+                  : "border-surface-800 text-surface-400 hover:text-surface-50",
+                "lg:px-2.5 lg:py-1"
               )}
             >
               <Star className={cn("h-3.5 w-3.5", onlyFollowed && "fill-amber-400 text-amber-400")} />
@@ -582,7 +599,8 @@ export default function ScoresBoard({
               "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition",
               alertsOn
                 ? "border-emerald-500 bg-emerald-500/15 text-emerald-300"
-                : "border-surface-800 text-surface-400 hover:text-surface-50"
+                : "border-surface-800 text-surface-400 hover:text-surface-50",
+              "lg:px-2.5 lg:py-1"
             )}
           >
             {alertsOn ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
@@ -592,15 +610,16 @@ export default function ScoresBoard({
           <button
             onClick={() => void load({ fresh: true })}
             disabled={refreshing}
-            className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-surface-800 bg-surface-900/70 px-3 py-2 text-xs font-medium text-surface-300 transition hover:text-surface-50 disabled:opacity-60"
+            className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-surface-800 bg-surface-900/70 px-3 py-2 text-xs font-medium text-surface-300 transition hover:text-surface-50 disabled:opacity-60 lg:ml-0 lg:px-3 lg:py-1.5"
           >
             <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
             Refresh
           </button>
         </div>
+        </div>
 
         {hub?.demo ? (
-          <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+          <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-300 lg:mt-2 lg:px-2.5 lg:py-1.5">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
               These are sample fixtures. Real scores appear here once the live feed is switched on.
@@ -609,7 +628,7 @@ export default function ScoresBoard({
         ) : null}
 
         {error ? (
-          <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</div>
+          <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300 lg:mt-2 lg:px-2.5 lg:py-1.5">{error}</div>
         ) : null}
 
         {loading ? (
@@ -767,7 +786,7 @@ function MatchRow({
       className="border-b border-surface-800/50 last:border-b-0 motion-safe:animate-rise"
       style={{ animationDelay: `${Math.min(rowIndex, 8) * 35}ms` }}
     >
-      <div className="flex items-center gap-0.5 px-2 py-2.5 transition hover:bg-surface-800/40 sm:gap-1 sm:px-4">
+      <div className="flex items-center gap-0.5 px-2 py-2.5 transition hover:bg-surface-800/40 sm:gap-1 sm:px-4 lg:py-2">
         <button
           onClick={() => onToggle(match)}
           className="flex min-w-0 flex-1 items-center gap-2.5 text-left sm:gap-3"
@@ -784,7 +803,7 @@ function MatchRow({
             </span>
           </div>
 
-          <div className="min-w-0 flex-1 lg:max-w-[440px]">
+          <div className="min-w-0 flex-1 lg:max-w-[460px]">
             <TeamLine
               name={match.homeTeam}
               logo={match.homeLogo}
@@ -881,49 +900,6 @@ function MatchRow({
 
       {expanded ? <AnalysisPanel match={match} /> : null}
     </div>
-  );
-}
-
-/**
- * A team crest that never leaves a hole in the layout.
- *
- * Crests come from whichever provider won the merge, and those URLs 404 or
- * hotlink-block often enough that a bare `<img>` would flash a broken icon.
- * The initials monogram is the fallback, and `referrerPolicy` keeps the
- * provider from rejecting the request when it checks where it came from.
- */
-function TeamCrest({ name, logo }: { name: string; logo?: string | null }) {
-  const [failed, setFailed] = useState(false);
-  const initials = name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word[0]?.toUpperCase() ?? "")
-    .join("");
-
-  if (!logo || failed) {
-    return (
-      <span
-        aria-hidden
-        className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-surface-800 text-[9px] font-bold text-surface-400 sm:h-6 sm:w-6 sm:text-[10px]"
-      >
-        {initials || "?"}
-      </span>
-    );
-  }
-
-  return (
-    // eslint-disable-next-line @next/next/no-img-element -- crests are third-party CDN assets; the optimizer would add a hop and fail on hotlink-protected hosts
-    <img
-      src={logo}
-      alt=""
-      aria-hidden
-      loading="lazy"
-      decoding="async"
-      referrerPolicy="no-referrer"
-      onError={() => setFailed(true)}
-      className="h-5 w-5 shrink-0 object-contain sm:h-6 sm:w-6"
-    />
   );
 }
 

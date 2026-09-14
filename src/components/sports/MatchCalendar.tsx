@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Brain,
   CalendarDays,
@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { calendarEndpoint } from "@/lib/sports-endpoint";
+import { TeamCrest } from "./TeamCrest";
 import MatchDetail, { type MatchRef } from "./MatchDetail";
 
 interface CalendarPrediction {
@@ -51,6 +52,7 @@ interface CalendarResponse {
 }
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const WEEKDAYS_SHORT = ["M", "T", "W", "T", "F", "S", "S"];
 const DAY_MS = 86_400_000;
 
 /** A Date for a `YYYY-MM-DD` key, at UTC midnight so it never slips a day. */
@@ -87,10 +89,15 @@ function byCompetition(matches: CalendarMatch[]): { competition: string; matches
     list.push(match);
     groups.set(competition, list);
   }
-  return [...groups.entries()].map(([competition, list]) => ({
-    competition,
-    matches: list.slice().sort((a, b) => (a.kickoff ?? "").localeCompare(b.kickoff ?? "")),
-  }));
+  return [...groups.entries()]
+    .map(([competition, list]) => ({
+      competition,
+      matches: list.slice().sort((a, b) => (a.kickoff ?? "").localeCompare(b.kickoff ?? "")),
+    }))
+    // Biggest competition first: a reader looking for "the Premier League games"
+    // should not have to find them between two three-fixture leagues, and the
+    // count that sorts them is the same one printed in the heading.
+    .sort((a, b) => b.matches.length - a.matches.length || a.competition.localeCompare(b.competition));
 }
 
 /** "Today", "Tomorrow", "Sat 19 Sep" — the words a reader plans with. */
@@ -98,21 +105,36 @@ function dayWords(offsetFromToday: number, date: Date): string {
   if (offsetFromToday === 0) return "Today";
   if (offsetFromToday === 1) return "Tomorrow";
   if (offsetFromToday === -1) return "Yesterday";
-  return date.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+  return date.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+}
+
+/** What the status column shows for a fixture: a minute, or a kick-off time. */
+function timingOf(match: CalendarMatch): { text: string; live: boolean } {
+  const live = match.status === "LIVE" || match.status === "HT";
+  if (live) return { text: match.status === "HT" ? "HT" : `${match.minute ?? 0}'`, live: true };
+  if (match.status === "FT") return { text: "FT", live: false };
+  return { text: kickoffTime(match.kickoff), live: false };
 }
 
 /**
  * The fixture calendar.
  *
- * A phone gets a week strip and one day's fixtures, grouped by competition:
- * the old layout printed the whole month as one vertical stack of day cards, so
- * a reader scrolled through thirty days of flat rows to answer "what is on
- * today". A week is the unit people actually plan in, and a competition
- * heading is what turns a list of rows into something scannable.
+ * The old layout printed the whole month as one flat vertical stack of day
+ * cards on every screen, so answering "what is on today" meant scrolling
+ * through thirty days of undifferentiated rows — and the rows carried no crest,
+ * which is the one piece of information a reader recognises before they read a
+ * single club name.
  *
- * Desktop keeps the month grid — there is room for it there, and a monthly view
- * is genuinely useful when you can see it at once. Selecting a day opens that
- * day's fixtures beside/below the grid.
+ * Now the shape follows the screen. A phone gets a week strip and one day of
+ * fixtures grouped by competition: a week is the unit people plan in, and a
+ * competition heading is what turns a list of rows into something scannable.
+ * A desktop gets the month grid it has room for *and* the selected day beside
+ * it rather than beneath it, so the two halves of the question — what is on
+ * that day, and what is on this day — are answerable at the same time instead
+ * of one after a scroll.
+ *
+ * Every fixture renders its crests, because a calendar of names is a wall of
+ * text while a calendar of badges is recognisable at a glance.
  */
 export default function MatchCalendar() {
   const now = new Date();
@@ -187,6 +209,12 @@ export default function MatchCalendar() {
     return out;
   }, [range, byDate, cursor.month]);
 
+  /** Peak fixture count in the visible grid — the busiest day sets the colour scale. */
+  const busiest = useMemo(
+    () => Math.max(1, ...cells.map((c) => c.day?.matches.length ?? 0)),
+    [cells]
+  );
+
   /** The seven days of the strip the reader is looking at. */
   const week = useMemo(
     () =>
@@ -199,9 +227,30 @@ export default function MatchCalendar() {
 
   const dayMatches = useMemo(() => byDate.get(dayKey)?.matches ?? [], [byDate, dayKey]);
   const dayGroups = useMemo(() => byCompetition(dayMatches), [dayMatches]);
-  const dayOffset = Math.round(
-    (dateOf(dayKey).getTime() - dateOf(todayKey).getTime()) / DAY_MS
-  );
+  const dayOffset = Math.round((dateOf(dayKey).getTime() - dateOf(todayKey).getTime()) / DAY_MS);
+  const weekRail = useRef<HTMLDivElement | null>(null);
+
+  /**
+   * Keep the selected day in the middle of the rail.
+   *
+   * The rail scrolls, so without this the current day can sit half off-screen
+   * after a week step or on a narrow phone — the one cell the reader actually
+   * wants is the one they would have to go looking for.
+   *
+   * `scrollLeft` is computed rather than using `scrollIntoView`, because
+   * `scrollIntoView` is free to scroll *every* scrollable ancestor, including
+   * the page: arriving on this board would yank the viewport down to the strip
+   * on load.
+   */
+  useEffect(() => {
+    const rail = weekRail.current;
+    if (!rail) return;
+    const cell = rail.querySelector<HTMLElement>('[data-active="true"]');
+    if (!cell) return;
+    const railRect = rail.getBoundingClientRect();
+    const cellRect = cell.getBoundingClientRect();
+    rail.scrollLeft += cellRect.left - railRect.left - (railRect.width - cellRect.width) / 2;
+  }, [dayKey, weekStart]);
 
   function shiftMonth(delta: number) {
     setCursor((current) => {
@@ -233,69 +282,129 @@ export default function MatchCalendar() {
     year: "numeric",
   });
 
-  const analysedToday = byDate.get(dayKey)?.analysed ?? 0;
+  const todayDay = byDate.get(dayKey);
+  const analysedToday = todayDay?.analysed ?? 0;
+
+  const dayPanel = (
+    <DaySection
+      heading={dayWords(dayOffset, dateOf(dayKey))}
+      subheading={`${dateOf(dayKey).toLocaleDateString([], { day: "numeric", month: "long" })}${analysedToday > 0 ? ` · ${analysedToday} with a pick` : ""}`}
+      groups={dayGroups}
+      loading={loading}
+      selected={selected}
+      onSelect={setSelected}
+    />
+  );
 
   return (
     <div className="mx-auto w-full max-w-[1600px] px-3 py-4 sm:px-6 xl:px-8">
-      {/* ── Header: month, jump-shortcuts, refresh ─────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-800/70 px-2.5 py-1 text-[11px] font-semibold text-surface-300">
-          <CalendarDays className="h-3 w-3 text-brand-400" />
-          Fixtures
-        </span>
-        <div className="flex items-center gap-1 rounded-xl border border-surface-800 bg-surface-900/70 p-1">
+      {/* ── Header: month, jump-shortcuts, refresh ───────────────────────────
+          Pinned directly beneath the app navbar (h-16), the same way the score
+          board's toolbar is. The month a reader is looking at, and the way to
+          change it, are the two controls they come back to constantly; leaving
+          them at the top of a page that scrolls through a whole month puts them
+          behind a scroll every single time. */}
+      <div className="sports-toolbar sticky -mx-3 border-b border-surface-900/60 bg-surface-950/95 px-3 pb-2 pt-2 backdrop-blur sm:-mx-6 sm:px-6">
+        {/*
+          Wraps, and every control can give up a little width.
+
+          Month stepper + Today + Refresh is ~384px of content. On a 320px phone
+          that is 49px of overflow from a nowrap row whose buttons could not
+          shrink, so the whole document scrolled sideways — the same failure the
+          tips toolbar had. Wrapping puts Refresh on its own line there, and the
+          stepper compresses instead of pushing the row past the viewport.
+        */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+          <span className="hidden shrink-0 items-center gap-1.5 rounded-full bg-surface-800/70 px-2.5 py-1 text-[11px] font-semibold text-surface-300 sm:inline-flex">
+            <CalendarDays className="h-3 w-3 text-brand-400" />
+            Fixtures
+          </span>
+          <div className="flex items-center gap-1 rounded-xl border border-surface-800 bg-surface-900/70 p-1">
+            <button
+              onClick={() => shiftMonth(-1)}
+              className="rounded-lg p-1.5 text-surface-400 transition hover:text-surface-50"
+              aria-label="Previous month"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <span className="min-w-[6.75rem] px-1 text-center text-xs font-semibold text-surface-200 sm:min-w-[8.5rem]">
+              {monthLabel}
+            </span>
+            <button
+              onClick={() => shiftMonth(1)}
+              className="rounded-lg p-1.5 text-surface-400 transition hover:text-surface-50"
+              aria-label="Next month"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
           <button
-            onClick={() => shiftMonth(-1)}
-            className="rounded-lg p-1.5 text-surface-400 transition hover:text-surface-50"
-            aria-label="Previous month"
+            onClick={() => pickDay(todayKey)}
+            className={cn(
+              "rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition",
+              dayKey === todayKey
+                ? "border-brand-500/50 bg-brand-500/15 text-brand-200"
+                : "border-surface-800 text-surface-400 hover:text-surface-100"
+            )}
           >
-            <ChevronLeft className="h-4 w-4" />
+            Today
           </button>
-          <span className="min-w-[8.5rem] px-1 text-center text-xs font-semibold text-surface-200">{monthLabel}</span>
           <button
-            onClick={() => shiftMonth(1)}
-            className="rounded-lg p-1.5 text-surface-400 transition hover:text-surface-50"
-            aria-label="Next month"
+            onClick={() => void load({ fresh: true })}
+            className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-surface-800 px-2.5 py-1.5 text-[11px] font-medium text-surface-400 transition hover:text-surface-100"
           >
-            <ChevronRight className="h-4 w-4" />
+            <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} />
+            <span className="hidden sm:inline">Refresh</span>
+            <span className="sr-only sm:hidden">Refresh fixtures</span>
           </button>
         </div>
-        <button
-          onClick={() => pickDay(todayKey)}
-          className="rounded-lg border border-surface-800 px-2.5 py-1.5 text-[11px] font-medium text-surface-400 transition hover:text-surface-100"
-        >
-          Today
-        </button>
-        <button
-          onClick={() => void load({ fresh: true })}
-          className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-surface-800 px-2.5 py-1.5 text-[11px] font-medium text-surface-400 transition hover:text-surface-100"
-        >
-          <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} /> Refresh
-        </button>
-      </div>
 
-      {data ? (
-        <p className="mt-2 text-[11px] text-surface-500">
-          {data.total} fixtures this month ·{" "}
-          <span className="text-emerald-400">{data.analysed} with a prediction</span>
-        </p>
-      ) : null}
+        {data ? (
+          <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-surface-500">
+            <span>{data.total} fixtures this month</span>
+            <span className="text-emerald-400">{data.analysed} with a prediction</span>
+            {todayDay && todayDay.matches.length > 0 ? (
+              <span>
+                {dayWords(dayOffset, dateOf(dayKey))}: {todayDay.matches.length}
+                {todayDay.live > 0 ? ` · ${todayDay.live} live now` : ""}
+              </span>
+            ) : null}
+          </p>
+        ) : null}
+      </div>
 
       {error ? (
         <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</div>
       ) : null}
 
-      {/* ── Mobile: week strip + the selected day ─────────────────────────── */}
+      {/* ── Mobile: week rail + the selected day ──────────────────────────
+
+          The strip is a rail, not seven equal columns.
+
+          Seven `flex-1` cells split the space that is left after the two week
+          buttons: on a 320px phone that is about 34px each, and with the desk's
+          1.25x type scale a 12.5px weekday and a 17.5px date do not fit in 34px
+          — the label collided with its neighbours and the whole strip read as a
+          grey smudge. Each day now claims a fixed, comfortable width and the
+          rail scrolls when they do not all fit, which is also what makes the
+          day you have selected reachable without hunting for it. */}
       <div className="mt-3 md:hidden">
-        <div className="flex items-center gap-1">
+        <div className="flex items-stretch gap-1.5">
           <button
             onClick={() => shiftWeek(-1)}
-            className="rounded-lg border border-surface-800 p-1.5 text-surface-400 transition hover:text-surface-50"
+            className="grid shrink-0 place-items-center rounded-xl border border-surface-800 px-1.5 text-surface-400 transition hover:border-surface-700 hover:text-surface-50"
             aria-label="Previous week"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
-          <div className="flex flex-1 gap-1">
+
+          {/* `snap-x` + `snap-start`, so a flick lands a day under the thumb
+              rather than between two of them. `-my-1 py-1` gives the active
+              cell's ring and press-scale room inside the clipping box. */}
+          <div
+            ref={weekRail}
+            className="scrollbar-hide -my-1 flex min-w-0 flex-1 snap-x snap-mandatory gap-1.5 overflow-x-auto px-0.5 py-1"
+          >
             {week.map(({ key, day }) => {
               const date = dateOf(key);
               const active = key === dayKey;
@@ -303,16 +412,20 @@ export default function MatchCalendar() {
               return (
                 <button
                   key={key}
+                  data-active={active}
                   onClick={() => pickDay(key)}
                   aria-current={active ? "date" : undefined}
+                  aria-label={date.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}
                   className={cn(
-                    "flex min-w-0 flex-1 flex-col items-center rounded-xl border px-0.5 py-1.5 transition",
+                    "flex shrink-0 basis-[3rem] snap-start flex-col items-center justify-center rounded-xl border px-1 py-2 transition active:scale-[0.97]",
                     active
                       ? "border-brand-500 bg-brand-500/15 text-brand-100"
-                      : "border-surface-800 text-surface-400 active:scale-[0.97]"
+                      : "border-surface-800 text-surface-400 hover:border-surface-700"
                   )}
                 >
-                  <span className="text-[9px] font-semibold uppercase tracking-wide">{WEEKDAYS[(date.getUTCDay() + 6) % 7]}</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-wide">
+                    {WEEKDAYS_SHORT[(date.getUTCDay() + 6) % 7]}
+                  </span>
                   <span className={cn("text-sm font-bold tabular-nums", isToday && !active && "text-brand-300")}>
                     {date.getUTCDate()}
                   </span>
@@ -320,7 +433,7 @@ export default function MatchCalendar() {
                     {day && day.live > 0 ? (
                       <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
                     ) : day && day.matches.length > 0 ? (
-                      <span className="text-[9px] tabular-nums text-surface-500">{day.matches.length}</span>
+                      <span className="text-[10px] tabular-nums text-surface-500">{day.matches.length}</span>
                     ) : (
                       <span className="h-1 w-1 rounded-full bg-surface-700" />
                     )}
@@ -329,118 +442,138 @@ export default function MatchCalendar() {
               );
             })}
           </div>
+
           <button
             onClick={() => shiftWeek(1)}
-            className="rounded-lg border border-surface-800 p-1.5 text-surface-400 transition hover:text-surface-50"
+            className="grid shrink-0 place-items-center rounded-xl border border-surface-800 px-1.5 text-surface-400 transition hover:border-surface-700 hover:text-surface-50"
             aria-label="Next week"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
 
-        <DaySection
-          heading={dayWords(dayOffset, dateOf(dayKey))}
-          subheading={`${dateOf(dayKey).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}${analysedToday > 0 ? ` · ${analysedToday} with a pick` : ""}`}
-          groups={dayGroups}
-          loading={loading}
-          selected={selected}
-          onSelect={setSelected}
-        />
+        {dayPanel}
       </div>
 
-      {/* ── Desktop: the month grid, then the selected day beneath it ─────── */}
+      {/* ── Desktop: the month grid, with the day beside it ──────────────── */}
       <div className="hidden md:block">
         {loading ? (
           <div className="mt-4 flex items-center justify-center gap-2 rounded-2xl border border-surface-800/60 py-16 text-sm text-surface-500">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading the calendar…
           </div>
         ) : (
-          <>
-            <div className="mt-3 grid grid-cols-7 gap-1">
-              {WEEKDAYS.map((day) => (
-                <span key={day} className="px-1 text-center text-[10px] font-semibold uppercase tracking-wide text-surface-600">
-                  {day}
-                </span>
-              ))}
-            </div>
-
-            <div className="mt-1 grid grid-cols-7 gap-1">
-              {cells.map((cell) => {
-                const day = cell.day;
-                const isToday = cell.key === todayKey;
-                const isSelected = cell.key === dayKey;
-                return (
-                  <button
-                    key={cell.key}
-                    onClick={() => pickDay(cell.key)}
-                    className={cn(
-                      "min-h-[7.5rem] rounded-xl border p-2 text-left transition",
-                      cell.inMonth ? "border-surface-800/70 bg-surface-900/40" : "border-surface-800/40 bg-surface-950/40",
-                      isSelected && "border-brand-500/60 bg-brand-500/[0.08]",
-                      isToday && !isSelected && "ring-1 ring-brand-500/50",
-                      "hover:border-brand-500/40"
-                    )}
+          <div className="mt-3 grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+            <div className="min-w-0">
+              <div className="grid grid-cols-7 gap-1">
+                {WEEKDAYS.map((day) => (
+                  <span
+                    key={day}
+                    className="px-1 text-center text-[11px] font-semibold uppercase tracking-wide text-surface-500"
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <span
-                        className={cn(
-                          "text-[11px] font-semibold tabular-nums",
-                          isToday ? "text-brand-300" : cell.inMonth ? "text-surface-300" : "text-surface-600"
-                        )}
-                      >
-                        {dateOf(cell.key).getUTCDate()}
-                      </span>
-                      {day && day.matches.length > 0 ? (
-                        <span className="flex items-center gap-1.5 text-[10px] text-surface-600">
-                          {day.live > 0 ? (
-                            <span className="inline-flex items-center gap-1 text-red-400">
-                              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
-                              {day.live}
-                            </span>
-                          ) : null}
-                          <span className="tabular-nums">{day.matches.length}</span>
-                          {day.analysed > 0 ? <Brain className="h-3 w-3 text-emerald-400/80" /> : null}
-                        </span>
-                      ) : null}
-                    </div>
+                    {day}
+                  </span>
+                ))}
+              </div>
 
-                    {day && day.matches.length > 0 ? (
-                      <ul className="mt-1.5 space-y-1">
-                        {day.matches
-                          .slice()
-                          .sort((a, b) => (a.kickoff ?? "").localeCompare(b.kickoff ?? ""))
-                          .slice(0, 3)
-                          .map((match) => (
-                            <li key={`${match.provider}:${match.externalId}`} className="truncate text-[10px] text-surface-400">
-                              <span className="mr-1 tabular-nums text-surface-600">
-                                {match.status === "LIVE" || match.status === "HT"
-                                  ? match.status === "HT"
-                                    ? "HT"
-                                    : `${match.minute ?? 0}'`
-                                  : kickoffTime(match.kickoff)}
+              <div className="mt-1 grid grid-cols-7 gap-1">
+                {cells.map((cell) => {
+                  const day = cell.day;
+                  const isToday = cell.key === todayKey;
+                  const isSelected = cell.key === dayKey;
+                  const count = day?.matches.length ?? 0;
+                  return (
+                    <button
+                      key={cell.key}
+                      onClick={() => pickDay(cell.key)}
+                      aria-label={`${dateOf(cell.key).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })} — ${count} fixture${count === 1 ? "" : "s"}`}
+                      className={cn(
+                        "group relative flex min-h-[8.5rem] flex-col rounded-xl border p-1.5 text-left transition hover:border-brand-500/40 hover:bg-surface-900/60",
+                        cell.inMonth ? "border-surface-800/70 bg-surface-900/40" : "border-surface-800/40 bg-surface-950/40",
+                        isSelected && "border-brand-500/60 bg-brand-500/[0.08]",
+                        isToday && !isSelected && "ring-1 ring-brand-500/50"
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <span
+                          className={cn(
+                            "text-[11px] font-bold tabular-nums",
+                            isToday
+                              ? "text-brand-300"
+                              : cell.inMonth
+                                ? "text-surface-200"
+                                : "text-surface-600"
+                          )}
+                        >
+                          {dateOf(cell.key).getUTCDate()}
+                        </span>
+                        {count > 0 ? (
+                          <span className="flex items-center gap-1">
+                            {day && day.live > 0 ? (
+                              <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-red-400">
+                                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
+                                {day.live}
                               </span>
-                              {match.homeTeam} v {match.awayTeam}
-                            </li>
-                          ))}
-                        {day.matches.length > 3 ? (
-                          <li className="text-[9px] text-surface-600">+{day.matches.length - 3} more</li>
+                            ) : null}
+                            {/* A bar rather than another number: the month's shape
+                                (which weekends are busy) reads without counting. */}
+                            <span
+                              aria-hidden
+                              className="h-1.5 rounded-full bg-brand-500/70"
+                              style={{ width: `${Math.max(4, Math.round((count / busiest) * 22))}px` }}
+                            />
+                            <span className="text-[10px] font-semibold tabular-nums text-surface-400">{count}</span>
+                            {day && day.analysed > 0 ? <Brain className="h-3 w-3 text-emerald-400/90" /> : null}
+                          </span>
                         ) : null}
-                      </ul>
-                    ) : null}
-                  </button>
-                );
-              })}
+                      </div>
+
+                      {day && count > 0 ? (
+                        <ul className="mt-1.5 space-y-1">
+                          {day.matches
+                            .slice()
+                            .sort((a, b) => (a.kickoff ?? "").localeCompare(b.kickoff ?? ""))
+                            .slice(0, 2)
+                            .map((match) => {
+                              const timing = timingOf(match);
+                              return (
+                                <li
+                                  key={`${match.provider}:${match.externalId}`}
+                                  className="flex items-center gap-1 text-[10px] text-surface-400"
+                                >
+                                  <span
+                                    className={cn(
+                                      "w-[2.1rem] shrink-0 tabular-nums",
+                                      timing.live ? "font-bold text-red-400" : "text-surface-500"
+                                    )}
+                                  >
+                                    {timing.text}
+                                  </span>
+                                  <TeamCrest name={match.homeTeam} logo={match.homeLogo} size="sm" />
+                                  <span className="truncate">{match.homeTeam}</span>
+                                </li>
+                              );
+                            })}
+                          {count > 2 ? (
+                            <li className="pl-[2.1rem] text-[10px] font-medium text-surface-500">
+                              +{count - 2} more
+                            </li>
+                          ) : null}
+                        </ul>
+                      ) : (
+                        <span className="mt-auto text-[10px] text-surface-700">No fixtures</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
-            <DaySection
-              heading={dayWords(dayOffset, dateOf(dayKey))}
-              subheading={`${dateOf(dayKey).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}${analysedToday > 0 ? ` · ${analysedToday} with a pick` : ""}`}
-              groups={dayGroups}
-              loading={false}
-              selected={selected}
-              onSelect={setSelected}
-            />
-          </>
+            {/* The day the reader selected, beside the grid. Sticky with its own
+                scroll so scanning a busy Saturday never loses the calendar. */}
+            <div className="min-w-0 xl:sticky xl:top-32 xl:max-h-[calc(100vh-9rem)] xl:self-start xl:overflow-y-auto xl:pr-1">
+              {dayPanel}
+            </div>
+          </div>
         )}
       </div>
 
@@ -468,9 +601,11 @@ export default function MatchCalendar() {
 /**
  * One day of fixtures, grouped by competition.
  *
- * The competition heading is what makes the list readable: without it these are
- * just rows, and a reader cannot tell a league match from a friendly or find
- * the one game they care about.
+ * The competition heading is what makes the list readable, and the crest is
+ * what makes a row identifiable: without the heading these are just rows, and
+ * without the badge a reader has to read two club names to recognise one
+ * fixture. Kick-off sits in its own column so the eye can run straight down the
+ * times, which is the question a calendar is actually being asked.
  */
 function DaySection({
   heading,
@@ -490,10 +625,10 @@ function DaySection({
   const total = groups.reduce((sum, g) => sum + g.matches.length, 0);
 
   return (
-    <section className="mt-4">
+    <section className="mt-3 md:mt-0">
       <div className="flex items-end justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-base font-bold text-surface-50">{heading}</h2>
+          <h2 className="text-lg font-bold text-surface-50">{heading}</h2>
           <p className="text-[11px] text-surface-500">{subheading}</p>
         </div>
         {total > 0 ? (
@@ -516,52 +651,70 @@ function DaySection({
       ) : (
         <div className="mt-3 space-y-4">
           {groups.map((group, index) => (
-            <div key={group.competition} className="motion-safe:animate-rise" style={{ animationDelay: `${index * 45}ms` }}>
-              <div className="mb-1.5 flex items-center gap-2 px-1">
-                <h3 className="truncate text-[11px] font-bold uppercase tracking-wider text-surface-400">
+            <div
+              key={group.competition}
+              className="overflow-hidden rounded-2xl border border-surface-800/70 bg-surface-900/40 motion-safe:animate-rise"
+              style={{ animationDelay: `${Math.min(index, 6) * 45}ms` }}
+            >
+              <div className="flex items-center gap-2 border-b border-surface-800/60 bg-surface-900/60 px-2.5 py-1.5">
+                <h3 className="truncate text-[11px] font-bold uppercase tracking-wider text-surface-300">
                   {group.competition}
                 </h3>
-                <span className="shrink-0 text-[10px] text-surface-600">{group.matches.length}</span>
+                <span className="shrink-0 text-[10px] font-semibold text-surface-500">
+                  {group.matches.length}
+                </span>
                 <span className="h-px flex-1 bg-surface-800/70" />
               </div>
-              <ul className="overflow-hidden rounded-2xl border border-surface-800/70 bg-surface-900/40">
+
+              <ul>
                 {group.matches.map((match) => {
+                  const timing = timingOf(match);
                   const active =
                     selected?.externalId === match.externalId && selected?.provider === match.provider;
-                  const live = match.status === "LIVE" || match.status === "HT";
                   return (
                     <li key={`${match.provider}:${match.externalId}`} className="border-b border-surface-800/50 last:border-b-0">
                       <button
                         onClick={() => onSelect(match)}
                         className={cn(
-                          "flex w-full items-center gap-3 px-3 py-2.5 text-left transition active:bg-surface-800/60",
+                          "flex w-full items-center gap-2.5 px-2.5 py-2 text-left transition active:bg-surface-800/60",
                           active ? "bg-brand-500/[0.08]" : "hover:bg-surface-800/40"
                         )}
                       >
-                        <span className="w-11 shrink-0 text-center">
+                        <span className="w-12 shrink-0 text-center">
                           <span
                             className={cn(
                               "inline-block rounded-md px-1.5 py-0.5 text-[11px] font-bold tabular-nums",
-                              live ? "bg-red-500/15 text-red-400" : "text-surface-400"
+                              timing.live ? "bg-red-500/15 text-red-400" : "text-surface-400"
                             )}
                           >
-                            {live ? (match.status === "HT" ? "HT" : `${match.minute ?? 0}'`) : kickoffTime(match.kickoff)}
+                            {timing.text}
                           </span>
                         </span>
 
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium text-surface-100">
-                            {match.homeTeam} <span className="text-surface-500">v</span> {match.awayTeam}
+                        <span className="min-w-0 flex-1 space-y-1">
+                          <span className="flex items-center gap-2">
+                            <TeamCrest name={match.homeTeam} logo={match.homeLogo} size="lg" />
+                            <span className="truncate text-sm font-medium text-surface-100">{match.homeTeam}</span>
                           </span>
-                          {match.prediction ? (
-                            <span className="mt-0.5 inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-300">
-                              <TrendingUp className="h-3 w-3" />
-                              {match.prediction.selection} · {Math.round(match.prediction.confidence * 100)}%
-                            </span>
-                          ) : (
-                            <span className="mt-0.5 block text-[10px] text-surface-600">No pick yet</span>
-                          )}
+                          <span className="flex items-center gap-2">
+                            <TeamCrest name={match.awayTeam} logo={match.awayLogo} size="lg" />
+                            <span className="truncate text-sm text-surface-300">{match.awayTeam}</span>
+                          </span>
                         </span>
+
+                        {match.prediction ? (
+                          <span className="shrink-0 text-right">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-300">
+                              <TrendingUp className="h-3 w-3" />
+                              {Math.round(match.prediction.confidence * 100)}%
+                            </span>
+                            <span className="mt-0.5 block max-w-[6.5rem] truncate text-[10px] text-surface-400">
+                              {match.prediction.selection}
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="shrink-0 text-[10px] text-surface-600">No pick</span>
+                        )}
 
                         <ChevronRight className="h-4 w-4 shrink-0 text-surface-600" />
                       </button>

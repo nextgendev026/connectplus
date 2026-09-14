@@ -58,23 +58,23 @@ function StatCard({
   icon: typeof Users;
 }) {
   return (
-    <div className="rounded-2xl border border-surface-200/70 bg-white p-4 dark:border-surface-800 dark:bg-surface-900">
+    <div className="rounded-2xl border p-4 border-surface-800 bg-surface-900">
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium uppercase tracking-wider text-surface-500">
           {label}
         </span>
         <Icon className="h-4 w-4 text-brand-500" />
       </div>
-      <p className="mt-2 text-2xl font-bold text-surface-900 dark:text-surface-50">{value}</p>
+      <p className="mt-2 text-2xl font-bold text-surface-50">{value}</p>
       {hint ? <p className="mt-0.5 text-[11px] text-surface-500">{hint}</p> : null}
     </div>
   );
 }
 
 const TIER_COLORS: Record<string, string> = {
-  free: "bg-surface-200/70 text-surface-600 dark:bg-surface-800 dark:text-surface-300",
-  pro: "bg-brand-500/15 text-brand-600 dark:bg-brand-500/20 dark:text-brand-400",
-  premium: "bg-amber-500/15 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400",
+  free: "bg-surface-800 text-surface-300",
+  pro: "bg-brand-500/20 text-brand-400",
+  premium: "bg-amber-500/20 text-amber-400",
 };
 
 const TIER_ICONS: Record<string, typeof Star> = {
@@ -133,7 +133,7 @@ function PlanCard({
           ? "border-amber-500/30 bg-gradient-to-br from-amber-500/5 to-transparent"
           : plan.tier === "pro"
             ? "border-brand-500/30 bg-gradient-to-br from-brand-500/5 to-transparent"
-            : "border-surface-200/70 bg-white dark:border-surface-800 dark:bg-surface-900"
+            : "border-surface-800 bg-surface-900"
       )}
     >
       <div className="flex items-center gap-3">
@@ -141,14 +141,14 @@ function PlanCard({
           <TierIcon className="h-5 w-5" />
         </div>
         <div>
-          <h3 className="font-bold text-surface-900 dark:text-surface-50">{plan.displayName}</h3>
+          <h3 className="font-bold text-surface-50">{plan.displayName}</h3>
           <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase", TIER_COLORS[plan.tier])}>
             {plan.tier}
           </span>
         </div>
       </div>
       <div className="mt-3">
-        <span className="text-3xl font-bold text-surface-900 dark:text-surface-50">
+        <span className="text-3xl font-bold text-surface-50">
           ${plan.priceMonthly}
         </span>
         <span className="text-sm text-surface-500">/mo</span>
@@ -160,7 +160,7 @@ function PlanCard({
       </div>
       <ul className="mt-3 space-y-1.5">
         {plan.features.map((f, i) => (
-          <li key={i} className="flex items-start gap-2 text-xs text-surface-600 dark:text-surface-300">
+          <li key={i} className="flex items-start gap-2 text-xs text-surface-300">
             <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />
             {f}
           </li>
@@ -168,7 +168,7 @@ function PlanCard({
       </ul>
 
       {paid && (
-        <div className="mt-4 rounded-lg border border-surface-200/80 bg-surface-100/60 p-3 dark:border-surface-700 dark:bg-surface-800/40">
+        <div className="mt-4 rounded-lg border p-3 border-surface-700 bg-surface-800/40">
           <div className="flex items-center gap-1.5 mb-2">
             <Link2 className="h-3.5 w-3.5 text-brand-500" />
             <span className="text-[11px] font-semibold uppercase tracking-wider text-surface-500">
@@ -187,7 +187,7 @@ function PlanCard({
                 value={monthly}
                 onChange={(e) => setMonthly(e.target.value)}
                 placeholder="P-1AB..."
-                className="mt-0.5 w-full rounded-md border border-surface-200 bg-white px-2 py-1.5 text-[11px] text-surface-800 placeholder:text-surface-400 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-surface-700 dark:bg-surface-900 dark:text-surface-100"
+                className="mt-0.5 w-full rounded-md border px-2 py-1.5 text-[11px] placeholder:text-surface-400 focus:outline-none focus:ring-1 focus:ring-brand-500 border-surface-700 bg-surface-900 text-surface-100"
               />
             </label>
             <label className="block">
@@ -196,20 +196,20 @@ function PlanCard({
                 value={yearly}
                 onChange={(e) => setYearly(e.target.value)}
                 placeholder="P-2CD..."
-                className="mt-0.5 w-full rounded-md border border-surface-200 bg-white px-2 py-1.5 text-[11px] text-surface-800 placeholder:text-surface-400 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-surface-700 dark:bg-surface-900 dark:text-surface-100"
+                className="mt-0.5 w-full rounded-md border px-2 py-1.5 text-[11px] placeholder:text-surface-400 focus:outline-none focus:ring-1 focus:ring-brand-500 border-surface-700 bg-surface-900 text-surface-100"
               />
             </label>
             <button
               type="button"
               onClick={() => void savePaypalPlanIds()}
               disabled={saving}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-brand-500/40 bg-brand-500/10 px-3 py-1.5 text-[11px] font-semibold text-brand-600 transition-colors hover:bg-brand-500/20 disabled:opacity-60 dark:text-brand-400"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-brand-500/40 bg-brand-500/10 px-3 py-1.5 text-[11px] font-semibold transition-colors hover:bg-brand-500/20 disabled:opacity-60 text-brand-400"
             >
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
               Save plans
             </button>
             {msg && (
-              <p className={cn("text-[10px] leading-relaxed", msg.ok ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
+              <p className={cn("text-[10px] leading-relaxed", msg.ok ? "text-emerald-400" : "text-red-400")}>
                 {msg.text}
               </p>
             )}
@@ -260,7 +260,7 @@ export default function SubscriptionsPage() {
               <CreditCard className="h-6 w-6 text-brand-500" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-surface-900 dark:text-surface-50">Subscriptions</h1>
+              <h1 className="text-xl font-bold text-surface-50">Subscriptions</h1>
               <p className="text-sm text-surface-500">
                 Manage subscription plans for readers and writers. 3 tiers each: Free, Pro, Premium.
               </p>
@@ -269,7 +269,7 @@ export default function SubscriptionsPage() {
           <button
             onClick={() => void fetchPlans()}
             disabled={loading}
-            className="rounded-lg border border-surface-200 p-2 text-surface-500 transition hover:border-brand-500/50 dark:border-surface-700"
+            className="rounded-lg border p-2 text-surface-500 transition hover:border-brand-500/50 border-surface-700"
           >
             <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
           </button>
@@ -315,7 +315,7 @@ export default function SubscriptionsPage() {
                 "rounded-lg px-3 py-1.5 text-xs font-semibold capitalize transition-all",
                 audience === a
                   ? "bg-brand-500 text-white shadow-sm"
-                  : "bg-surface-200/70 text-surface-600 hover:bg-surface-300/70 dark:bg-surface-800 dark:text-surface-300"
+                  : "hover:bg-surface-800/70 bg-surface-800 text-surface-300"
               )}
             >
               {a === "all" ? "All Plans" : `${a}s`}

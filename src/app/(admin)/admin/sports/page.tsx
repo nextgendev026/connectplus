@@ -20,6 +20,7 @@ import {
   Target,
   Megaphone,
   BarChart3,
+  Gauge,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ModelRecordPanel from "@/components/admin/ModelRecordPanel";
@@ -74,6 +75,19 @@ interface Overview {
   }[];
   sources: { id: string; label: string; ok: boolean; matches: number; contributed: number; elapsedMs: number; error?: string }[];
   sportsDbKey: { using: string; fallback: boolean };
+  /** What the model could actually see on today's board. Null if the read failed. */
+  coverage: {
+    from: string;
+    to: string;
+    matches: number;
+    priced: number;
+    partial: number;
+    unpriced: number;
+    nativeDeepData: number;
+    unpricedCompetitions: { competition: string; matches: number }[];
+  } | null;
+  /** What the odds backfill and the deep-data resolver have done this process. */
+  engine: { oddsBackfilled: number; deepDataResolved: number };
   notifications: { sent24h: number; reminders: number; lastSentAt: string | null };
   placements: string[];
   referrals: Referral[];
@@ -83,11 +97,22 @@ interface Overview {
     confidence: number;
     status: string;
     valueEdge: number | null;
+    /** The market the pick prices, and which model wrote it. */
+    market: string;
+    model: string;
     createdAt: string;
     match: { homeTeam: string; awayTeam: string; competition: string; status: string };
   }[];
   activity: { series: Record<string, number>; days: { date: string; impressions: number; clicks: number; views: number }[] };
 }
+
+/** Markets as the tips board labels them, so the console reads the same. */
+const MARKET_LABELS: Record<string, string> = {
+  "1X2": "Who wins",
+  "over-under": "Total goals",
+  btts: "Both to score",
+  "correct-score": "Exact score",
+};
 
 const PLACEMENT_LABELS: Record<string, string> = {
   "sports-hero": "Sports — hero banner",
@@ -220,7 +245,7 @@ export default function AdminSportsPage() {
     <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="flex items-center gap-2 text-xl font-bold text-surface-900 sm:text-2xl dark:text-surface-50">
+          <h1 className="flex items-center gap-2 text-xl font-bold sm:text-2xl text-surface-50">
             <Trophy className="h-5 w-5 text-brand-500" />
             Sports & Betting Intel
           </h1>
@@ -232,7 +257,7 @@ export default function AdminSportsPage() {
           <button
             onClick={() => runAction("sync")}
             disabled={busy}
-            className="inline-flex items-center gap-2 rounded-xl border border-surface-200 px-3 py-2.5 text-sm font-medium text-surface-700 transition hover:border-brand-500/50 disabled:opacity-60 dark:border-surface-700 dark:text-surface-200"
+            className="inline-flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-medium transition hover:border-brand-500/50 disabled:opacity-60 border-surface-700 text-surface-200"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Brain className="h-4 w-4" />}
             Run analyser
@@ -251,12 +276,12 @@ export default function AdminSportsPage() {
       </header>
 
       {error ? (
-        <p className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">
+        <p className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400">
           {error}
         </p>
       ) : null}
 
-      <div className="mt-5 flex w-full max-w-md items-center rounded-xl border border-surface-200 p-1 dark:border-surface-700">
+      <div className="mt-5 flex w-full max-w-md items-center rounded-xl border p-1 border-surface-700">
         <AdminTab
           active={tab === "partners"}
           onClick={() => setTab("partners")}
@@ -294,10 +319,86 @@ export default function AdminSportsPage() {
             <Stat label="Clicks" value={fmt(data.stats.referralClicks)} sub={`CTR ${ctr}`} icon={<MousePointerClick className="h-4 w-4" />} />
           </div>
 
+          {/*
+            What the model could actually see.
+
+            `Matches` and `Predictions` both count up happily while every pick on
+            the board is made without a price to compare against, or while the
+            match centre has no commentary because the fixture could not be found
+            on the feed that carries it. Neither gap shows up in an aggregate, so
+            it is measured directly — and the competitions listed underneath are
+            the actionable half: those are the leagues no keyless source prices,
+            where a pick is a prior and not an opinion about the market.
+          */}
+          {data.coverage ? (
+            <section className="mt-5 rounded-2xl border p-4 border-surface-800 bg-surface-900/40">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-surface-100">
+                  <Gauge className="h-4 w-4 text-brand-500" /> Market &amp; deep-data coverage
+                </h2>
+                <span className="text-[11px] text-surface-500">
+                  Today&apos;s board — what the model could see
+                </span>
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <Stat
+                  label="Priced 1X2"
+                  value={fmt(data.coverage.priced)}
+                  sub={`of ${fmt(data.coverage.matches)} fixtures`}
+                />
+                <Stat label="Partly priced" value={fmt(data.coverage.partial)} />
+                <Stat
+                  label="No price at all"
+                  value={fmt(data.coverage.unpriced)}
+                  sub="picks here are priors"
+                />
+                <Stat
+                  label="Deep data native"
+                  value={fmt(data.coverage.nativeDeepData)}
+                  sub="others resolved by lookup"
+                />
+              </div>
+
+              <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-surface-500">
+                <div className="flex items-center gap-1.5">
+                  <dt>Prices backfilled this process</dt>
+                  <dd className="font-semibold text-surface-200">
+                    {fmt(data.engine.oddsBackfilled)}
+                  </dd>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <dt>Fixtures matched to a live feed this process</dt>
+                  <dd className="font-semibold text-surface-200">
+                    {fmt(data.engine.deepDataResolved)}
+                  </dd>
+                </div>
+              </dl>
+
+              {data.coverage.unpricedCompetitions.length > 0 ? (
+                <div className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/5 p-3">
+                  <p className="text-[11px] font-semibold text-amber-300">
+                    Competitions no free feed prices
+                  </p>
+                  <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                    {data.coverage.unpricedCompetitions.map((c) => (
+                      <li
+                        key={c.competition}
+                        className="rounded-full px-2 py-0.5 text-[10px] bg-surface-800 text-surface-300"
+                      >
+                        {c.competition} · {c.matches}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+
           {/* Provider / configuration */}
-          <section className="mt-5 rounded-2xl border border-surface-200/70 bg-surface-50 p-4 dark:border-surface-800 dark:bg-surface-900/40">
+          <section className="mt-5 rounded-2xl border p-4 border-surface-800 bg-surface-900/40">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold text-surface-800 dark:text-surface-100">Data sources</h2>
+              <h2 className="text-sm font-semibold text-surface-100">Data sources</h2>
               <span className="text-[11px] text-surface-500">
                 Merged on every request — one throttled feed never empties the board
               </span>
@@ -312,14 +413,14 @@ export default function AdminSportsPage() {
                       "rounded-xl border p-3 text-xs",
                       p.selected
                         ? "border-brand-500/50 bg-brand-500/5"
-                        : "border-surface-200 dark:border-surface-800"
+                        : "border-surface-800"
                     )}
                   >
                     <div className="flex flex-wrap items-center justify-between gap-1">
-                      <span className="font-semibold text-surface-800 dark:text-surface-100">{p.label}</span>
+                      <span className="font-semibold text-surface-100">{p.label}</span>
                       <span className="flex gap-1">
                         {p.keyless ? (
-                          <span className="rounded-full bg-surface-200/70 px-2 py-0.5 text-[10px] font-medium text-surface-600 dark:bg-surface-800 dark:text-surface-300">
+                          <span className="rounded-full px-2 py-0.5 text-[10px] font-medium bg-surface-800 text-surface-300">
                             NO KEY
                           </span>
                         ) : null}
@@ -332,11 +433,11 @@ export default function AdminSportsPage() {
                     {report ? (
                       <p className="mt-1.5 text-[11px] text-surface-500">
                         {report.ok ? (
-                          <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                          <span className="font-medium text-emerald-400">
                             {report.matches} fetched · {report.contributed} on the board
                           </span>
                         ) : (
-                          <span className="font-medium text-amber-600 dark:text-amber-400">
+                          <span className="font-medium text-amber-400">
                             unreachable{report.error ? ` — ${report.error.slice(0, 48)}` : ""}
                           </span>
                         )}
@@ -348,7 +449,7 @@ export default function AdminSportsPage() {
               })}
             </div>
             {data.sportsDbKey.fallback ? (
-              <p className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-600 dark:text-amber-400">
+              <p className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-400">
                 TheSportsDB rejected the configured key, so the public key is in use — coverage is limited until
                 a valid SPORTSDB_API_KEY is set.
               </p>
@@ -356,8 +457,8 @@ export default function AdminSportsPage() {
           </section>
 
           {/* Favourite alerts */}
-          <section className="mt-5 rounded-2xl border border-surface-200/70 bg-surface-50 p-4 dark:border-surface-800 dark:bg-surface-900/40">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-surface-800 dark:text-surface-100">
+          <section className="mt-5 rounded-2xl border p-4 border-surface-800 bg-surface-900/40">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-surface-100">
               <Sparkles className="h-4 w-4 text-brand-500" /> Favourite alerts
             </h2>
             <div className="mt-3 grid gap-3 sm:grid-cols-3">
@@ -376,12 +477,12 @@ export default function AdminSportsPage() {
 
           {/* Referral form */}
           {showForm ? (
-            <section className="mt-5 rounded-2xl border border-surface-200/70 bg-surface-50 p-4 dark:border-surface-800 dark:bg-surface-900/40">
-              <h2 className="text-sm font-semibold text-surface-800 dark:text-surface-100">
+            <section className="mt-5 rounded-2xl border p-4 border-surface-800 bg-surface-900/40">
+              <h2 className="text-sm font-semibold text-surface-100">
                 {editingId ? "Edit partner" : "New betting partner"}
               </h2>
               <p className="mt-1 text-xs text-surface-500">
-                Use <code className="rounded bg-surface-200 px-1 dark:bg-surface-800">{"{code}"}</code> in the destination
+                Use <code className="rounded px-1 bg-surface-800">{"{code}"}</code> in the destination
                 and the code is woven in server-side at click time — it never appears in page source.
               </p>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -432,7 +533,7 @@ export default function AdminSportsPage() {
                 </Field>
               </div>
               <div className="mt-4 flex justify-end gap-2">
-                <button onClick={resetForm} className="rounded-xl border border-surface-200 px-4 py-2.5 text-sm font-medium text-surface-600 dark:border-surface-700 dark:text-surface-300">
+                <button onClick={resetForm} className="rounded-xl border px-4 py-2.5 text-sm font-medium border-surface-700 text-surface-300">
                   Cancel
                 </button>
                 <button onClick={save} disabled={busy} className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-600 disabled:opacity-60">
@@ -444,8 +545,8 @@ export default function AdminSportsPage() {
           ) : null}
 
           {/* Activity chart */}
-          <section className="mt-5 rounded-2xl border border-surface-200/70 bg-surface-50 p-4 dark:border-surface-800 dark:bg-surface-900/40">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-surface-800 dark:text-surface-100">
+          <section className="mt-5 rounded-2xl border p-4 border-surface-800 bg-surface-900/40">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-surface-100">
               <Activity className="h-4 w-4 text-brand-500" /> Hub activity (14 days)
             </h2>
             <div className="mt-3 flex h-28 items-end gap-1">
@@ -462,7 +563,7 @@ export default function AdminSportsPage() {
             <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-surface-500">
               {Object.entries(data.activity.series).map(([type, count]) => (
                 <span key={type}>
-                  <span className="font-semibold text-surface-700 dark:text-surface-200">{count}</span> {type.replace(/_/g, " ")}
+                  <span className="font-semibold text-surface-200">{count}</span> {type.replace(/_/g, " ")}
                 </span>
               ))}
               {Object.keys(data.activity.series).length === 0 ? <span>No activity recorded yet.</span> : null}
@@ -471,24 +572,24 @@ export default function AdminSportsPage() {
 
           {/* Partners */}
           <section className="mt-5">
-            <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-surface-800 dark:text-surface-100">
+            <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-surface-100">
               <Megaphone className="h-4 w-4 text-brand-500" /> Referral partners
             </h2>
             {data.referrals.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-surface-300 px-4 py-10 text-center text-sm text-surface-500 dark:border-surface-700">
+              <div className="rounded-2xl border border-dashed px-4 py-10 text-center text-sm text-surface-500 border-surface-700">
                 No partners yet. Add one and it appears on the livescore page instantly.
               </div>
             ) : (
               <div className="space-y-3">
                 {data.referrals.map((r) => (
-                  <article key={r.id} className="flex flex-col gap-3 rounded-2xl border border-surface-200/70 bg-surface-50 p-3 sm:flex-row sm:items-center dark:border-surface-800 dark:bg-surface-900/40">
+                  <article key={r.id} className="flex flex-col gap-3 rounded-2xl border p-3 sm:flex-row sm:items-center border-surface-800 bg-surface-900/40">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="truncate text-sm font-semibold text-surface-900 dark:text-surface-50">{r.name}</h3>
-                        <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase", r.isActive ? "bg-emerald-500/15 text-emerald-600" : "bg-surface-300/40 text-surface-500")}>
+                        <h3 className="truncate text-sm font-semibold text-surface-50">{r.name}</h3>
+                        <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase", r.isActive ? "bg-emerald-500/15 text-emerald-600" : "bg-surface-800/40 text-surface-500")}>
                           {r.isActive ? "Live" : "Paused"}
                         </span>
-                        <span className="rounded-full bg-surface-200/60 px-2 py-0.5 text-[10px] font-medium text-surface-600 dark:bg-surface-800 dark:text-surface-300">
+                        <span className="rounded-full px-2 py-0.5 text-[10px] font-medium bg-surface-800 text-surface-300">
                           {PLACEMENT_LABELS[r.placement] ?? r.placement}
                         </span>
                         {r.referralCode ? (
@@ -499,7 +600,7 @@ export default function AdminSportsPage() {
                       <div className="mt-1.5 flex flex-wrap gap-3 text-xs text-surface-500">
                         <span className="inline-flex items-center gap-1"><Eye className="h-3.5 w-3.5" /> {fmt(r.impressions)}</span>
                         <span className="inline-flex items-center gap-1"><MousePointerClick className="h-3.5 w-3.5" /> {fmt(r.clicks)}</span>
-                        {r.impressions > 0 ? <span className="font-medium text-surface-600 dark:text-surface-300">{((r.clicks / r.impressions) * 100).toFixed(2)}% CTR</span> : null}
+                        {r.impressions > 0 ? <span className="font-medium text-surface-300">{((r.clicks / r.impressions) * 100).toFixed(2)}% CTR</span> : null}
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -518,7 +619,7 @@ export default function AdminSportsPage() {
                           if (confirm(`Delete partner “${r.name}”?`)) void runAction("delete-referral", { id: r.id });
                         }}
                         disabled={busy}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-2.5 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-500/10 dark:text-red-400"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-2.5 py-1.5 text-xs font-medium transition hover:bg-red-500/10 text-red-400"
                       >
                         <Trash2 className="h-3.5 w-3.5" /> Delete
                       </button>
@@ -531,8 +632,8 @@ export default function AdminSportsPage() {
 
           <div className="mt-5 grid gap-5 lg:grid-cols-2">
             {/* Trends */}
-            <section className="rounded-2xl border border-surface-200/70 bg-surface-50 p-4 dark:border-surface-800 dark:bg-surface-900/40">
-              <h2 className="flex items-center gap-2 text-sm font-semibold text-surface-800 dark:text-surface-100">
+            <section className="rounded-2xl border p-4 border-surface-800 bg-surface-900/40">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-surface-100">
                 <Sparkles className="h-4 w-4 text-brand-500" /> Learned competition trends
               </h2>
               <div className="mt-3 space-y-2">
@@ -541,7 +642,7 @@ export default function AdminSportsPage() {
                 ) : (
                   data.trends.map((t) => (
                     <div key={t.competition} className="flex items-center justify-between text-xs">
-                      <span className="truncate text-surface-700 dark:text-surface-200">{t.competition}</span>
+                      <span className="truncate text-surface-200">{t.competition}</span>
                       <span className="shrink-0 text-surface-500">
                         {t.matches} matches · {t.live} live · {t.avgGoals} goals/game
                       </span>
@@ -552,8 +653,8 @@ export default function AdminSportsPage() {
             </section>
 
             {/* Recent predictions */}
-            <section className="rounded-2xl border border-surface-200/70 bg-surface-50 p-4 dark:border-surface-800 dark:bg-surface-900/40">
-              <h2 className="flex items-center gap-2 text-sm font-semibold text-surface-800 dark:text-surface-100">
+            <section className="rounded-2xl border p-4 border-surface-800 bg-surface-900/40">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-surface-100">
                 <Target className="h-4 w-4 text-brand-500" /> Recent picks
               </h2>
               <div className="mt-3 space-y-2">
@@ -563,10 +664,32 @@ export default function AdminSportsPage() {
                   data.predictions.slice(0, 8).map((p) => (
                     <div key={p.id} className="flex items-center justify-between gap-2 text-xs">
                       <div className="min-w-0">
-                        <p className="truncate text-surface-700 dark:text-surface-200">
+                        <p className="truncate text-surface-200">
                           {p.match.homeTeam} vs {p.match.awayTeam}
                         </p>
-                        <p className="truncate text-surface-500">{p.selection}</p>
+                        <p className="flex items-center gap-1.5 truncate text-surface-500">
+                          <span className="rounded px-1.5 py-0.5 text-[10px] font-medium bg-surface-800 text-surface-300">
+                            {MARKET_LABELS[p.market] ?? p.market}
+                          </span>
+                          <span className="truncate">{p.selection}</span>
+                        </p>
+                        {/*
+                          Whether this pick had a price to argue against. A pick
+                          with no `valueEdge` was made with its back to the
+                          market — which is a different claim from "we checked
+                          the price and it was fair", and the difference belongs
+                          on the row rather than in an operator's head.
+                        */}
+                        <p className="mt-0.5 text-[10px] text-surface-500">
+                          {p.valueEdge == null ? (
+                            <span className="text-amber-400">no price to compare</span>
+                          ) : (
+                            <span>
+                              {p.valueEdge > 0 ? "+" : ""}
+                              {p.valueEdge.toFixed(1)} pts vs the market
+                            </span>
+                          )}
+                        </p>
                       </div>
                       <span
                         className={cn(
@@ -575,7 +698,7 @@ export default function AdminSportsPage() {
                             ? "bg-emerald-500/15 text-emerald-600"
                             : p.status === "LOST"
                               ? "bg-red-500/15 text-red-500"
-                              : "bg-surface-200/60 text-surface-600 dark:bg-surface-800 dark:text-surface-300"
+                              : "bg-surface-800 text-surface-300"
                         )}
                       >
                         {p.status === "PENDING" ? `${Math.round(p.confidence * 100)}%` : p.status}
@@ -599,9 +722,9 @@ export default function AdminSportsPage() {
 }
 
 const inputCls =
-  "w-full rounded-xl border border-surface-200 bg-white px-3 py-2.5 text-sm text-surface-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:bg-surface-900 dark:text-surface-50 dark:border-surface-700";
+  "w-full rounded-xl border px-3 py-2.5 text-sm outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 bg-surface-900 text-surface-50 border-surface-700";
 const btnCls =
-  "inline-flex items-center gap-1.5 rounded-lg border border-surface-200 px-2.5 py-1.5 text-xs font-medium text-surface-600 transition hover:border-brand-500/50 dark:border-surface-700 dark:text-surface-300";
+  "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition hover:border-brand-500/50 border-surface-700 text-surface-300";
 
 function AdminTab({
   active,
@@ -623,7 +746,7 @@ function AdminTab({
         "inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition",
         active
           ? "bg-brand-500 text-white shadow-sm"
-          : "text-surface-500 hover:text-surface-800 dark:hover:text-surface-100"
+          : "text-surface-500 hover:text-surface-100"
       )}
     >
       {icon}
@@ -635,7 +758,7 @@ function AdminTab({
 function Field({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
   return (
     <label className={cn("block", className)}>
-      <span className="mb-1 block text-xs font-medium text-surface-600 dark:text-surface-300">{label}</span>
+      <span className="mb-1 block text-xs font-medium text-surface-300">{label}</span>
       {children}
     </label>
   );
@@ -643,12 +766,12 @@ function Field({ label, children, className }: { label: string; children: React.
 
 function Stat({ label, value, sub, icon }: { label: string; value: string; sub?: string; icon?: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-surface-200/70 bg-surface-50 p-3 dark:border-surface-800 dark:bg-surface-900/40">
+    <div className="rounded-2xl border p-3 border-surface-800 bg-surface-900/40">
       <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-surface-500">
         {icon}
         {label}
       </div>
-      <p className="mt-1 text-lg font-bold text-surface-900 dark:text-surface-50">{value}</p>
+      <p className="mt-1 text-lg font-bold text-surface-50">{value}</p>
       {sub ? <p className="text-[11px] text-surface-500">{sub}</p> : null}
     </div>
   );

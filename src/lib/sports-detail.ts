@@ -27,7 +27,7 @@
 
 import { cacheGet, cacheSet } from "@/lib/redis";
 import { createLogger } from "@/lib/logger";
-import { espnLeagueSlug } from "@/lib/sports";
+import { espnLeagueSlug, resolveEspnEventId } from "@/lib/sports";
 
 const log = createLogger("sports-detail");
 
@@ -823,6 +823,9 @@ export async function getMatchDetail(input: {
   homeTeam: string;
   awayTeam: string;
   competition?: string | null;
+  competitionId?: string | null;
+  /** Used to find the fixture on ESPN when its own provider does not carry it. */
+  kickoff?: Date | string | null;
   status?: string | null;
   sport?: string;
   fresh?: boolean;
@@ -851,14 +854,43 @@ export async function getMatchDetail(input: {
     coverage: EMPTY_COVERAGE,
   };
 
-  const parsed = parseEspnId(input.externalId);
+  /*
+   * A fixture from another provider has no ESPN id, and the deep view is
+   * addressed by one — so it is found rather than looked up: the competition
+   * names the league, the league's scoreboard for that day names the events, and
+   * the fixture is matched to one of them by team names.
+   *
+   * Without this the timeline, the stats, the lineups, the momentum graph and
+   * the shot map were blank for every fixture that arrived from TheSportsDB, the
+   * OpenFootball archive or football-data.org — most of the board — and the
+   * analysis panel told the reader deep data was "only available for fixtures
+   * served by ESPN's public feed", which was never true.
+   */
+  let parsed = parseEspnId(input.externalId);
   if (!parsed) {
-    return { ...base, note: "Deep match data is only available for fixtures served by ESPN's public feed." };
+    const resolved = await resolveEspnEventId({
+      externalId: input.externalId,
+      homeTeam: input.homeTeam,
+      awayTeam: input.awayTeam,
+      competition: input.competition ?? null,
+      competitionId: input.competitionId ?? null,
+      kickoff: input.kickoff ?? null,
+      sport: input.sport,
+    }).catch(() => null);
+    parsed = resolved ? parseEspnId(resolved) : null;
+  }
+  if (!parsed) {
+    return {
+      ...base,
+      note: "This fixture is not on the free feed that carries live commentary and stats, so we show what we measured ourselves.",
+    };
   }
 
   const live = input.status === "LIVE" || input.status === "HT";
   const finished = input.status === "FT";
   const ttl = live ? TTL_LIVE : finished ? TTL_FINISHED : TTL_PRE;
+  // Keyed on the resolved ESPN event, so a fixture reached by name-matching
+  // shares its cache entry with the same fixture reached by id.
   const cacheKey = `sports:detail:${parsed.league}:${parsed.eventId}`;
 
   if (!input.fresh) {

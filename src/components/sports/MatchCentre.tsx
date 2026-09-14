@@ -5,6 +5,7 @@ import { Activity, CalendarDays, Loader2, RefreshCw, Search, Star, X } from "luc
 import { cn } from "@/lib/utils";
 import { liveEndpoint } from "@/lib/sports-endpoint";
 import MatchDetail from "./MatchDetail";
+import { TeamCrest } from "./TeamCrest";
 
 interface Prediction {
   id: string;
@@ -27,6 +28,8 @@ interface Fixture {
   status: string;
   minute: number | null;
   kickoff: string | null;
+  homeLogo?: string | null;
+  awayLogo?: string | null;
   predictions: Prediction[];
 }
 
@@ -175,10 +178,22 @@ export default function MatchCentre() {
 
   return (
     <div className="mx-auto grid w-full max-w-[1600px] gap-4 px-3 py-4 sm:px-6 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[330px_minmax(0,1fr)] xl:px-8">
-      {/* Fixture rail */}
-      {/* Rail sticks beside the analysis on desktop so the fixture you are
-          studying never scrolls out of reach. */}
-      <aside className="min-w-0 lg:sticky lg:top-4 lg:self-start">
+      {/*
+        Fixture rail.
+
+        Sticks beside the analysis on desktop so the fixture you are studying
+        never scrolls out of reach. On a phone it moves *below* the board: it was
+        first in the DOM, so a reader who had already pinned two matches scrolled
+        through a 70vh fixture list before reaching the analysis they came for.
+        The order only flips once something is pinned — with an empty board the
+        list is the useful thing to see first.
+      */}
+      <aside
+        className={cn(
+          "min-w-0 lg:order-1 lg:sticky lg:top-4 lg:self-start",
+          pinned.length > 0 ? "order-2" : "order-1"
+        )}
+      >
         <div className="rounded-2xl border border-surface-800/70 bg-surface-900/40">
           <div className="border-b border-surface-800/70 p-2.5">
             <div className="flex items-center gap-1">
@@ -213,7 +228,7 @@ export default function MatchCentre() {
             </label>
           </div>
 
-          <div className="max-h-[70vh] overflow-y-auto p-1.5">
+          <div className="max-h-[45vh] overflow-y-auto p-1.5 lg:max-h-[70vh]">
             {loading ? (
               <p className="flex items-center gap-2 px-2 py-6 text-[11px] text-surface-500">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading fixtures…
@@ -243,28 +258,56 @@ export default function MatchCentre() {
                           isPinned ? "bg-brand-500/10 ring-1 ring-brand-500/40" : "hover:bg-surface-800/50"
                         )}
                       >
-                        <div className="flex items-center gap-1.5">
-                          {isLive ? (
-                            <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-red-500" />
-                          ) : null}
-                          <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-surface-200">
-                            {fixture.homeTeam} <span className="text-surface-600">v</span> {fixture.awayTeam}
+                        {/* Two lines with crests, like the board itself: a rail
+                            of bare names is a wall of text, and the badge is
+                            what a reader recognises before they read a word. */}
+                        <div className="flex items-center gap-2">
+                          <span className="w-9 shrink-0 text-center">
+                            <span
+                              className={cn(
+                                "inline-block rounded-md px-1 py-0.5 text-[10px] font-bold tabular-nums",
+                                isLive ? "bg-red-500/15 text-red-400" : "text-surface-500"
+                              )}
+                            >
+                              {isLive
+                                ? fixture.status === "HT"
+                                  ? "HT"
+                                  : `${fixture.minute ?? 0}'`
+                                : fixture.status === "FT"
+                                  ? "FT"
+                                  : fixture.kickoff
+                                    ? new Date(fixture.kickoff).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                                    : "—"}
+                            </span>
                           </span>
-                          {hasDeepRead(fixture) ? (
-                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400/80" title="Full analysis available" />
-                          ) : null}
+
+                          <span className="min-w-0 flex-1 space-y-1">
+                            <span className="flex items-center gap-1.5">
+                              <TeamCrest name={fixture.homeTeam} logo={fixture.homeLogo} size="xs" />
+                              <span className="truncate text-[11px] font-medium text-surface-200">{fixture.homeTeam}</span>
+                              <span className="ml-auto shrink-0 pl-1 text-[11px] font-bold tabular-nums text-surface-100">
+                                {isLive || fixture.status === "FT" ? (fixture.homeScore ?? 0) : ""}
+                              </span>
+                            </span>
+                            <span className="flex items-center gap-1.5">
+                              <TeamCrest name={fixture.awayTeam} logo={fixture.awayLogo} size="xs" />
+                              <span className="truncate text-[11px] text-surface-300">{fixture.awayTeam}</span>
+                              <span className="ml-auto shrink-0 pl-1 text-[11px] font-bold tabular-nums text-surface-100">
+                                {isLive || fixture.status === "FT" ? (fixture.awayScore ?? 0) : ""}
+                              </span>
+                            </span>
+                          </span>
+
                           {mine ? <Star className="h-3 w-3 shrink-0 fill-amber-400 text-amber-400" /> : null}
-                          <span className="shrink-0 text-[10px] font-bold tabular-nums text-surface-500">
-                            {isLive || fixture.status === "FT"
-                              ? `${fixture.homeScore ?? 0}-${fixture.awayScore ?? 0}`
-                              : fixture.kickoff
-                                ? new Date(fixture.kickoff).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                                : "—"}
-                          </span>
+                          {hasDeepRead(fixture) ? (
+                            <span
+                              className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400/80"
+                              title="ESPN carried this fixture directly, so a full summary is guaranteed"
+                            />
+                          ) : null}
                         </div>
-                        <p className="truncate text-[10px] text-surface-600">
+                        <p className="mt-0.5 truncate pl-11 text-[10px] text-surface-600">
                           {fixture.competition}
-                          {isLive ? ` · ${fixture.status === "HT" ? "HT" : fixture.minute ? `${fixture.minute}'` : "live"}` : ""}
                           {fixture.predictions.length > 0 ? ` · ${fixture.predictions.length} picks` : ""}
                         </p>
                       </button>
@@ -276,23 +319,32 @@ export default function MatchCentre() {
           </div>
 
           <p className="border-t border-surface-800/70 px-2.5 py-2 text-[10px] leading-relaxed text-surface-600">
-            Pin up to {MAX_PINNED} matches to watch them together. A green dot marks a fixture whose provider
-            publishes a full match summary — timeline, stats, lineups, momentum and the shot map. Every
-            fixture still opens, with our model&apos;s picks on it.
+            Pin up to {MAX_PINNED} matches to watch them together. A green dot marks a fixture ESPN carries
+            directly; anything else is matched to the same feed by team name, so it usually opens with the
+            full summary too — and when it cannot be found we say so rather than showing a blank panel.
           </p>
         </div>
       </aside>
 
-      {/* The board */}
-      <section className="min-w-0">
-        <div className="mb-3 flex flex-wrap items-center gap-2">
+      {/*
+        The board.
+
+        Its header pins directly beneath the app navbar, the same way the score
+        board's toolbar and the fixture calendar's month stepper do — a control
+        row that disappears on scroll is a control row the reader has to hunt
+        for, and this one carries the only way to refresh the panels.
+      */}
+      <section
+        className={cn("min-w-0 lg:order-2", pinned.length > 0 ? "order-1" : "order-2")}
+      >
+        <div className="sports-toolbar sticky -mx-3 mb-3 flex flex-wrap items-center gap-2 border-b border-surface-900/60 bg-surface-950/95 px-3 pb-2 pt-2 backdrop-blur sm:-mx-6 sm:px-6">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-800/70 px-2.5 py-1 text-[11px] font-semibold text-surface-300">
             <Activity className="h-3 w-3 text-brand-400" />
             Match centre
           </span>
           <span className="text-[11px] text-surface-500">
             {pinned.length === 0
-              ? "Nothing pinned yet — pick a fixture on the left."
+              ? "Nothing pinned yet — pick a fixture below."
               : `${pinned.length} of ${MAX_PINNED} pinned`}
           </span>
           <button

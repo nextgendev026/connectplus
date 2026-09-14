@@ -212,7 +212,7 @@ export default function AdminAdsPage() {
     <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="flex items-center gap-2 text-xl font-bold text-surface-900 sm:text-2xl dark:text-surface-50">
+          <h1 className="flex items-center gap-2 text-xl font-bold sm:text-2xl text-surface-50">
             <Megaphone className="h-5 w-5 text-brand-500" />
             Monetization
           </h1>
@@ -230,7 +230,7 @@ export default function AdminAdsPage() {
       </header>
 
       {error ? (
-        <p className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">
+        <p className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400">
           {error}
         </p>
       ) : null}
@@ -245,8 +245,8 @@ export default function AdminAdsPage() {
       ) : null}
 
       {showForm ? (
-        <section className="mt-5 rounded-2xl border border-surface-200/70 bg-surface-50 p-4 dark:bg-surface-900/40">
-          <h2 className="text-sm font-semibold text-surface-800 dark:text-surface-100">
+        <section className="mt-5 rounded-2xl border border-surface-800/60 p-4 bg-surface-900/40">
+          <h2 className="text-sm font-semibold text-surface-100">
             {editingId ? "Edit campaign" : "New campaign"}
           </h2>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -281,7 +281,7 @@ export default function AdminAdsPage() {
                       "flex-1 rounded-xl border px-3 py-2 text-sm font-medium capitalize transition",
                       form.format === f
                         ? "border-brand-500 bg-brand-500/10 text-brand-600"
-                        : "border-surface-200 text-surface-600 hover:border-surface-300"
+                        : "border-surface-800 text-surface-400 hover:border-surface-700"
                     )}
                   >
                     {f}
@@ -320,7 +320,7 @@ export default function AdminAdsPage() {
                   <button
                     onClick={() => fileRef.current?.click()}
                     disabled={uploading}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-surface-200 px-3 py-2.5 text-sm font-medium text-surface-700 transition hover:border-brand-500/50 disabled:opacity-60"
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-surface-800 px-3 py-2.5 text-sm font-medium text-surface-300 transition hover:border-brand-500/50 disabled:opacity-60"
                   >
                     {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                     {uploading ? "Uploading" : "Upload"}
@@ -328,7 +328,7 @@ export default function AdminAdsPage() {
                 </div>
                 {form.imageUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={form.imageUrl} alt="Creative preview" className="mt-2 max-h-40 rounded-xl border border-surface-200 object-contain" />
+                  <img src={form.imageUrl} alt="Creative preview" className="mt-2 max-h-40 rounded-xl border border-surface-800 object-contain" />
                 ) : null}
               </Field>
             ) : (
@@ -382,7 +382,7 @@ export default function AdminAdsPage() {
           <div className="mt-4 flex justify-end gap-2">
             <button
               onClick={resetForm}
-              className="rounded-xl border border-surface-200 px-4 py-2.5 text-sm font-medium text-surface-600 transition hover:border-surface-300"
+              className="rounded-xl border border-surface-800 px-4 py-2.5 text-sm font-medium text-surface-400 transition hover:border-surface-700"
             >
               Cancel
             </button>
@@ -400,22 +400,22 @@ export default function AdminAdsPage() {
 
       <section className="mt-5 space-y-3">
         {loading ? (
-          <div className="flex items-center justify-center gap-2 rounded-2xl border border-surface-200/70 py-10 text-sm text-surface-500">
+          <div className="flex items-center justify-center gap-2 rounded-2xl border border-surface-800/60 py-10 text-sm text-surface-500">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading campaigns…
           </div>
         ) : ads.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-surface-300 px-4 py-12 text-center">
+          <div className="rounded-2xl border border-dashed border-surface-700 px-4 py-12 text-center">
             <Megaphone className="mx-auto h-8 w-8 text-surface-300" />
-            <p className="mt-2 text-sm font-medium text-surface-600">No campaigns yet</p>
+            <p className="mt-2 text-sm font-medium text-surface-400">No campaigns yet</p>
             <p className="text-xs text-surface-500">Create one to start monetising your slots.</p>
           </div>
         ) : (
           ads.map((ad) => (
             <article
               key={ad.id}
-              className="flex flex-col gap-3 rounded-2xl border border-surface-200/70 bg-surface-50 p-3 sm:flex-row sm:items-start dark:bg-surface-900/40"
+              className="flex flex-col gap-3 rounded-2xl border border-surface-800/60 p-3 sm:flex-row sm:items-start bg-surface-900/40"
             >
-              <div className="h-24 w-full shrink-0 overflow-hidden rounded-xl border border-surface-200 bg-surface-100 sm:w-40">
+              <div className="h-24 w-full shrink-0 overflow-hidden rounded-xl border border-surface-800 bg-surface-800 sm:w-40">
                 {ad.format === "image" && ad.imageUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={ad.imageUrl} alt={ad.name} className="h-full w-full object-cover" />
@@ -428,16 +428,16 @@ export default function AdminAdsPage() {
 
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="truncate text-sm font-semibold text-surface-900 dark:text-surface-50">{ad.name}</h3>
+                  <h3 className="truncate text-sm font-semibold text-surface-50">{ad.name}</h3>
                   <span
                     className={cn(
                       "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                      ad.isActive ? "bg-emerald-500/15 text-emerald-600" : "bg-surface-300/40 text-surface-500"
+                      ad.isActive ? "bg-emerald-500/15 text-emerald-600" : "bg-surface-800/40 text-surface-500"
                     )}
                   >
                     {ad.isActive ? "Live" : "Paused"}
                   </span>
-                  <span className="rounded-full bg-surface-200/60 px-2 py-0.5 text-[10px] font-medium text-surface-600">
+                  <span className="rounded-full bg-surface-800/60 px-2 py-0.5 text-[10px] font-medium text-surface-400">
                     {SLOT_OPTIONS.find((s) => s.value === ad.slot)?.label ?? ad.slot}
                   </span>
                   <span className="text-[10px] font-medium text-surface-500">weight {ad.weight}</span>
@@ -453,7 +453,7 @@ export default function AdminAdsPage() {
                     <MousePointerClick className="h-3.5 w-3.5" /> {fmt(ad.clicks)}
                   </span>
                   {ad.impressions > 0 ? (
-                    <span className="font-medium text-surface-600">
+                    <span className="font-medium text-surface-400">
                       {((ad.clicks / ad.impressions) * 100).toFixed(1)}% CTR
                     </span>
                   ) : null}
@@ -462,14 +462,14 @@ export default function AdminAdsPage() {
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button
                     onClick={() => toggleActive(ad)}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-surface-200 px-2.5 py-1.5 text-xs font-medium text-surface-600 transition hover:border-brand-500/50"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-surface-800 px-2.5 py-1.5 text-xs font-medium text-surface-400 transition hover:border-brand-500/50"
                   >
                     {ad.isActive ? <ToggleRight className="h-4 w-4 text-emerald-500" /> : <ToggleLeft className="h-4 w-4" />}
                     {ad.isActive ? "Pause" : "Activate"}
                   </button>
                   <button
                     onClick={() => startEdit(ad)}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-surface-200 px-2.5 py-1.5 text-xs font-medium text-surface-600 transition hover:border-brand-500/50"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-surface-800 px-2.5 py-1.5 text-xs font-medium text-surface-400 transition hover:border-brand-500/50"
                   >
                     <Pencil className="h-3.5 w-3.5" /> Edit
                   </button>
@@ -478,14 +478,14 @@ export default function AdminAdsPage() {
                       href={ad.targetUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-surface-200 px-2.5 py-1.5 text-xs font-medium text-surface-600 transition hover:border-brand-500/50"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-surface-800 px-2.5 py-1.5 text-xs font-medium text-surface-400 transition hover:border-brand-500/50"
                     >
                       <ExternalLink className="h-3.5 w-3.5" /> Destination
                     </a>
                   ) : null}
                   <button
                     onClick={() => remove(ad)}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-2.5 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-500/10 dark:text-red-400"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-2.5 py-1.5 text-xs font-medium transition hover:bg-red-500/10 text-red-400"
                   >
                     <Trash2 className="h-3.5 w-3.5" /> Delete
                   </button>
@@ -503,7 +503,7 @@ export default function AdminAdsPage() {
 }
 
 const inputCls =
-  "w-full rounded-xl border border-surface-200 bg-white px-3 py-2.5 text-sm text-surface-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:bg-surface-900 dark:text-surface-50";
+  "w-full rounded-xl border border-surface-800 px-3 py-2.5 text-sm outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 bg-surface-900 text-surface-50";
 
 function Field({
   label,
@@ -516,7 +516,7 @@ function Field({
 }) {
   return (
     <label className={cn("block", className)}>
-      <span className="mb-1 block text-xs font-medium text-surface-600 dark:text-surface-300">{label}</span>
+      <span className="mb-1 block text-xs font-medium text-surface-300">{label}</span>
       {children}
     </label>
   );
@@ -524,12 +524,12 @@ function Field({
 
 function Stat({ label, value, sub, icon }: { label: string; value: string; sub?: string; icon?: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-surface-200/70 bg-surface-50 p-3 dark:bg-surface-900/40">
+    <div className="rounded-2xl border border-surface-800/60 p-3 bg-surface-900/40">
       <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-surface-500">
         {icon}
         {label}
       </div>
-      <p className="mt-1 text-lg font-bold text-surface-900 dark:text-surface-50">{value}</p>
+      <p className="mt-1 text-lg font-bold text-surface-50">{value}</p>
       {sub ? <p className="text-[11px] text-surface-500">{sub}</p> : null}
     </div>
   );

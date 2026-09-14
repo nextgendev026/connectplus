@@ -116,7 +116,7 @@ export default function NeuralKnowledgeBase() {
                   <span className="text-[9px] text-surface-500">confidence: {(m.confidence * 100).toFixed(0)}%</span>
                 </div>
                 <p className="mt-1 type-meta text-surface-400 line-clamp-2">{m.content}</p>
-                <p className="mt-0.5 text-[9px] text-surface-600 truncate">{m.tags}</p>
+                <p className="mt-0.5 text-[9px] text-surface-400 truncate">{m.tags}</p>
               </div>
               <button
                 onClick={() => handleDelete(m.id)}
