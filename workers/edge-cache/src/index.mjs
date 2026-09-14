@@ -164,9 +164,12 @@ const SNAPSHOTS = [
 const snapshotKey = (id) =>
   new Request(`https://snapshot.edge.internal/${id}?v=${CACHE_VERSION}`, { method: "GET" });
 
+/** Look a snapshot up by id. */
+const snapshotById = (id) => SNAPSHOTS.find((s) => s.id === id) ?? null;
+
 /** The snapshot a canonical path warms, or null when this request is not it. */
-function snapshotIdFor(pathname, params) {
-  if (pathname === "/api/status") return "status";
+function snapshotFor(pathname, params) {
+  if (pathname === "/api/status") return snapshotById("status");
   if (pathname !== "/api/sports/live") return null;
   // Only the live board is shared with the cron's copy. The board's poll sends
   // today's date (that is what makes it *today's* fixture list), so today counts
@@ -175,7 +178,7 @@ function snapshotIdFor(pathname, params) {
   // lands here as the live read, which is where the origin would route it too.
   const date = params.get("date") ?? "";
   if (date && date !== new Date().toISOString().slice(0, 10)) return null;
-  return params.get("sport") === "basketball" ? "livescore-basketball" : "livescore-football";
+  return snapshotById(params.get("sport") === "basketball" ? "livescore-basketball" : "livescore-football");
 }
 
 /** Age of a worker-owned snapshot in seconds, or null when missing/unusable. */
@@ -401,10 +404,27 @@ const tagged = (response, state) => {
  * is the canonical form of a worker-owned snapshot. The mirror is what keeps a
  * busy board's cache and the cron's freshness check talking about one document:
  * reader traffic refreshes the very entry the tick reads.
+ *
+ * The mirror gets the *snapshot's* lifetime, not the reader's. The Cache API
+ * derives an entry's life from these response headers, so a copy stored under
+ * the board's own `max-age=15` was evicted within seconds — the tick then always
+ * saw an empty namespace and rebuilt every time, which is exactly the behaviour
+ * this whole mechanism exists to avoid. (A unit test that stores responses in a
+ * plain Map cannot catch that: only a real cache expires anything.)
  */
-async function store(cacheKey, snapshotId, response) {
+async function store(cacheKey, snapshot, response) {
   await caches.default.put(cacheKey, response.clone());
-  if (snapshotId) await caches.default.put(snapshotKey(snapshotId), response.clone());
+  if (!snapshot) return;
+  const headers = new Headers(response.headers);
+  headers.set("Cache-Control", `public, max-age=${snapshot.ttl}, s-maxage=${snapshot.ttl}`);
+  await caches.default.put(
+    snapshotKey(snapshot.id),
+    new Response(await response.clone().arrayBuffer(), {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    })
+  );
 }
 
 /**
@@ -475,7 +495,7 @@ export default {
     const variant = poll ? "live" : varies ? variantKey(request) : "std";
     // The worker-owned snapshot this request refreshes, if it is the canonical
     // form of one — reader traffic and the edge cron then share one copy.
-    const snapshotId = snapshotIdFor(pathname, url.searchParams);
+    const snapshot = snapshotFor(pathname, url.searchParams);
     // The alias is its own key space so a `/api/sports/live` entry and a
     // `/__livescore` entry never collide despite the shared origin path. The
     // origin is prefixed explicitly because `new Request` needs an absolute
@@ -521,7 +541,7 @@ export default {
               );
               await store(
                 cacheKey,
-                snapshotId,
+                snapshot,
                 new Response(body, { status: res.status, statusText: res.statusText, headers })
               );
             })
@@ -559,7 +579,7 @@ export default {
     const storable = new Response(body, { status: res.status, statusText: res.statusText, headers });
 
     // Store a copy, then answer this caller from the buffered body.
-    await store(cacheKey, snapshotId, storable);
+    await store(cacheKey, snapshot, storable);
     const answered = tagged(new Response(storable.body, storable), "MISS");
     return corsFor(poll) ? withCors(answered) : answered;
   },

@@ -89,7 +89,11 @@ Three properties make that check honest rather than optimistic:
    *today's* board) is stored under the very key the tick reads, so a board a
    hundred people are watching is already current and the tick does nothing at
    all. The cron is a watchdog for the quiet hours, not a second scheduler
-   racing the readers.
+   racing the readers. The mirrored copy carries the *snapshot's* lifetime
+   rather than the reader's: the Cache API expires an entry from its response
+   headers, and a copy left holding the board's 15s `max-age` is evicted long
+   before the tick's 120s window opens — which turns the check back into a
+   rebuild on every tick.
 2. **A trigger with several snapshots is only skipped when every one of them is
    fresh.** `sports-live` refreshes both sports in a single run, so skipping
    while basketball's copy has gone cold would silently stop grading football.

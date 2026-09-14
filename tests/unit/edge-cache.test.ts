@@ -329,6 +329,13 @@ describe("edge cron — cache-first snapshots", () => {
     // tick reads the same documents instead of rebuilding them.
     expect([...stored.keys()]).toContain(`${SNAP}/livescore-football?v=4`);
     expect([...stored.keys()]).toContain(`${SNAP}/livescore-basketball?v=4`);
+
+    // …and with the *snapshot's* lifetime, not the board's. The Cache API
+    // expires an entry from its response headers, so a copy left carrying the
+    // board's 15s max-age was gone before the tick's 120s window opened — the
+    // tick then rebuilt every time, which is the bug this pins.
+    const mirrored = stored.get(`${SNAP}/livescore-football?v=4`);
+    expect(/max-age=(\d+)/.exec(mirrored?.headers.get("cache-control") ?? "")?.[1]).toBe("120");
     await tick("*/2 * * * *");
     expect(cronFetches()).toEqual([]);
   });
