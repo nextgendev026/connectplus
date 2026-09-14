@@ -11,6 +11,8 @@ const log = createLogger("sports-live-api");
 /** How often the board may opportunistically top up picks and alerts. */
 const SELF_HEAL_INTEL_MS = 5 * 60_000;
 const SELF_HEAL_NOTIFY_MS = 60_000;
+/** …and how often it may re-run the picks for fixtures about to kick off. */
+const SELF_HEAL_KICKOFF_MS = 10 * 60_000;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -81,6 +83,18 @@ export async function GET(request: NextRequest) {
         if (intel.ran) log.info("opportunistic pick top-up", { missing, sport: hub.sport });
       });
     }
+
+    // A fixture about to start gets re-read at the moment it matters: team news
+    // has landed and the price has moved since this morning's pick. Riding the
+    // busiest page means a matchday refreshes itself even if Inngest is quiet;
+    // the throttle keeps it to one run per interval however many readers arrive.
+    after(async () => {
+      const kickoff = await runThrottled("sports-kickoff-refresh", SELF_HEAL_KICKOFF_MS, async () => {
+        const { refreshApproachingKickoff } = await import("@/lib/sports-intelligence");
+        return refreshApproachingKickoff({ limit: 12 });
+      });
+      if (kickoff.ran) log.info("opportunistic kick-off refresh");
+    });
 
     // Favourite alerts ride the same surface: the bell only rings when a job
     // runs, so the busiest page in the app guarantees one attempt a minute.

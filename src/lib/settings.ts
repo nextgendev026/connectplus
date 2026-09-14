@@ -199,6 +199,15 @@ export const SETTINGS_CATALOG: SettingDef[] = [
     isPublic: true,
   },
   {
+    key: "convexUrl",
+    defaultValue: process.env.NEXT_PUBLIC_CONVEX_URL ?? process.env.CONVEX_URL ?? "",
+    group: "integrations",
+    label: "Convex deployment URL",
+    hint: "Public URL of the Convex deployment that owns article views and ad metrics (e.g. https://<deployment>.convex.cloud). NEXT_PUBLIC_CONVEX_URL wins over this value. Because the URL is read at request time, setting it here takes effect without a redeploy — the alternative is adding the env var to Vercel and rebuilding.",
+    type: "url",
+    isPublic: true,
+  },
+  {
     key: "statusAlertEmails",
     defaultValue: "",
     group: "integrations",

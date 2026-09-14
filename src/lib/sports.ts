@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { cacheGet, cacheSet } from "@/lib/redis";
 import { createLogger } from "@/lib/logger";
+import { openFootballProvider } from "@/lib/sports-openfootball";
 
 /**
  * Sports livescore data layer.
@@ -505,7 +506,7 @@ const sportsDbProvider: SportsProvider = {
 
 /** ESPN's public scoreboard API needs no key and covers live state, minute,
  *  scores and (for many leagues) a draft of the odds. */
-const ESPN_SOCCER_LEAGUES: Record<string, string> = {
+export const ESPN_SOCCER_LEAGUES: Record<string, string> = {
   "eng.1": "Premier League",
   "eng.2": "Championship",
   "esp.1": "LaLiga",
@@ -522,7 +523,7 @@ const ESPN_SOCCER_LEAGUES: Record<string, string> = {
   "fifa.world": "FIFA World Cup",
 };
 
-const ESPN_BASKETBALL_LEAGUES: Record<string, string> = {
+export const ESPN_BASKETBALL_LEAGUES: Record<string, string> = {
   "nba": "NBA",
   "wnba": "WNBA",
   "mens-college-basketball": "NCAA Basketball",
@@ -546,6 +547,39 @@ const ESPN_COUNTRY: Record<string, string> = {
   "wnba": "United States",
 };
 
+/**
+ * Display name → ESPN league slug.
+ *
+ * The scoreboard adapter stores the league inside each external id as
+ * `espn:<league>:<eventId>`, and fixtures written by earlier versions hold the
+ * DISPLAY name there ("Serie A") while the summary endpoint addresses leagues by
+ * slug ("ita.1"). This is the lookup that reconciles the two, so a stored fixture
+ * from before keeps working without rewriting anyone's external ids — and with
+ * them, the predictions and reminders keyed off those ids.
+ */
+const ESPN_SLUG_BY_NAME: Record<string, string> = Object.fromEntries(
+  [...Object.entries(ESPN_SOCCER_LEAGUES), ...Object.entries(ESPN_BASKETBALL_LEAGUES)].map(
+    ([slug, name]) => [name.toLowerCase(), slug]
+  )
+);
+
+/**
+ * Resolve either form of the league segment to a slug, or null if it is neither.
+ *
+ * A slug-shaped token is accepted as-is — the registry only names the leagues we
+ * fetch, and an unknown-but-well-formed slug should still address the feed rather
+ * than silently lose its analysis.
+ */
+export function espnLeagueSlug(token: string): string | null {
+  const raw = (token ?? "").trim();
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  const byName = ESPN_SLUG_BY_NAME[lower];
+  if (byName) return byName;
+  if (!lower.includes(" ") && /^[a-z0-9.\-]+$/.test(lower)) return lower;
+  return null;
+}
+
 function espnStatus(state: string, detail: string): MatchStatus {
   const s = (state || "").toLowerCase();
   const d = (detail || "").toLowerCase();
@@ -563,7 +597,25 @@ function espnStatus(state: string, detail: string): MatchStatus {
   return "SCHEDULED";
 }
 
-function mapEspnEvent(row: unknown, league: string, sport: string): NormalizedMatch | null {
+/**
+ * ESPN's ground, which arrives as an object and never as a bare string.
+ *
+ * `fullName` is the pitch ("Giuseppe Sinigaglia"); `address.city` is the only
+ * other usable field, and it is a weaker fact than the ground itself, so it is
+ * only used when the name is missing rather than concatenated onto it.
+ */
+function espnVenue(raw: unknown): string | null {
+  if (typeof raw === "string") return raw.trim() || null;
+  if (!raw || typeof raw !== "object") return null;
+  const v = raw as Record<string, unknown>;
+  const name = String(v.fullName ?? v.name ?? "").trim();
+  if (name) return name;
+  const address = (v.address ?? {}) as Record<string, unknown>;
+  const city = String(address.city ?? "").trim();
+  return city || null;
+}
+
+export function mapEspnEvent(row: unknown, league: string, sport: string): NormalizedMatch | null {
   const e = row as Record<string, unknown>;
   const competition = (e.competitions as unknown[] | undefined)?.[0] as Record<string, unknown> | undefined;
   if (!e.id || !competition) return null;
@@ -598,10 +650,30 @@ function mapEspnEvent(row: unknown, league: string, sport: string): NormalizedMa
     | undefined;
   const completed = String(total?.completed ?? "") === "true" || status === "FT";
 
+  /*
+   * Odds, read from the shape ESPN actually sends.
+   *
+   * This used to look for `odds.homeTeamOdds.moneyLine` and
+   * `odds.awayTeamOdds.moneyLine`. Neither key exists: the payload nests both
+   * sides under `odds.moneyline.home/away` with `open` and `close` sub-objects,
+   * and only the draw price sits at the top level (`odds.drawOdds.moneyLine`).
+   * The result was that home and away were always null, the draw was always
+   * populated, and every consumer that requires all three — the market-baseline
+   * view and the closing-line comparison — was silently dead. No error, no log,
+   * just a model that never once consulted the market it was supposed to beat.
+   *
+   * `close` is preferred over `open`: the closing line is the sharper number and
+   * the one a settled bet is graded against.
+   */
   const odds = ((competition.odds as unknown[] | undefined)?.[0] ?? null) as Record<string, unknown> | null;
-  const moneyline = (odds?.homeTeamOdds as Record<string, unknown> | undefined) ?? undefined;
+  const moneyline = (odds?.moneyline as Record<string, unknown> | undefined) ?? undefined;
+  const pickLine = (side?: unknown): unknown => {
+    const s = (side ?? {}) as Record<string, unknown>;
+    const close = (s.close ?? {}) as Record<string, unknown>;
+    const open = (s.open ?? {}) as Record<string, unknown>;
+    return close.odds ?? open.odds;
+  };
   const drawOdds = (odds?.drawOdds as Record<string, unknown> | undefined) ?? undefined;
-  const awayOdds = (odds?.awayTeamOdds as Record<string, unknown> | undefined) ?? undefined;
   const americanToDecimal = (value: unknown): number | null => {
     const n = Number(value);
     if (!Number.isFinite(n) || n === 0) return null;
@@ -614,7 +686,10 @@ function mapEspnEvent(row: unknown, league: string, sport: string): NormalizedMa
     provider: "espn",
     sport,
     competition: league,
-    competitionId: league,
+    // The provider's own identifier for the competition, when we know its slug.
+    // `espnLeagueSlug` also reads the display-name form, so this is correct for
+    // fixtures mapped by either version of the adapter.
+    competitionId: espnLeagueSlug(league) ?? league,
     country: ESPN_COUNTRY[league] ?? null,
     homeTeam: homeName || "Home",
     awayTeam: awayName || "Away",
@@ -629,10 +704,13 @@ function mapEspnEvent(row: unknown, league: string, sport: string): NormalizedMa
     status,
     minute,
     kickoff: isoOrNull(e.date),
-    venue: typeof competition.venue === "string" ? competition.venue : null,
-    oddsHome: americanToDecimal(moneyline?.moneyLine),
+    // `competition.venue` is an object here, never a string — the old typeof
+    // check could not pass, so every ESPN fixture carried a null venue no matter
+    // how much the provider knew about the ground.
+    venue: espnVenue(competition.venue),
+    oddsHome: americanToDecimal(pickLine(moneyline?.home)),
     oddsDraw: americanToDecimal(drawOdds?.moneyLine),
-    oddsAway: americanToDecimal(awayOdds?.moneyLine),
+    oddsAway: americanToDecimal(pickLine(moneyline?.away)),
   };
 }
 
@@ -1154,6 +1232,9 @@ const PROVIDERS: SportsProvider[] = [
   sportsDbProvider,
   espnProvider,
   openLigaProvider,
+  // Fixture archive, ranked last on purpose: it can add scheduled fixtures no
+  // live feed carries, but never overrides one (see sports-openfootball.ts).
+  openFootballProvider,
   demoProvider,
 ];
 
@@ -1215,7 +1296,9 @@ export function providerInfo(): ProviderInfo[] {
             ? "Keyless ESPN scoreboard — live state and odds for the big leagues."
             : p.id === "openligadb"
               ? "Keyless German-league feed, used as a second opinion on Bundesliga days."
-              : "Zero-config fallback used only when every live source fails.",
+              : p.id === "openfootball"
+                ? "Keyless public-domain fixture archive — fills in scheduled fixtures for the weeks ahead, never results."
+                : "Zero-config fallback used only when every live source fails.",
   }));
 }
 

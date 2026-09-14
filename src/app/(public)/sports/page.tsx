@@ -3,13 +3,17 @@ import AdSlot from "@/components/ads/AdSlot";
 import SportsHub from "@/components/sports/SportsHub";
 
 export const metadata: Metadata = {
-  title: "Live Scores & Betting Tips",
+  title: "Live Scores, Match Analysis & Betting Tips",
   description:
-    "Real-time football and basketball livescores for every league, with model-generated betting analysis for each fixture, today's highest-conviction tips across four markets, and vetted partner offers.",
+    "Real-time football and basketball livescores for every league, with a full match centre — timeline, team stats, lineups, attack momentum and shot maps — plus model-generated betting analysis for each fixture and today's highest-conviction tips across four markets.",
   keywords: [
     "live scores",
     "livescore today",
     "football live scores",
+    "match analysis",
+    "attack momentum",
+    "team lineups ratings",
+    "shot map",
     "basketball live scores",
     "football betting tips",
     "sports predictions today",
@@ -46,9 +50,9 @@ export const metadata: Metadata = {
 const SPORTS_SCHEMA = JSON.stringify({
   "@context": "https://schema.org",
   "@type": "CollectionPage",
-  name: "Live Scores & Betting Tips",
+  name: "Live Scores, Match Analysis & Betting Tips",
   description:
-    "Real-time football and basketball livescores with model-generated betting analysis and tips for every fixture.",
+    "Real-time football and basketball livescores with a full match centre (timeline, team stats, lineups, momentum, shot maps), model-generated betting analysis and tips for every fixture.",
   inLanguage: "en",
   isPartOf: { "@type": "WebSite", name: "connectPlus" },
   about: { "@type": "Thing", name: "Association football and basketball results and betting markets" },

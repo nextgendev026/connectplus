@@ -2,19 +2,26 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Activity, ArrowUpRight, Flame, Radio, Sparkles, Trophy } from "lucide-react";
+import { Activity, ArrowUpRight, CalendarDays, Flame, LineChart, Radio, Sparkles, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ScoresBoard from "./ScoresBoard";
 import BettingTips from "./BettingTips";
+import MatchCentre from "./MatchCentre";
+import MatchCalendar from "./MatchCalendar";
 
-type Tab = "scores" | "tips";
+type Tab = "scores" | "tips" | "analysis" | "calendar";
+const TABS: Tab[] = ["scores", "tips", "analysis", "calendar"];
 
 /**
  * Sports hub shell.
  *
- * Two boards share one sporty frame: **Scores** (the SofaScore-style live board)
- * and **Betting tips** (the published model's top picks). The active tab lives in
- * the URL (`?tab=tips`) so a tip board can be shared or linked from a push.
+ * Four boards share one frame: **Scores** (the live board, one row per fixture),
+ * **Analysis** (the match centre, where several fixtures are pinned side by side
+ * with the full deep read — timeline, stats, lineups, momentum, shot map, head to
+ * head), **Betting tips** (the published model's top picks) and **Calendar** (a
+ * month of fixtures with how much of each day the model has analysed). The active
+ * tab lives in the URL (`?tab=calendar`) so any view can be shared or linked from
+ * a notification.
  */
 export default function SportsHub({
   heroAd,
@@ -29,15 +36,15 @@ export default function SportsHub({
 
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("tab");
-    if (requested !== "tips" && requested !== "scores") return;
+    if (!requested || !TABS.includes(requested as Tab)) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read of the ?tab= deep link
-    setTab(requested);
+    setTab(requested as Tab);
   }, []);
 
   function go(next: Tab) {
     setTab(next);
     if (typeof window !== "undefined") {
-      window.history.replaceState(null, "", next === "tips" ? "/sports?tab=tips" : "/sports");
+      window.history.replaceState(null, "", next === "scores" ? "/sports" : `/sports?tab=${next}`);
     }
   }
 
@@ -52,6 +59,14 @@ export default function SportsHub({
         <div className="pointer-events-none absolute -right-10 bottom-0 h-64 w-64 rounded-full bg-emerald-500/10 blur-3xl" />
 
         <div className="relative mx-auto w-full max-w-[1600px] px-3 pb-4 pt-5 sm:px-6 sm:pt-8 xl:px-8">
+          {/*
+            Desktop is a two-column header, mobile a stack. The tab strip is the
+            primary control on this page, so on a wide screen it sits BESIDE the
+            title — within reach, and not a full-width row of four buttons
+            stretched across 1600px of empty space.
+          */}
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+          <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-3">
             <span className="inline-flex items-center gap-2 rounded-full border border-brand-500/30 bg-brand-500/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-brand-300">
               <Trophy className="h-3.5 w-3.5" />
@@ -74,15 +89,17 @@ export default function SportsHub({
               themes, so a gradient that fades to a light brand tone washes out on
               the light theme's dark text. */}
           <h1 className="mt-3 text-2xl font-black tracking-tight text-surface-50 sm:text-4xl">
-            Live scores &amp; betting tips
+            Live scores, analysis &amp; betting tips
           </h1>
-          <p className="mt-2 max-w-2xl text-sm text-surface-400">
-            Every match, updating minute by minute. Open any fixture for our model&apos;s read on it —
-            who wins, how many goals, both teams to score — plus the recent form and past meetings behind
-            that view.
+          <p className="mt-2 max-w-3xl text-sm text-surface-400">
+            Every match, updating minute by minute. Open any fixture for the timeline, team stats, lineups
+            with connectPlus Ratings, attack momentum and the shot map — measured by the provider and
+            computed here, labelled as such. Or pin up to three matches in the Analysis tab and watch them
+            together, each beside our model&apos;s read on it.
           </p>
+          </div>
 
-          <div className="mt-5 flex w-full max-w-md items-center rounded-2xl border border-surface-800 bg-surface-900/70 p-1 backdrop-blur">
+          <div className="flex w-full shrink-0 items-center overflow-x-auto rounded-2xl border border-surface-800 bg-surface-900/70 p-1 backdrop-blur xl:w-auto">
             <TabButton
               active={tab === "scores"}
               onClick={() => go("scores")}
@@ -91,12 +108,27 @@ export default function SportsHub({
               hint="Live & upcoming"
             />
             <TabButton
+              active={tab === "analysis"}
+              onClick={() => go("analysis")}
+              icon={<LineChart className="h-4 w-4" />}
+              label="Analysis"
+              hint="Match centre"
+            />
+            <TabButton
               active={tab === "tips"}
               onClick={() => go("tips")}
               icon={<Sparkles className="h-4 w-4" />}
               label="Betting tips"
               hint="Model picks"
             />
+            <TabButton
+              active={tab === "calendar"}
+              onClick={() => go("calendar")}
+              icon={<CalendarDays className="h-4 w-4" />}
+              label="Calendar"
+              hint="Fixtures ahead"
+            />
+          </div>
           </div>
         </div>
       </section>
@@ -105,6 +137,10 @@ export default function SportsHub({
 
       {tab === "scores" ? (
         <ScoresBoard inlineAd={inlineAd} sidebarAd={sidebarAd} />
+      ) : tab === "analysis" ? (
+        <MatchCentre />
+      ) : tab === "calendar" ? (
+        <MatchCalendar />
       ) : (
         <BettingTips inlineAd={inlineAd} sidebarAd={sidebarAd} />
       )}

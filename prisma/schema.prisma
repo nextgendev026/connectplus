@@ -728,8 +728,8 @@ model SportsMatchReminder {
   awayTeam    String
   competition String
   kickoff     DateTime?
-  /// KICKOFF | LIVE | FINAL | PICK_SETTLED
-  events      String   @default("KICKOFF,LIVE,FINAL,PICK_SETTLED")
+  /// KICKOFF | LIVE | GOAL | RED_CARD | SUB | FINAL | PICK_SETTLED
+  events      String   @default("KICKOFF,LIVE,GOAL,RED_CARD,SUB,FINAL,PICK_SETTLED")
   createdAt   DateTime @default(now())
 
   @@unique([userId, matchKey])

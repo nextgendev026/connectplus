@@ -1,6 +1,7 @@
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
 import { createLogger } from "@/lib/logger";
+import { getSettings } from "@/lib/settings";
 
 const log = createLogger("convex");
 
@@ -30,13 +31,51 @@ const log = createLogger("convex");
  * compile error instead of a silent no-op.
  */
 
-const url = process.env.NEXT_PUBLIC_CONVEX_URL ?? process.env.CONVEX_URL ?? "";
+const ENV_URL = (process.env.NEXT_PUBLIC_CONVEX_URL ?? process.env.CONVEX_URL ?? "").trim();
 
 let client: ConvexHttpClient | null = null;
+let clientUrl = "";
 
-/** True when Convex is configured, so callers can skip work entirely. */
-export function convexAvailable(): boolean {
-  return Boolean(url);
+let settingUrl: string | null = null;
+let resolving: Promise<string> | null = null;
+
+/**
+ * Resolve the deployment URL.
+ *
+ * The env var is preferred, but a deployment that was never handed
+ * `NEXT_PUBLIC_CONVEX_URL` used to mean Convex stayed dark forever — the console
+ * could see the setting and still nothing typed into it took effect, because the
+ * URL was read once at module load. The admin-managed `convexUrl` setting is
+ * therefore the fallback and is resolved lazily (and memoised) so changing it in
+ * the console takes effect on the next call rather than the next deploy.
+ */
+async function resolveUrl(): Promise<string> {
+  if (ENV_URL) return ENV_URL;
+  if (settingUrl !== null) return settingUrl;
+  if (!resolving) {
+    resolving = getSettings()
+      .then((s) => (s.convexUrl ?? "").trim())
+      .catch(() => "");
+  }
+  settingUrl = await resolving;
+  return settingUrl;
+}
+
+/** Where the resolved URL came from — the admin console prints this verbatim. */
+export function convexUrlSource(): "env" | "setting" | "none" {
+  if (ENV_URL) return "env";
+  if (settingUrl) return "setting";
+  return "none";
+}
+
+/** The resolved deployment URL, for the console probe. Empty when unconfigured. */
+export async function convexUrl(): Promise<string> {
+  return resolveUrl();
+}
+
+/** True when Convex is configured at all, so callers can skip work entirely. */
+export async function convexAvailable(): Promise<boolean> {
+  return Boolean(await resolveUrl());
 }
 
 /**
@@ -51,9 +90,15 @@ export function convexHealth(): { state: ConvexHealth; error: string | null } {
   return { state: health, error: lastError };
 }
 
-function getClient(): ConvexHttpClient | null {
+async function getClient(): Promise<ConvexHttpClient | null> {
+  const url = await resolveUrl();
   if (!url) return null;
-  if (!client) client = new ConvexHttpClient(url);
+  // Rebuild when the resolved URL changes (a console edit), so an instance can
+  // never keep talking to a deployment the operator just replaced.
+  if (!client || clientUrl !== url) {
+    client = new ConvexHttpClient(url);
+    clientUrl = url;
+  }
   return client;
 }
 
@@ -62,7 +107,7 @@ function getClient(): ConvexHttpClient | null {
  * records that something went wrong.
  */
 async function call<T>(fn: (c: ConvexHttpClient) => Promise<T>, fallback: T, op: string): Promise<T> {
-  const c = getClient();
+  const c = await getClient();
   if (!c) return fallback;
   try {
     const value = await fn(c);
@@ -88,7 +133,7 @@ async function call<T>(fn: (c: ConvexHttpClient) => Promise<T>, fallback: T, op:
 /* ── Article views ─────────────────────────────────────────────────────── */
 
 export async function convexRecordView(postId: string): Promise<boolean> {
-  const c = getClient();
+  const c = await getClient();
   if (!c) return false;
   try {
     await c.mutation(api.views.record, { postId });
@@ -134,7 +179,7 @@ export async function convexTopToday(limit = 10): Promise<{ postId: string; coun
 /* ── Ad metrics ────────────────────────────────────────────────────────── */
 
 export async function convexAdImpression(adId: string): Promise<boolean> {
-  const c = getClient();
+  const c = await getClient();
   if (!c) return false;
   try {
     await c.mutation(api.ads.impression, { adId });
@@ -152,7 +197,7 @@ export async function convexAdImpression(adId: string): Promise<boolean> {
 }
 
 export async function convexAdClick(adId: string): Promise<boolean> {
-  const c = getClient();
+  const c = await getClient();
   if (!c) return false;
   try {
     await c.mutation(api.ads.click, { adId });

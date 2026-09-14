@@ -11,20 +11,28 @@ const config: Config = {
     extend: {
       colors: {
         brand: {
-          // Bright orange #FF6B00 — the single accent colour, used exclusively
-          // for high-priority actions (CTA buttons), notifications and active
-          // states. Never paints large surfaces in light mode.
-        50: "#fff6ef",
-        100: "#ffead9",
-        200: "#ffd1ab",
-        300: "#ffb273",
-        400: "#ff8f3a",
-        500: "#ff6b00",
-        600: "#e05f00",
-        700: "#b84e00",
-        800: "#8f3d00",
-        900: "#6e2f00",
-        950: "#3d1a00",
+          // The single accent colour, used exclusively for high-priority actions
+          // (CTA buttons), notifications and active states. Never paints large
+          // surfaces in light mode.
+          //
+          // Driven by CSS variables, NOT literal hex. These were hardcoded once,
+          // which quietly defeated theme-aware accents: the palette painted
+          // #ff6b00 on every background, so light mode carried the brightened
+          // dark-mode orange and read as washed out on paper. The ramp now lives
+          // in globals.css on both :root (dark) and html:not(.dark) (light), and
+          // light shifts a stop darker. Alpha modifiers (`bg-brand-500/15`) keep
+          // working because these are RGB triplets with <alpha-value>.
+          50: "rgb(var(--brand-50) / <alpha-value>)",
+          100: "rgb(var(--brand-100) / <alpha-value>)",
+          200: "rgb(var(--brand-200) / <alpha-value>)",
+          300: "rgb(var(--brand-300) / <alpha-value>)",
+          400: "rgb(var(--brand-400) / <alpha-value>)",
+          500: "rgb(var(--brand-500) / <alpha-value>)",
+          600: "rgb(var(--brand-600) / <alpha-value>)",
+          700: "rgb(var(--brand-700) / <alpha-value>)",
+          800: "rgb(var(--brand-800) / <alpha-value>)",
+          900: "rgb(var(--brand-900) / <alpha-value>)",
+          950: "rgb(var(--brand-950) / <alpha-value>)",
         },
         surface: {
           50: "rgb(var(--surface-50) / <alpha-value>)",

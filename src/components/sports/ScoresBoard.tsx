@@ -16,11 +16,21 @@ import {
   ChevronRight,
   CalendarDays,
   CircleDot,
+  MapPin,
   Signal,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { liveEndpoint } from "@/lib/sports-endpoint";
+import {
+  playSportsAlert,
+  setSportsAlertsMuted,
+  sportsAlertsMuted,
+  unlockSportsAudio,
+} from "@/lib/sports-sounds";
 import ReferralCards from "./ReferralCards";
+import MatchDetail from "./MatchDetail";
 
 interface Prediction {
   id: string;
@@ -91,15 +101,18 @@ function matchKeyOf(match: LiveMatch): string {
 const LIVE = new Set(["LIVE", "HT"]);
 const SPORTS = ["football", "basketball"] as const;
 const DAYS_BACK = 3;
-const DAYS_FORWARD = 3;
-
-const MARKET_LABELS: Record<string, string> = {
-  "1X2": "Match result",
-  "over-under": "Total goals",
-  btts: "Both teams to score",
-  "correct-score": "Correct score",
-};
-const MARKET_ORDER = ["1X2", "over-under", "btts", "correct-score"];
+/**
+ * A whole month of fixtures ahead, not a long weekend.
+ *
+ * Three days forward ended the horizon on the coming Thursday, which is the one
+ * thing a fixture board must not do: a reader planning a weekend, or looking for
+ * a midweek round, hit the end of the strip on day four. The date list is only
+ * buttons and each day is fetched on demand, so widening it costs one request
+ * when someone actually taps that far out.
+ */
+const DAYS_FORWARD = 30;
+/** Beyond this many days a weekday name repeats and stops identifying a date. */
+const WEEKDAY_LABEL_DAYS = 6;
 
 const FLAGS: Record<string, string> = {
   Kenya: "🇰🇪",
@@ -120,10 +133,6 @@ function statusLabel(m: LiveMatch): string {
   if (m.status === "CANCELLED") return "CANC";
   if (m.status === "SUSPENDED") return "SUSP";
   return m.kickoff ? new Date(m.kickoff).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
-}
-
-function pct(n: number | null): string {
-  return n == null ? "—" : `${n.toFixed(0)}%`;
 }
 
 function dayKey(offset: number): string {
@@ -152,9 +161,71 @@ export default function ScoresBoard({
   const [sport, setSport] = useState<string>("football");
   const [dayOffset, setDayOffset] = useState(0);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [liveOnly, setLiveOnly] = useState(false);
+  const [alertsOn, setAlertsOn] = useState(false);
   const inFlight = useRef(false);
+  const dayStrip = useRef<HTMLDivElement | null>(null);
+  /** Previous score and status per fixture, so a change can be told from a poll. */
+  const previous = useRef(new Map<string, { score: string; status: string }>());
+  const followedRef = useRef<string[]>([]);
+  const remindersRef = useRef<string[]>([]);
 
   const date = dayKey(dayOffset);
+
+  /**
+   * Keep the selected day visible in the horizon strip.
+   *
+   * With a month on the strip, selecting a day from the arrows could leave the
+   * highlighted chip scrolled off-screen — the reader taps "later", the board
+   * loads a new day, and the strip still shows last week, so the control looks
+   * broken. Scroll the strip itself (`scrollLeft`) rather than calling
+   * `scrollIntoView`, which would also scroll the page behind the sticky bar.
+   */
+  useEffect(() => {
+    const strip = dayStrip.current;
+    const chip = strip?.querySelector<HTMLElement>(`[data-offset="${dayOffset}"]`);
+    if (!strip || !chip) return;
+    const left = chip.offsetLeft - strip.clientWidth / 2 + chip.clientWidth / 2;
+    strip.scrollTo({ left: Math.max(0, left), behavior: "smooth" });
+  }, [dayOffset]);
+
+  /**
+   * Turn one poll into alerts.
+   *
+   * A poll returns a whole board, so the interesting events are DIFFS: a score
+   * that moved is a goal, a status that went SCHEDULED→LIVE is a kick-off, and
+   * LIVE→FT is a full-time whistle. Each alert is only played for a fixture the
+   * reader actually asked about — a followed team or a starred match — because a
+   * board that beeps for all eighteen fixtures is a board people silence.
+   *
+   * The diff is computed against the previous snapshot in a ref, so the first
+   * load of a page never fires a burst of alerts for goals that happened before
+   * the reader arrived.
+   */
+  const reactToSnapshot = useCallback((snapshot: LiveResponse) => {
+    const next = new Map<string, { score: string; status: string }>();
+    const watched = new Set(followedRef.current);
+    const reminded = new Set(remindersRef.current);
+
+    for (const match of snapshot.matches) {
+      const key = `${match.provider}:${match.externalId}`;
+      const score = `${match.homeScore ?? "-"}:${match.awayScore ?? "-"}`;
+      next.set(key, { score, status: match.status });
+
+      const before = previous.current.get(key);
+      if (!before) continue;
+      const mine = watched.has(match.homeTeam) || watched.has(match.awayTeam) || reminded.has(key);
+      if (!mine) continue;
+      if (before.score === score && before.status === match.status) continue;
+
+      if (before.score !== score && match.status !== "SCHEDULED") playSportsAlert("goal");
+      else if (before.status === "SCHEDULED" && (match.status === "LIVE" || match.status === "HT")) {
+        playSportsAlert("kickoff");
+      } else if (before.status !== "FT" && match.status === "FT") playSportsAlert("fulltime");
+    }
+
+    previous.current = next;
+  }, []);
 
   const load = useCallback(
     async (opts: { fresh?: boolean; silent?: boolean } = {}) => {
@@ -168,7 +239,11 @@ export default function ScoresBoard({
           cache: "no-store",
         });
         if (!res.ok) throw new Error("Livescores are unavailable right now.");
-        setHub((await res.json()) as LiveResponse);
+        const snapshot = (await res.json()) as LiveResponse;
+        // Diff before rendering: an alert that arrives after the score has
+        // already changed on screen has nothing left to tell the reader.
+        reactToSnapshot(snapshot);
+        setHub(snapshot);
         setError(null);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load livescores");
@@ -178,7 +253,7 @@ export default function ScoresBoard({
         setRefreshing(false);
       }
     },
-    [sport, date]
+    [sport, date, reactToSnapshot]
   );
 
   useEffect(() => {
@@ -281,11 +356,28 @@ export default function ScoresBoard({
     [followed, isAuthed]
   );
 
+  // Mirror the alert-relevant state into refs so the poll callback can read the
+  // reader's choices without being rebuilt (and re-subscribed) on every toggle.
+  useEffect(() => {
+    followedRef.current = followed;
+  }, [followed]);
+  useEffect(() => {
+    remindersRef.current = reminders;
+  }, [reminders]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read of the saved mute preference
+    setAlertsOn(!sportsAlertsMuted());
+  }, []);
+
   const visible = useMemo(() => {
     let matches = hub?.matches ?? [];
     if (onlyFollowed) matches = matches.filter((m) => followed.includes(m.homeTeam) || followed.includes(m.awayTeam));
+    // The live filter is the one a matchday actually wants: on a Saturday
+    // afternoon the board is mostly finished and upcoming games, and the reader
+    // who taps "Live" is asking for the four that are actually moving.
+    if (liveOnly) matches = matches.filter((m) => LIVE.has(m.status));
     return matches;
-  }, [hub, onlyFollowed, followed]);
+  }, [hub, onlyFollowed, followed, liveOnly]);
 
   const groups = useMemo(() => {
     const map = new Map<string, LiveMatch[]>();
@@ -337,7 +429,7 @@ export default function ScoresBoard({
   }
 
   return (
-    <div className="mx-auto grid w-full max-w-[1600px] gap-5 px-3 py-4 sm:gap-6 sm:px-6 sm:py-5 lg:grid-cols-[minmax(0,1fr)_340px] xl:px-8">
+    <div className="mx-auto grid w-full max-w-[1600px] gap-5 px-3 py-4 sm:gap-6 sm:px-6 sm:py-5 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px] xl:px-8">
       <div className="min-w-0">
         {/* Day strip — sticky so switching days never means scrolling back up. */}
         <div className="sticky top-0 z-20 -mx-3 flex items-center gap-2 border-b border-surface-900/60 bg-surface-950/90 px-3 py-2 backdrop-blur sm:-mx-6 sm:px-6">
@@ -349,15 +441,25 @@ export default function ScoresBoard({
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
-          <div className="flex flex-1 gap-1.5 overflow-x-auto pb-0.5">
+          <div ref={dayStrip} className="flex flex-1 gap-1.5 overflow-x-auto pb-0.5">
             {Array.from({ length: DAYS_BACK + DAYS_FORWARD + 1 }, (_, i) => i - DAYS_BACK).map((offset) => {
               const d = new Date();
               d.setDate(d.getDate() + offset);
-              const label = offset === 0 ? "Today" : offset === -1 ? "Yest" : offset === 1 ? "Tmrw" : d.toLocaleDateString([], { weekday: "short" });
+              let label: string;
+              if (offset === 0) label = "Today";
+              else if (offset === -1) label = "Yest";
+              else if (offset === 1) label = "Tmrw";
+              else if (Math.abs(offset) <= WEEKDAY_LABEL_DAYS) label = d.toLocaleDateString([], { weekday: "short" });
+              // Over a month "Sat" appears four times and identifies nothing;
+              // the month is what disambiguates, and the date below is the day.
+              else label = d.toLocaleDateString([], { month: "short" });
               return (
                 <button
                   key={offset}
+                  data-offset={offset}
                   onClick={() => setDayOffset(offset)}
+                  aria-current={dayOffset === offset ? "date" : undefined}
+                  aria-label={d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}
                   className={cn(
                     "flex min-w-[62px] shrink-0 flex-col items-center rounded-xl border px-2.5 py-1.5 transition",
                     dayOffset === offset
@@ -424,6 +526,20 @@ export default function ScoresBoard({
             ))}
           </div>
 
+          <button
+            onClick={() => setLiveOnly((v) => !v)}
+            aria-pressed={liveOnly}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition",
+              liveOnly
+                ? "border-red-500 bg-red-500/15 text-red-300"
+                : "border-surface-800 text-surface-400 hover:text-surface-50"
+            )}
+          >
+            <CircleDot className={cn("h-3.5 w-3.5", liveOnly && "animate-pulse")} />
+            Live only{(hub?.liveCount ?? 0) > 0 ? ` (${hub?.liveCount})` : ""}
+          </button>
+
           {isAuthed && followed.length > 0 ? (
             <button
               onClick={() => setOnlyFollowed((v) => !v)}
@@ -438,6 +554,35 @@ export default function ScoresBoard({
               My teams ({myMatchCount})
             </button>
           ) : null}
+
+          {/*
+            Goal alerts, SofaScore-style: distinct tones per event, off by
+            default, and enabled here because the browser will not start audio
+            without a gesture — this button IS that gesture.
+          */}
+          <button
+            onClick={() => {
+              const next = !alertsOn;
+              setAlertsOn(next);
+              setSportsAlertsMuted(!next);
+              if (next) unlockSportsAudio();
+            }}
+            aria-pressed={alertsOn}
+            title={
+              alertsOn
+                ? "Goal, card and kick-off tones are on for teams you follow and matches you star"
+                : "Play a distinct tone for goals, kick-offs and full time on your teams"
+            }
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition",
+              alertsOn
+                ? "border-emerald-500 bg-emerald-500/15 text-emerald-300"
+                : "border-surface-800 text-surface-400 hover:text-surface-50"
+            )}
+          >
+            {alertsOn ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
+            {alertsOn ? "Alerts on" : "Alerts off"}
+          </button>
 
           <button
             onClick={() => void load({ fresh: true })}
@@ -471,10 +616,18 @@ export default function ScoresBoard({
           <div className="mt-4 rounded-2xl border border-dashed border-surface-800 px-4 py-16 text-center">
             <CalendarDays className="mx-auto h-8 w-8 text-surface-600" />
             <p className="mt-2 text-sm font-medium text-surface-400">
-              {onlyFollowed ? "None of your teams play in this window" : "No fixtures for this day"}
+              {liveOnly
+                ? "Nothing is live right now"
+                : onlyFollowed
+                  ? "None of your teams play in this window"
+                  : "No fixtures for this day"}
             </p>
             <p className="text-xs text-surface-500">
-              {onlyFollowed ? "Turn off the My teams filter to see every fixture." : "Try another day or sport."}
+              {liveOnly
+                ? "Turn off the Live filter to see the day's full schedule."
+                : onlyFollowed
+                  ? "Turn off the My teams filter to see every fixture."
+                  : "Try another day or sport."}
             </p>
           </div>
         ) : (
@@ -522,7 +675,14 @@ export default function ScoresBoard({
         </div>
       </div>
 
-      <aside className="space-y-4">
+      {/*
+        Sticky on desktop so the rail and its ads stay beside the list instead of
+        scrolling away from it — the single biggest difference between how the
+        wide view and the phone view feel. Capped to the viewport so a tall rail
+        can never leave content stranded below the fold, and released below `lg`
+        where it stacks under the list anyway.
+      */}
+      <aside className="space-y-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto lg:pr-1">
         {sidebarAd ? <div>{sidebarAd}</div> : null}
         <ReferralCards placement="sports-sidebar" />
       </aside>
@@ -591,6 +751,7 @@ function MatchRow({
 }) {
   const isLive = LIVE.has(match.status);
   const reminded = reminders.includes(matchKeyOf(match));
+  const hasOdds = match.oddsHome != null || match.oddsDraw != null || match.oddsAway != null;
   return (
     <div className="border-b border-surface-800/50 last:border-b-0">
       <div className="flex items-center gap-0.5 px-2 py-2.5 transition hover:bg-surface-800/40 sm:gap-1 sm:px-4">
@@ -610,7 +771,7 @@ function MatchRow({
             </span>
           </div>
 
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 lg:max-w-[440px]">
             <TeamLine
               name={match.homeTeam}
               logo={match.homeLogo}
@@ -626,6 +787,51 @@ function MatchRow({
               leading={(match.awayScore ?? 0) > (match.homeScore ?? 0)}
             />
           </div>
+
+          {/*
+            Desktop-only context. A phone row has no room for this, but a row a
+            thousand pixels wide holding nothing but two team names throws away
+            what the pipeline already paid for: the venue and the market's 1X2
+            line are both fetched on every fixture and were rendered nowhere.
+          */}
+          <div className="hidden min-w-0 flex-1 items-center gap-2.5 lg:flex">
+            {match.venue ? (
+              <span className="min-w-0 truncate text-[11px] text-surface-500" title={match.venue}>
+                <MapPin className="mr-1 inline h-3 w-3 align-[-2px] text-surface-600" />
+                {match.venue}
+              </span>
+            ) : null}
+            {match.country ? (
+              <span className="hidden shrink-0 text-[10px] uppercase tracking-wider text-surface-600 xl:inline">
+                {match.country}
+              </span>
+            ) : null}
+          </div>
+
+          {hasOdds ? (
+            <div
+              className="hidden shrink-0 items-center gap-1 lg:flex"
+              title="Market prices from the provider (decimal odds, 1X2)"
+            >
+              {(
+                [
+                  ["1", match.oddsHome],
+                  ["X", match.oddsDraw],
+                  ["2", match.oddsAway],
+                ] as const
+              ).map(([label, value]) =>
+                value == null ? null : (
+                  <span
+                    key={label}
+                    className="rounded-md border border-surface-800 bg-surface-950/60 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-surface-400"
+                  >
+                    <span className="mr-1 text-surface-600">{label}</span>
+                    {value.toFixed(2)}
+                  </span>
+                )
+              )}
+            </div>
+          ) : null}
 
           <div className="flex shrink-0 items-center gap-2">
             {match.predictions.length > 0 ? (
@@ -925,47 +1131,31 @@ function FixtureContextPanel({ match }: { match: LiveMatch }) {
 }
 
 function AnalysisPanel({ match }: { match: LiveMatch }) {
-  const predictions = [...match.predictions].sort((a, b) => MARKET_ORDER.indexOf(a.market) - MARKET_ORDER.indexOf(b.market));
-  const headline = match.prediction;
+  const hasPicks = match.predictions.length > 0;
 
   return (
     <div className="border-t border-surface-800/60 bg-surface-950/60 px-3 py-4 sm:px-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-300">
-          <Brain className="h-3.5 w-3.5" /> Our model&apos;s read on this match
-        </span>
-        {predictions.length > 0 ? (
-          <span className="rounded-full bg-surface-800 px-2 py-0.5 text-[10px] uppercase tracking-wide text-surface-400">
-            {predictions.length} markets
-          </span>
-        ) : null}
-        {match.oddsHome ? (
-          <span className="text-[11px] text-surface-500">
-            Market: {match.oddsHome.toFixed(2)} / {match.oddsDraw?.toFixed(2)} / {match.oddsAway?.toFixed(2)}
-          </span>
-        ) : null}
-      </div>
-
-      {predictions.length === 0 ? (
-        <p className="mt-3 text-xs text-surface-500">
-          No prediction for this match yet. Our model publishes picks shortly before kick-off — in the
-          meantime the form and head-to-head below are live.
-        </p>
-      ) : (
-        <>
-          {headline ? (
-            <p className="mt-3 text-sm font-semibold text-surface-50">
-              Headline: {headline.selection}{" "}
-              <span className="text-xs font-normal text-surface-400">{pct(headline.confidence * 100)} confidence</span>
-            </p>
-          ) : null}
-          <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
-            {predictions.map((p) => (
-              <MarketCard key={p.id} prediction={p} match={match} />
-            ))}
-          </div>
-        </>
-      )}
+      {/**
+       * The match centre replaces the old picks-only panel. It carries the model's
+       * read AND the measured evidence behind it — timeline, team stats, lineups,
+       * attack momentum, the shot map — so a reader can check the reasoning rather
+       * than trust a percentage. Anything the fixture's feed cannot support is
+       * simply a tab that is not offered.
+       */}
+      <MatchDetail
+        match={{
+          provider: match.provider,
+          externalId: match.externalId,
+          homeTeam: match.homeTeam,
+          awayTeam: match.awayTeam,
+          competition: match.competition,
+          status: match.status,
+          minute: match.minute,
+          homeScore: match.homeScore,
+          awayScore: match.awayScore,
+          kickoff: match.kickoff,
+        }}
+      />
 
       {/*
         Form and head-to-head sit OUTSIDE the picks branch on purpose: they are
@@ -975,7 +1165,7 @@ function AnalysisPanel({ match }: { match: LiveMatch }) {
       */}
       <FixtureContextPanel match={match} />
 
-      {predictions.length > 0 ? (
+      {hasPicks ? (
         <div className="mt-4">
           <ReferralCards placement="sports-inline" matchId={match.id} compact />
         </div>
@@ -988,68 +1178,3 @@ function AnalysisPanel({ match }: { match: LiveMatch }) {
   );
 }
 
-function MarketCard({ prediction, match }: { prediction: Prediction; match: LiveMatch }) {
-  const label = MARKET_LABELS[prediction.market] ?? prediction.market;
-  const chosen = Math.max(0, Math.min(100, prediction.confidence * 100));
-
-  return (
-    <div className="rounded-xl border border-surface-800/60 bg-surface-900/40 p-3">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-surface-500">{label}</span>
-        <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">
-          {chosen.toFixed(0)}%
-        </span>
-      </div>
-      <p className="mt-1 text-sm font-semibold text-surface-50">{prediction.selection}</p>
-
-      {prediction.market === "1X2" ? (
-        <div className="mt-2 space-y-1.5">
-          <ProbBar label={match.homeTeam} value={prediction.homeWinPct} color="bg-brand-500" />
-          <ProbBar label="Draw" value={prediction.drawPct} color="bg-surface-500" />
-          <ProbBar label={match.awayTeam} value={prediction.awayWinPct} color="bg-accent-coral" />
-        </div>
-      ) : prediction.market === "over-under" ? (
-        <div className="mt-2 space-y-1.5">
-          <ProbBar label="Over 2.5" value={/^over/i.test(prediction.selection) ? chosen : 100 - chosen} color="bg-emerald-500" />
-          <ProbBar label="Under 2.5" value={/^under/i.test(prediction.selection) ? chosen : 100 - chosen} color="bg-surface-500" />
-        </div>
-      ) : prediction.market === "btts" ? (
-        <div className="mt-2 space-y-1.5">
-          <ProbBar label="Both score" value={/not both/i.test(prediction.selection) ? 100 - chosen : chosen} color="bg-emerald-500" />
-          <ProbBar label="Clean sheet either way" value={/not both/i.test(prediction.selection) ? chosen : 100 - chosen} color="bg-surface-500" />
-        </div>
-      ) : null}
-
-      <p className="mt-2 line-clamp-3 text-[11px] leading-relaxed text-surface-400">{prediction.rationale}</p>
-
-      <div className="mt-2 flex flex-wrap gap-3 text-[10px] text-surface-500">
-        {prediction.valueEdge != null ? (
-          <span className={cn("font-medium", prediction.valueEdge > 0 ? "text-emerald-400" : "text-amber-400")}>
-            Edge {prediction.valueEdge > 0 ? "+" : ""}
-            {prediction.valueEdge.toFixed(1)}pp
-          </span>
-        ) : null}
-        {prediction.expectedHomeGoals != null ? (
-          <span>
-            xG {prediction.expectedHomeGoals.toFixed(2)}–{prediction.expectedAwayGoals?.toFixed(2) ?? "—"}
-          </span>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function ProbBar({ label, value, color }: { label: string; value: number | null; color: string }) {
-  const pctValue = Math.max(0, Math.min(100, value ?? 0));
-  return (
-    <div>
-      <div className="flex items-center justify-between text-[10px] text-surface-500">
-        <span className="truncate">{label}</span>
-        <span className="tabular-nums">{pct(value)}</span>
-      </div>
-      <div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-surface-800">
-        <div className={cn("h-full rounded-full", color)} style={{ width: `${pctValue}%` }} />
-      </div>
-    </div>
-  );
-}

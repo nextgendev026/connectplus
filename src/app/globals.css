@@ -40,7 +40,26 @@
   --card-bg: 26 30 34;
   --card-border: 40 44 48;
   --muted: 154 160 172;
-  /* Brand colors — brightened for dark backgrounds */
+  /* Brand colors — brightened for dark backgrounds.
+
+     The full ramp lives here as RGB triplets rather than as literal hex in
+     tailwind.config.ts, because `brand-*` is the most-used colour family in the
+     app and light mode needs a visibly deeper orange than dark mode. A
+     hardcoded palette cannot express that: it paints the same #ff6b00 on paper
+     as on night, which is how orange accents ended up washed out and barely
+     legible in light mode. 400/500/600 deliberately mirror the --brand-primary*
+     tokens below so the two systems cannot drift apart. */
+  --brand-50: 255 246 239;
+  --brand-100: 255 234 217;
+  --brand-200: 255 209 171;
+  --brand-300: 255 178 115;
+  --brand-400: 255 143 58;
+  --brand-500: 255 107 0;
+  --brand-600: 224 95 0;
+  --brand-700: 184 78 0;
+  --brand-800: 143 61 0;
+  --brand-900: 110 47 0;
+  --brand-950: 61 26 0;
   --brand-primary: #ff6b00;
   --brand-primary-light: #ff8f3a;
   --brand-primary-dark: #e05600;
@@ -122,7 +141,25 @@ html:not(.dark) {
   --card-border: 200 200 204;
   --muted: 58 58 63;
   /* Brand colors — deep terracotta for light backgrounds so sunset orange
-     stays legible on paper instead of washing out */
+     stays legible on paper instead of washing out.
+
+     The whole ramp is shifted one stop darker than the dark-mode one, so every
+     `brand-*` utility darkens at once instead of only the handful of places
+     that happen to use --brand-primary directly. 400/500/600 are exactly the
+     long-standing --brand-primary-light/primary/dark tokens, so the existing
+     accent colour does not move — only the utilities around it stop being
+     brightened for a background that is no longer there. */
+  --brand-50: 255 247 237;
+  --brand-100: 255 237 213;
+  --brand-200: 254 215 170;
+  --brand-300: 251 146 60;
+  --brand-400: 234 88 12;
+  --brand-500: 194 65 12;
+  --brand-600: 154 52 18;
+  --brand-700: 124 45 18;
+  --brand-800: 100 36 14;
+  --brand-900: 78 28 11;
+  --brand-950: 42 13 4;
   --brand-primary: #c2410c;
   --brand-primary-light: #ea580c;
   --brand-primary-dark: #9a3412;
@@ -464,11 +501,12 @@ html, body, div, span, nav, header, main, footer, aside, section, article {
   }
 }
 
-/* Focus ring */
+/* Focus ring — themed, so the ring deepens with the rest of the accents in
+   light mode rather than staying dark-mode orange on paper. */
 *:focus-visible {
-  outline: 2px solid #ff6b00;
+  outline: 2px solid var(--brand-primary);
   outline-offset: 2px;
-  outline-color: color-mix(in srgb, #ff6b00 85%, #ff5500);
+  outline-color: color-mix(in srgb, var(--brand-primary) 85%, #ff5500);
 }
 
 /* Prose content styles */

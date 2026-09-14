@@ -11,8 +11,10 @@ import {
   Clock,
   AlertTriangle,
   RefreshCw,
+  ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { tipsEndpoint } from "@/lib/sports-endpoint";
 import ReferralCards from "./ReferralCards";
 
 interface TipMatch {
@@ -52,6 +54,8 @@ interface TipsResponse {
   generatedAt?: string;
   /** Newest model write behind the picks on screen. */
   updatedAt?: string | null;
+  /** The rule the server applied: a pick is only shown while it is actionable. */
+  stakeWindow?: { minuteCutoff: number; maxAgeMinutes: number };
   picks: Tip[];
 }
 
@@ -127,10 +131,12 @@ export default function BettingTips({
       if (!silent) setLoading(true);
       setError(null);
       try {
-        const params = new URLSearchParams({ limit: "40", sort });
-        if (market) params.set("market", market);
-        if (bust) params.set("bust", String(Date.now()));
-        const res = await fetch(`/api/sports/predictions?${params.toString()}`, { cache: "no-store" });
+        // Through the edge tier: the board polls every 60s for every reader, and
+        // the payload is identical for all of them.
+        const res = await fetch(
+          tipsEndpoint({ limit: 40, sort, market: market || undefined, bust: bust ? Date.now() : undefined }),
+          { cache: "no-store" }
+        );
         if (!res.ok) throw new Error("Tips are unavailable right now.");
         const payload = (await res.json()) as TipsResponse;
         setData(payload);
@@ -205,7 +211,7 @@ export default function BettingTips({
   const groups = groupByFixture(data?.picks ?? []);
 
   return (
-    <div className="mx-auto grid w-full max-w-[1600px] gap-5 px-3 py-5 sm:gap-6 sm:px-6 sm:py-6 lg:grid-cols-[minmax(0,1fr)_340px] xl:px-8">
+    <div className="mx-auto grid w-full max-w-[1600px] gap-5 px-3 py-5 sm:gap-6 sm:px-6 sm:py-6 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px] xl:px-8">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-3">
           <h2 className="flex items-center gap-2 text-lg font-bold text-surface-50">
@@ -229,6 +235,15 @@ export default function BettingTips({
             or by how much its numbers differ from the bookmakers&apos;. Open the Scores tab for the full
             breakdown behind any of these.
           </p>
+          {data?.stakeWindow ? (
+            <span
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-surface-800 px-2.5 py-1 text-[10px] font-medium text-surface-500"
+              title={`A pick is dropped once its match passes ${data.stakeWindow.minuteCutoff}' — from there a reader can no longer act on it. Stale status strings are caught after ${data.stakeWindow.maxAgeMinutes} minutes.`}
+            >
+              <ShieldCheck className="h-3 w-3 text-emerald-400" />
+              Actionable picks only
+            </span>
+          ) : null}
           {freshness ? (
             <button
               type="button"
@@ -298,8 +313,9 @@ export default function BettingTips({
             <Radar className="mx-auto h-8 w-8 text-surface-600" />
             <p className="mt-2 text-sm font-medium text-surface-400">No tips for this filter yet</p>
             <p className="text-xs text-surface-500">
-              Picks are published shortly before kick-off, so there is nothing here yet. Try clearing the
-              filter, or come back closer to matchday.
+              Picks are published shortly before kick-off, and a pick stops being shown once its match is too
+              far along to act on{data?.stakeWindow ? ` (past ${data.stakeWindow.minuteCutoff}')` : ""}. Try
+              clearing the filter, or come back closer to matchday.
             </p>
           </div>
         ) : (
@@ -325,7 +341,8 @@ export default function BettingTips({
         </div>
       </div>
 
-      <aside className="space-y-4">
+      {/* Sticky on desktop, released below `lg` — see ScoresBoard for the reasoning. */}
+      <aside className="space-y-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto lg:pr-1">
         {sidebarAd ? <div>{sidebarAd}</div> : null}
         <ReferralCards placement="sports-sidebar" />
       </aside>

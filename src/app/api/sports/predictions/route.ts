@@ -2,7 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { withDbRetry } from "@/lib/db-retry";
 import { createLogger } from "@/lib/logger";
-import { BASELINE_MODEL, MARKET_LABELS, MARKETS } from "@/lib/sports-intelligence";
+import {
+  BASELINE_MODEL,
+  MARKET_LABELS,
+  MARKETS,
+  PICK_MAX_AGE_MINUTES,
+  PICK_MINUTE_CUTOFF,
+  pickIsActionable,
+} from "@/lib/sports-intelligence";
 import { canonicalCompetition, fixtureIdentity } from "@/lib/sports";
 
 /** Provider precedence — a keyed live feed outranks a keyless fallback. */
@@ -20,6 +27,14 @@ export const dynamic = "force-dynamic";
  * baseline is never surfaced here), optionally filtered to one market and
  * ordered by confidence or value edge. The record travels with the picks so the
  * tips are always shown next to the results that justify them.
+ *
+ * NOTHING PAST THE STAKE WINDOW. Confidence ordering used to put a call on a
+ * match already at 88' at the very top of the board — unfollowable, and the
+ * fastest way to lose a reader's trust in every other number on the page. A
+ * fixture is dropped once it passes `PICK_MINUTE_CUTOFF`, and a stale status
+ * string is caught by `PICK_MAX_AGE_MINUTES`. The rule that governs the feed is
+ * returned with it, so the board can say why the list is short instead of
+ * looking broken on a quiet evening.
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -40,14 +55,34 @@ export async function GET(request: NextRequest) {
     const [picks, settled, won] = await Promise.all([
       withDbRetry(() =>
         prisma.sportsPrediction
-          .findMany({
-          where: {
-            status: "PENDING",
-            model: { not: BASELINE_MODEL },
-            ...(market ? { market } : {}),
-            ...(matchId ? { matchId } : {}),
-            match: { status: { in: ["SCHEDULED", "LIVE", "HT"] } },
-          },
+          .findMany({            where: {
+              status: "PENDING",
+              model: { not: BASELINE_MODEL },
+              ...(market ? { market } : {}),
+              ...(matchId ? { matchId } : {}),
+              match: {
+                AND: [
+                  { status: { in: ["SCHEDULED", "LIVE", "HT"] } },
+                  // Not already past the point where a pick is usable. Expressed
+                  // in SQL as well as in `pickIsActionable` below so the
+                  // over-fetch budget is spent on fixtures that can survive the
+                  // filter, rather than being eaten by nearly-over matches.
+                  {
+                    OR: [
+                      { kickoff: null },
+                      { kickoff: { gte: new Date(Date.now() - PICK_MAX_AGE_MINUTES * 60_000) } },
+                    ],
+                  },
+                  {
+                    OR: [
+                      { status: "SCHEDULED" },
+                      { minute: null },
+                      { minute: { lt: PICK_MINUTE_CUTOFF } },
+                    ],
+                  },
+                ],
+              },
+            },
           orderBy:
             sort === "edge"
               ? [{ valueEdge: { sort: "desc", nulls: "last" } }, { confidence: "desc" }]
@@ -108,12 +143,17 @@ export async function GET(request: NextRequest) {
         market: market ?? null,
         sort,
         degraded,
+        // The rule the feed just applied, so the board can explain a short list.
+        stakeWindow: { minuteCutoff: PICK_MINUTE_CUTOFF, maxAgeMinutes: PICK_MAX_AGE_MINUTES },
         record: {
           settled: settledCount,
           won: wonCount,
           accuracy: settledCount > 0 ? Math.round((wonCount / settledCount) * 1000) / 10 : null,
         },
-        picks: dedupePicks(picks, limit).map((p) => ({
+        picks: dedupePicks(
+          picks.filter((p) => pickIsActionable(p.match)),
+          limit
+        ).map((p) => ({
           ...p,
           marketLabel: MARKET_LABELS[p.market] ?? p.market,
           match: {

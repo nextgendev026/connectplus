@@ -3,7 +3,8 @@ import { getSettings } from "@/lib/settings";
 import { runChecks, type ServiceCheck } from "@/lib/status";
 import { getCronStatus, type CronJobStatus } from "@/lib/cron-schedule";
 import { heartbeatLedger } from "@/lib/job-heartbeat";
-import { convexHealth } from "@/lib/convex";
+import { convexHealth, convexUrl, convexUrlSource } from "@/lib/convex";
+import { cacheProbe } from "@/lib/redis";
 
 /**
  * Integration registry for the admin console.
@@ -355,11 +356,59 @@ export async function getIntegrations(): Promise<IntegrationsReport> {
     });
   }
 
+  /* ── Cache tier (Upstash KV / Vercel KV / TCP Redis) ───────────── */
+  {
+    const probeResult = await cacheProbe();
+    const status: IntegrationStatus = probeResult.ok
+      ? "operational"
+      : probeResult.backend === "none"
+        ? "unconfigured"
+        : "degraded";
+
+    integrations.push({
+      id: "cache-tier",
+      name: "Cache tier (Upstash KV / Redis)",
+      category: "Data & cache",
+      description:
+        "Shared cache in front of Postgres: livescore snapshots, feed pages, settings, heartbeats and the model's own priors. A hit here is a query that never runs and a function invocation that never happens.",
+      status,
+      detail: probeResult.detail,
+      latencyMs: probeResult.latencyMs,
+      verdict: verdictFor(status, false),
+      fields: [
+        field("KV REST URL", "KV_REST_API_URL", {
+          required: false,
+          hint: "Injected by the Vercel × Upstash integration when the store is connected to this project.",
+        }),
+        field("KV REST token", "KV_REST_API_TOKEN", { required: false, secret: true }),
+        field("Upstash REST URL", "UPSTASH_REDIS_REST_URL", {
+          required: false,
+          hint: "Accepted as an alternative to the KV_ names, so a store created straight in Upstash works too.",
+        }),
+        field("Upstash REST token", "UPSTASH_REDIS_REST_TOKEN", { required: false, secret: true }),
+        field("TCP URL", "REDIS_URL", { required: false, secret: true }),
+        field("Backend override", "CACHE_BACKEND", {
+          required: false,
+          hint: "auto (default) prefers the REST tier; `redis` forces the TCP client; `upstash` refuses to fall back.",
+        }),
+      ],
+      links: [{ label: "Upstash console", href: "https://console.upstash.com/" }],
+      notes:
+        "The REST tier is preferred on serverless because a TCP client opens a socket per function instance — a cold start pays a handshake and a traffic spike competes for the connection limit. On Vercel: Storage → your Upstash database → Connect Project, which injects KV_REST_API_URL and KV_REST_API_TOKEN.",
+    });
+  }
+
   /* ── Convex ─────────────────────────────────────────────────────── */
   {
-    const url = env("NEXT_PUBLIC_CONVEX_URL") || env("CONVEX_URL");
+    // Resolve through the client layer, not `env()`, so a URL entered in the
+    // admin console counts as configured. Reading the env var directly here is
+    // what made the console say "not configured" while the setting it offered
+    // was live.
+    const url = await convexUrl();
+    const source = convexUrlSource();
     let status: IntegrationStatus = "unconfigured";
-    let detail = "Not configured — view counts stay on Postgres";
+    let detail =
+      "Not configured — view counts stay on Postgres. Add NEXT_PUBLIC_CONVEX_URL in Vercel, or paste the deployment URL below to switch it on without a redeploy.";
     let latencyMs: number | null = null;
     if (url) {
       const r = await probe(`${url.replace(/\/+$/, "")}/version`, { timeoutMs: 5000 });
@@ -390,11 +439,29 @@ export async function getIntegrations(): Promise<IntegrationsReport> {
       description:
         "Off-Supabase write buffer for article reads; folded back into Post.viewCount by the nightly sweep.",
       status,
-      detail,
+      detail:
+        detail +
+        (source === "setting"
+          ? " · URL from the admin console"
+          : source === "env"
+            ? " · URL from NEXT_PUBLIC_CONVEX_URL"
+            : ""),
       latencyMs,
       verdict: verdictFor(status, false),
       fields: [
-        field("Public URL", "NEXT_PUBLIC_CONVEX_URL", { required: false }),
+        convexUrlSource() === "env"
+          ? field("Public URL", "NEXT_PUBLIC_CONVEX_URL", { required: false })
+          : {
+              label: "Public URL",
+              env: "NEXT_PUBLIC_CONVEX_URL",
+              present: Boolean(url),
+              value: url || null,
+              required: false,
+              managedBySetting: "convexUrl",
+              hint: url
+                ? "Set from the admin console — the env var is unset, so this value is what the app uses."
+                : "Paste the deployment URL here (e.g. https://<deployment>.convex.cloud) to switch Convex on without a redeploy.",
+            },
         field("Deploy key", "CONVEX_DEPLOY_KEY", { required: false, secret: true }),
       ],
       links: [{ label: "Convex dashboard", href: "https://dashboard.convex.dev/" }],

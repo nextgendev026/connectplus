@@ -1,4 +1,9 @@
 import { prisma } from "@/lib/prisma";
+import {
+  loadCompetitionTrends,
+  trendGoalAdjustment,
+  type CompetitionTrend,
+} from "@/lib/sports-trends";
 import { getFixtureContext, type H2HMeeting, type TeamForm } from "@/lib/sports-h2h";
 import { applyDirectives, extractDirectives, type StoredDirective } from "@/lib/mind-directives";
 import { WEB_KNOWLEDGE_CATEGORY } from "@/lib/mind-knowledge";
@@ -110,6 +115,12 @@ export interface PredictionPrior {
   settledSample: number;
   /** Per-market accuracy, used to temper confidence in weaker markets. */
   marketAccuracy?: Record<string, { accuracy: number; sample: number }>;
+  /**
+   * What this competition has actually been doing (see sports-trends.ts): goals
+   * per game and the share of home wins, draws, BTTS and over 2.5s. Absent when
+   * too few matches have been observed, in which case the model is untouched.
+   */
+  trend?: CompetitionTrend | null;
 }
 
 interface PoissonGrid {
@@ -122,6 +133,8 @@ interface PoissonGrid {
   pOver25: number;
   pBtts: number;
   implied: { home: number; draw: number; away: number } | null;
+  /** Set when the competition's observed scoring moved the goal expectations. */
+  trendNote?: string | null;
 }
 
 function exactScoreProb(matrix: number[][], h: number, a: number): number {
@@ -173,7 +186,8 @@ function realExpectation(attack: TeamForm | null, defence: TeamForm | null, venu
 function buildGrid(
   match: NormalizedMatch,
   mind?: MindSignal | null,
-  form?: FormSignal | null
+  form?: FormSignal | null,
+  trend?: CompetitionTrend | null
 ): PoissonGrid {
   const homeStrength = teamStrength(match.homeTeam);
   const awayStrength = teamStrength(match.awayTeam);
@@ -231,6 +245,29 @@ function buildGrid(
     }
   }
 
+  /*
+   * ── Learned competition trend ─────────────────────────────────────────────
+   *
+   * Applied AFTER form and the mind, and applied as a SCALE to both sides rather
+   * than a replacement: a league that is running at 3.4 goals a game should move
+   * this fixture's expectations up without flattening the gap between a strong
+   * home side and a weak away one. The pull is proportional to how many finished
+   * matches back it and is capped, so a 9-match sample nudges and a full season
+   * leans — and a competition with too little evidence leaves the model exactly
+   * as it was.
+   */
+  let trendNote: string | null = null;
+  if (trend) {
+    const adjusted = trendGoalAdjustment(trend, lambdaHome, lambdaAway);
+    if (adjusted.applied !== 0) {
+      lambdaHome = adjusted.lambdaHome;
+      lambdaAway = adjusted.lambdaAway;
+      trendNote = `${match.competition} is averaging ${trend.goalsPerMatch.toFixed(2)} goals a game over ${trend.matches} matches, which ${
+        adjusted.applied > 0 ? "lifts" : "dampens"
+      } both sides' expectation by ${(Math.abs(adjusted.applied) * 100).toFixed(1)}%.`;
+    }
+  }
+
   lambdaHome = Math.min(Math.max(lambdaHome, 0.3), 3.6);
   lambdaAway = Math.min(Math.max(lambdaAway, 0.25), 3.6);
 
@@ -280,6 +317,7 @@ function buildGrid(
     pOver25,
     pBtts,
     implied,
+    trendNote,
   };
 }
 
@@ -566,7 +604,7 @@ export function predictMarkets(
   mind?: MindSignal | null,
   form?: FormSignal | null
 ): MarketPrediction[] {
-  const grid = buildGrid(match, mind, form);
+  const grid = buildGrid(match, mind, form, prior.trend ?? null);
   const base = {
     homeWinPct: Math.round(grid.pHome * 1000) / 10,
     drawPct: Math.round(grid.pDraw * 1000) / 10,
@@ -574,7 +612,12 @@ export function predictMarkets(
     expectedHomeGoals: Math.round(grid.lambdaHome * 100) / 100,
     expectedAwayGoals: Math.round(grid.lambdaAway * 100) / 100,
   };
-  const xgLine = `Poisson model: xG ${grid.lambdaHome.toFixed(2)}–${grid.lambdaAway.toFixed(2)}.`;
+  // The trend sentence travels with the rationale, not just the numbers: a
+  // reader is entitled to know that the model moved because of what the league
+  // has been doing, and by how much.
+  const xgLine = `Poisson model: xG ${grid.lambdaHome.toFixed(2)}–${grid.lambdaAway.toFixed(2)}.${
+    grid.trendNote ? ` ${grid.trendNote}` : ""
+  }`;
   const priorLine = priorBlurb(prior, match.competition);
   const mindLine = mind && mind.notes.length > 0 ? ` ${mind.notes.join(" ")}` : "";
   const formLine = describeForm(form);
@@ -751,8 +794,13 @@ export function buildBaselinePick(match: NormalizedMatch): MarketPrediction | nu
 
 async function competitionPrior(
   competition: string,
-  marketAccuracy?: Record<string, { accuracy: number; sample: number }>
+  marketAccuracy?: Record<string, { accuracy: number; sample: number }>,
+  trends?: Map<string, CompetitionTrend>
 ): Promise<PredictionPrior> {
+  // The learned trend is attached on every path, including the failure paths:
+  // it is a read of an already-cached table, so it cannot fail the way a query
+  // can, and dropping it would silently change the model on a database blip.
+  const trend = trends?.get(competition) ?? null;
   try {
     const rows = await prisma.sportsPrediction.findMany({
       where: { status: { in: ["WON", "LOST"] }, model: PRIMARY_MODEL, match: { competition } },
@@ -760,12 +808,12 @@ async function competitionPrior(
       take: 200,
     });
     if (rows.length === 0) {
-      return { competitionAccuracy: null, settledSample: 0, marketAccuracy };
+      return { competitionAccuracy: null, settledSample: 0, marketAccuracy, trend };
     }
     const won = rows.filter((r) => r.status === "WON").length;
-    return { competitionAccuracy: won / rows.length, settledSample: rows.length, marketAccuracy };
+    return { competitionAccuracy: won / rows.length, settledSample: rows.length, marketAccuracy, trend };
   } catch {
-    return { competitionAccuracy: null, settledSample: 0, marketAccuracy };
+    return { competitionAccuracy: null, settledSample: 0, marketAccuracy, trend };
   }
 }
 
@@ -991,8 +1039,20 @@ export async function runSportsIntelligence(opts: {
   matches?: NormalizedMatch[];
   limit?: number;
   teach?: boolean;
+  /**
+   * How far ahead the run writes picks, in days.
+   *
+   * The board only ever showed picks for fixtures that were already in the live
+   * snapshot — effectively today. That made the calendar view a set of empty
+   * days and meant a fixture kicking off in three days had no analysis until the
+   * morning of the match, when the page is busiest. A week is the horizon a
+   * reader actually plans around, and the cost is bounded: the same pipeline,
+   * just a wider candidate window and a larger budget.
+   */
+  horizonDays?: number;
 } = {}): Promise<PredictRunResult> {
-  const limit = Math.min(Math.max(opts.limit ?? 40, 1), 200);
+  const limit = Math.min(Math.max(opts.limit ?? 40, 1), 400);
+  const horizonDays = Math.min(Math.max(opts.horizonDays ?? 1, 1), 14);
 
   let matches = opts.matches;
   if (!matches) {
@@ -1025,17 +1085,42 @@ export async function runSportsIntelligence(opts: {
   // The mind's own corpus, read once: predictions below are blended with what
   // the hive has actually learned rather than with static assumptions.
   const corpus = await phase("mind", () => loadMindCorpus());
+  // The learned competition trends, read once per run. This is the half of the
+  // pipeline that turns fetched results into a PATTERN rather than a fact: one
+  // scoreline teaches the mind about two teams, the aggregated rates teach the
+  // model about the league they play in.
+  const trends = await phase("trends", () => loadCompetitionTrends());
 
   await phase("persist", () => persistForPrediction(matches));
 
   // Every provider that fed this snapshot gets picks — the hub merges sources,
   // so looking only at matches[0] would silently starve the other feeds.
   const providers = [...new Set(matches.map((m) => m.provider))];
+  /*
+   * Only fixtures the snapshot can actually describe.
+   *
+   * The candidate query used to select every upcoming row for those providers,
+   * which was right while the snapshot WAS today and the horizon was a day. Once
+   * the horizon widened to a week, persisted rows for future fixtures came back
+   * as candidates that `processMatch` then had to skip for want of a predicate —
+   * the whole per-run budget went to fixtures that cannot be ranked, and a run
+   * correctly reported `generated: 0` and looked broken. Matching the snapshot's
+   * own external ids is the honest filter: rank what we can see, ignore the rest.
+   */
+  const snapshotIds = matches.slice(0, 800).map((m) => m.externalId);
   const candidates = await prisma.sportsMatch
     .findMany({
       where: {
         ...(providers.length > 0 ? { provider: { in: providers } } : {}),
+        ...(snapshotIds.length > 0 ? { externalId: { in: snapshotIds } } : {}),
         status: { in: ["SCHEDULED", "LIVE", "HT"] },
+        // Inside the horizon. A null kickoff stays eligible (an unknown start
+        // time is not a reason to leave a fixture without a pick), which is why
+        // this is an OR rather than a bare range.
+        OR: [
+          { kickoff: null },
+          { kickoff: { lte: new Date(Date.now() + horizonDays * 86_400_000) } },
+        ],
       },
       include: { predictions: { select: { id: true, market: true, status: true, model: true } } },
       orderBy: { kickoff: "asc" },
@@ -1113,7 +1198,7 @@ export async function runSportsIntelligence(opts: {
   const priorCache = new Map<string, PredictionPrior>();
   const competitions = [...new Set(stored.map((row) => row.competition))];
   await mapWithConcurrency(competitions, 6, async (competition) => {
-    priorCache.set(competition, await competitionPrior(competition, marketAcc));
+    priorCache.set(competition, await competitionPrior(competition, marketAcc, trends));
   });
 
   /**
@@ -1134,7 +1219,7 @@ export async function runSportsIntelligence(opts: {
 
     const prior =
       priorCache.get(row.competition) ??
-      (await competitionPrior(row.competition, marketAcc));
+      (await competitionPrior(row.competition, marketAcc, trends));
 
     const mind = consultMind(corpus, predicate);
     if (mind.heat > 0) mindsConsulted++;
@@ -1382,6 +1467,67 @@ export async function settlePredictions(): Promise<number> {
   return wonIds.length + lostIds.length;
 }
 
+/**
+ * The week ahead.
+ *
+ * The board's own snapshot only ever contains today, so "predict the week's
+ * fixtures" cannot be answered from it — this reads the fixture CALENDAR instead
+ * (see sports-calendar.ts), which is built for a range and already carries the
+ * kick-off times, crests and odds the model needs. Those fixtures are then pushed
+ * through exactly the same pipeline as today's, so a pick written on Monday for
+ * Saturday is produced by the same model, with the same priors, as one written on
+ * the morning of the match.
+ *
+ * Picks are NOT frozen once written: the kick-off refresh (see
+ * `refreshApproachingKickoff`) re-runs fixtures as they approach, and opening any
+ * fixture's analysis re-runs it on demand, which is what makes the week's
+ * predictions adjust to form, lineups and results as they arrive.
+ */
+export async function runWeeklySportsIntelligence(
+  opts: { horizonDays?: number; limit?: number; from?: Date } = {}
+): Promise<PredictRunResult & { fixtures: number }> {
+  const horizonDays = Math.min(Math.max(opts.horizonDays ?? 7, 1), 14);
+  const limit = Math.min(Math.max(opts.limit ?? 160, 1), 400);
+  const from = opts.from ?? new Date();
+  const to = new Date(from.getTime() + horizonDays * 86_400_000);
+
+  const { getSportsCalendar } = await import("@/lib/sports-calendar");
+  const calendar = await getSportsCalendar({ from, to });
+  // Bounded input: the per-run budget is `limit`, and persisting more fixtures
+  // than we can rank would spend the run's time on writes nobody reads.
+  const matches = calendar.matches.slice(0, Math.max(limit * 2, 200));
+
+  if (matches.length === 0) {
+    return {
+      generated: 0,
+      refreshed: 0,
+      skipped: 0,
+      settled: 0,
+      taught: 0,
+      formGrounded: 0,
+      formLookups: 0,
+      realResultsTaught: 0,
+      fixtures: 0,
+    };
+  }
+
+  const result = await runSportsIntelligence({
+    matches,
+    limit,
+    teach: false,
+    horizonDays,
+  });
+
+  log.info("weekly predictions", {
+    fixturePool: matches.length,
+    horizonDays,
+    generated: result.generated,
+    refreshed: result.refreshed,
+  });
+
+  return { ...result, fixtures: matches.length };
+}
+
 /** Competition-level trend rows for the admin monitor. */
 export async function sportsTrends(): Promise<
   { competition: string; matches: number; live: number; avgGoals: number }[]
@@ -1415,4 +1561,156 @@ export async function sportsTrends(): Promise<
     }))
     .sort((a, b) => b.matches - a.matches)
     .slice(0, 12);
+}
+
+/* ------------------------------------------------------------------ */
+/* The stake window, and refreshing picks as kick-off approaches       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * When a fixture stops being advertisable.
+ *
+ * The tips board ranks by confidence, which is right — but it used to rank a
+ * 96%-confidence call on a match at 88' straight to the top, where no reader can
+ * do anything with it. A tip that cannot be acted on is not a tip, it is a
+ * retroactive claim, and a board full of them reads as a model that does not
+ * understand the sport. So a LIVE fixture is dropped once it passes the cutoff;
+ * a stale status string (a row stuck on LIVE long after the game ended) is caught
+ * the same way, by age.
+ */
+export const PICK_MINUTE_CUTOFF = 70;
+/** After this long past kick-off, treat the fixture as over whatever status says. */
+export const PICK_MAX_AGE_MINUTES = 165;
+
+/**
+ * Is this fixture still worth showing a pick on?
+ *
+ * Pure and total: any status other than SCHEDULED/LIVE/HT is out, a fixture past
+ * the age ceiling is out, and a live fixture past the minute cutoff is out. A
+ * null minute is allowed through — refusing to show a pick on a live match just
+ * because the feed omits the clock would be worse than the small imprecision.
+ */
+export function pickIsActionable(
+  match: { status: string; minute: number | null; kickoff: Date | string | null },
+  now: Date = new Date()
+): boolean {
+  if (match.status !== "SCHEDULED" && !LIVE_STATUSES.includes(match.status as "LIVE" | "HT")) {
+    return false;
+  }
+  if (match.kickoff) {
+    const at = new Date(match.kickoff).getTime();
+    if (Number.isFinite(at) && now.getTime() - at > PICK_MAX_AGE_MINUTES * 60_000) return false;
+  }
+  if (match.status !== "SCHEDULED" && match.minute != null && match.minute >= PICK_MINUTE_CUTOFF) {
+    return false;
+  }
+  return true;
+}
+
+/** How close to kick-off a fixture starts getting a fresher read. */
+export const KICKOFF_REFRESH_WINDOW_MINUTES = 90;
+/** A pending pick older than this inside the window is regenerated. */
+export const KICKOFF_PICK_MAX_AGE_MINUTES = 45;
+/**
+ * When a reader asking for the analysis is worth a fresh model run.
+ *
+ * Also the throttle window for that run, so two readers opening the same fixture
+ * share one regeneration instead of queueing two — and the answer is the same
+ * either way, because the pipeline is deterministic given the same snapshot.
+ */
+export const PICK_REFRESH_MIN_AGE_MINUTES = 20;
+
+export interface KickoffRefreshResult {
+  /** Fixtures inside the window whose picks were stale or missing. */
+  due: number;
+  generated: number;
+  refreshed: number;
+  windowMinutes: number;
+}
+
+const bounded = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+/**
+ * Regenerate picks for fixtures approaching kick-off.
+ *
+ * Team news, lineups and the market's own prices all land in the last hour, so a
+ * pick written this morning is answering a question the market has since moved
+ * on. This sweeps the fixtures about to start and hands the ones carrying a stale
+ * (or missing) pending pick back to the full intelligence pipeline — the same
+ * Poisson model, learned priors, form grounding and hive-mind consultation, just
+ * re-run at the moment it actually matters.
+ *
+ * Deliberately narrow: it only ever touches SCHEDULED fixtures inside the window,
+ * never a graded pick (the pipeline preserves those), and it is cheap when there
+ * is nothing due — one indexed query and no provider traffic.
+ */
+export async function refreshApproachingKickoff(
+  opts: { now?: Date; windowMinutes?: number; maxAgeMinutes?: number; limit?: number } = {}
+): Promise<KickoffRefreshResult> {
+  const now = opts.now ?? new Date();
+  const windowMinutes = bounded(opts.windowMinutes ?? KICKOFF_REFRESH_WINDOW_MINUTES, 5, 360);
+  const maxAgeMinutes = bounded(opts.maxAgeMinutes ?? KICKOFF_PICK_MAX_AGE_MINUTES, 5, 720);
+  const limit = bounded(opts.limit ?? 20, 1, 100);
+
+  const rows = await prisma.sportsMatch
+    .findMany({
+      where: {
+        status: "SCHEDULED",
+        kickoff: { gte: now, lte: new Date(now.getTime() + windowMinutes * 60_000) },
+      },
+      include: {
+        predictions: {
+          where: { model: { not: BASELINE_MODEL } },
+          select: { status: true, updatedAt: true },
+        },
+      },
+      orderBy: { kickoff: "asc" },
+      take: limit * 2,
+    })
+    .catch(() => [] as { provider: string; externalId: string; predictions: { status: string; updatedAt: Date }[] }[]);
+
+  const staleBefore = now.getTime() - maxAgeMinutes * 60_000;
+  const due = rows
+    .filter((row) => {
+      const pending = row.predictions.filter((p) => p.status === "PENDING");
+      // No pick yet is the strongest reason to run; a pick that predates the
+      // window is the other; a pick written inside the window is already current.
+      if (pending.length === 0) return true;
+      return pending.some((p) => p.updatedAt.getTime() < staleBefore);
+    })
+    .slice(0, limit);
+
+  if (due.length === 0) return { due: 0, generated: 0, refreshed: 0, windowMinutes };
+
+  // The providers' fixtures are the only thing the pipeline will write, so the
+  // snapshot is filtered down to exactly the fixtures that are due.
+  const hub = await getSportsHub({ fresh: true }).catch(() => null);
+  if (!hub) return { due: due.length, generated: 0, refreshed: 0, windowMinutes };
+
+  const wanted = new Set(due.map((row) => `${row.provider}:${row.externalId}`));
+  const matches = hub.matches.filter((m) => wanted.has(`${m.provider}:${m.externalId}`));
+  if (matches.length === 0) {
+    return { due: due.length, generated: 0, refreshed: 0, windowMinutes };
+  }
+
+  const result = await runSportsIntelligence({
+    matches,
+    teach: false,
+    limit: Math.max(matches.length, 4),
+  });
+
+  log.info("kickoff refresh", {
+    due: due.length,
+    matched: matches.length,
+    generated: result.generated,
+    refreshed: result.refreshed,
+    windowMinutes,
+  });
+
+  return {
+    due: due.length,
+    generated: result.generated,
+    refreshed: result.refreshed,
+    windowMinutes,
+  };
 }

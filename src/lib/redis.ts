@@ -36,8 +36,65 @@ const restToken =
   process.env.KV_REST_API_TOKEN ||
   "";
 
+export type CacheBackend = "upstash-rest" | "redis-tcp" | "none";
+
+/**
+ * Which cache tier is actually in use, and why.
+ *
+ * The REST tier (Upstash / Vercel KV) is preferred when its credentials exist,
+ * and that is a deliberate reversal of the obvious instinct. On serverless, a TCP
+ * client means every function instance opens its own socket — a cold start pays
+ * a handshake, and a traffic spike opens hundreds of connections against a
+ * free-tier connection limit. The REST tier is one stateless HTTPS call with no
+ * connection to exhaust, which is exactly what a 15-second livescore poll needs.
+ *
+ * `CACHE_BACKEND=redis` forces the TCP path (a local docker Redis, or an
+ * instance that must be reused), and `CACHE_BACKEND=upstash` refuses to fall
+ * back so a misconfiguration shows up as a cache miss rather than silently
+ * serving from the tier you were trying to move away from.
+ */
+function resolveBackend(): CacheBackend {
+  const rest = Boolean(restUrl && restToken);
+  const tcp = Boolean(process.env.REDIS_URL);
+  const preference = (process.env.CACHE_BACKEND ?? "auto").trim().toLowerCase();
+  if (preference === "upstash" || preference === "rest" || preference === "kv") {
+    return rest ? "upstash-rest" : "none";
+  }
+  if (preference === "redis" || preference === "tcp") return tcp ? "redis-tcp" : "none";
+  if (rest) return "upstash-rest";
+  if (tcp) return "redis-tcp";
+  return "none";
+}
+
+let backendMemo: CacheBackend | null = null;
+
+/** Memoised so the decision is read once per instance and cannot drift mid-request. */
+export function activeCacheBackend(): CacheBackend {
+  if (backendMemo === null) backendMemo = resolveBackend();
+  return backendMemo;
+}
+
+/**
+ * A one-line description of the cache tier for the admin console: which tier is
+ * live, which credentials produced it, and what is missing when nothing is.
+ */
+export function cacheBackendDetail(): string {
+  const backend = activeCacheBackend();
+  const preference = (process.env.CACHE_BACKEND ?? "auto").trim().toLowerCase() || "auto";
+  if (backend === "upstash-rest") {
+    const source = process.env.UPSTASH_REDIS_REST_URL ? "UPSTASH_REDIS_REST_URL" : "KV_REST_API_URL";
+    return `Upstash / Vercel KV REST tier active (from ${source}) — no TCP connection per function instance.`;
+  }
+  if (backend === "redis-tcp") {
+    return preference === "auto"
+      ? "TCP Redis active (REDIS_URL). Add KV_REST_API_URL + KV_REST_API_TOKEN to move the cache onto the REST tier, which does not consume a connection per serverless instance."
+      : "TCP Redis active (REDIS_URL), forced by CACHE_BACKEND=redis.";
+  }
+  return "No cache tier configured — every render re-reads Postgres. Add KV_REST_API_URL + KV_REST_API_TOKEN (Upstash / Vercel KV) or REDIS_URL.";
+}
+
 function canUseRedis(): boolean {
-  return Boolean(process.env.REDIS_URL || (restUrl && restToken));
+  return activeCacheBackend() !== "none";
 }
 
 /**
@@ -114,7 +171,7 @@ export async function redisProbeError(): Promise<string | null> {
 }
 
 function createClient(): Redis | null {
-  if (!process.env.REDIS_URL) return null;
+  if (!process.env.REDIS_URL || activeCacheBackend() !== "redis-tcp") return null;
   const c = new Redis(process.env.REDIS_URL, {
     lazyConnect: true,
     maxRetriesPerRequest: 1,
@@ -189,7 +246,7 @@ function cacheKey(key: string): string {
 // ── REST backend (Upstash / Vercel KV) ─────────────────────────────────────
 
 async function restCommand<T>(...args: (string | number | boolean)[]): Promise<T | null> {
-  if (!restUrl || !restToken) return null;
+  if (!restUrl || !restToken || activeCacheBackend() !== "upstash-rest") return null;
   try {
     const res = await fetch(`${restUrl}/pipeline`, {
       method: "POST",
@@ -357,4 +414,80 @@ export async function cacheSet<T>(
 
 export function redisAvailable(): boolean {
   return canUseRedis();
+}
+
+/**
+ * Round-trip a real write/read/delete against whichever tier is live.
+ *
+ * The admin console needs to distinguish "credentials present" from "the cache
+ * actually works" — a store that answers /version while rejecting every command
+ * looks configured and caches nothing. This is the honest check, and it names
+ * the tier it exercised so a green light can never be attributed to the wrong
+ * backend.
+ */
+export async function cacheProbe(): Promise<{
+  backend: CacheBackend;
+  ok: boolean;
+  latencyMs: number | null;
+  detail: string;
+}> {
+  const backend = activeCacheBackend();
+  if (backend === "none") {
+    return { backend, ok: false, latencyMs: null, detail: cacheBackendDetail() };
+  }
+
+  const key = `${PREFIX}:probe:${Date.now()}`;
+  const started = Date.now();
+  try {
+    if (backend === "upstash-rest") {
+      const res = await fetch(`${restUrl}/pipeline`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${restToken}` },
+        body: JSON.stringify([
+          ["SET", key, "1", "EX", 60],
+          ["GET", key],
+          ["DEL", key],
+        ]),
+        cache: "no-store",
+        signal: AbortSignal.timeout(5000),
+      });
+      const ms = Date.now() - started;
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        return {
+          backend,
+          ok: false,
+          latencyMs: ms,
+          detail: `Upstash REST tier rejected the probe (HTTP ${res.status})${body ? `: ${body.slice(0, 120)}` : ""} — check KV_REST_API_URL and KV_REST_API_TOKEN.`,
+        };
+      }
+      const rows = (await res.json()) as unknown[];
+      const got = Array.isArray(rows[1]) ? rows[1][1] : null;
+      const ok = got === "1";
+      return {
+        backend,
+        ok,
+        latencyMs: ms,
+        detail: ok
+          ? `Write, read and delete round-tripped in ${ms}ms.`
+          : "Connected, but the value read back does not match what was written.",
+      };
+    }
+
+    const error = await redisProbeError();
+    const ms = Date.now() - started;
+    return {
+      backend,
+      ok: !error,
+      latencyMs: ms,
+      detail: error ?? `PING answered in ${ms}ms.`,
+    };
+  } catch (err) {
+    return {
+      backend,
+      ok: false,
+      latencyMs: Date.now() - started,
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  }
 }

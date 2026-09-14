@@ -3,12 +3,15 @@
  * also the only purge lever a service worker has: bumping it drops every prior
  * cache on the next activation, which is what a stale install needs.
  *
- * Same-origin assets are stale-while-revalidate (NOT cache-first): production
- * chunk URLs are content-hashed, but a SW that blindly cache-firsts /_next/
- * can serve stale JS after a recompile, which bricks the app. SWR returns the
- * cached copy instantly on repeat loads and revalidates in the background, so
- * it is just as fast and cannot serve a permanently-wrong bundle. */
-const CACHE_VERSION = "connectplus-v6";
+ * Same-origin assets are never blindly cached: PRODUCTION chunk URLs are
+ * content-hashed and safe to stale-while-revalidate, but a DEV server serves
+ * `/_next/static/chunks/main-app.js` at a stable, unhashed URL and overwrites it
+ * in place on every recompile. Caching that URL — even with SWR, which revalidates
+ * only *after* handing over the cached copy — makes the next load paint the
+ * previous build's JS, so the page renders copy that no longer exists in the
+ * source. Only content-hashed asset URLs are cached; everything else under
+ * /_next/ is network-first and never stored. */
+const CACHE_VERSION = "connectplus-v7";
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 const IMAGE_CACHE = `${CACHE_VERSION}-images`;
@@ -48,6 +51,36 @@ const NEVER_INTERCEPT = [
 ];
 
 const isPrivate = (pathname) => NEVER_INTERCEPT.some((re) => re.test(pathname));
+
+/* A production chunk carries its content hash in the path
+ * (`main-app-9f2a1b3c4d5e6f7a.js`); a dev chunk does not (`main-app.js`). Vercel
+ * deployments also stamp `?dpl=` on asset URLs. Either is proof that this exact
+ * URL's bytes are immutable, which is the only thing that makes caching safe. */
+const HASHED_ASSET = /\/_next\/static\/[^?]*[.-][0-9a-f]{8,}\.[a-z0-9]+$/i;
+const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)$/i;
+
+function isImmutableAsset(url) {
+  // A dev server on loopback is never cached, whatever the URL looks like —
+  // this is the case that used to serve stale chunks to the Preview tab.
+  const hostname = (self.location && self.location.hostname) || "";
+  if (LOOPBACK_HOST.test(hostname)) return false;
+  return HASHED_ASSET.test(url.pathname) || url.searchParams.has("dpl");
+}
+
+/**
+ * Next.js build output. Immutable, hashed releases get the fast SWR path; dev
+ * chunks and anything unrecognised go straight to the network. Falling back to
+ * the cache is allowed only when the network fails, so an offline load still
+ * works without ever preferring an outdated bundle while the origin is up.
+ */
+async function nextAsset(request, url) {
+  if (isImmutableAsset(url)) return swrAsset(request);
+  try {
+    return await fetch(request);
+  } catch {
+    return (await caches.match(request)) || Response.error();
+  }
+}
 
 /**
  * A navigation response is only safe to store when it is anonymous and
@@ -124,12 +157,15 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  /* Same-origin static assets (JS/CSS/fonts): stale-while-revalidate. */
-  if (
-    url.pathname.startsWith("/_next/static/") ||
-    url.pathname.startsWith("/images/") ||
-    url.pathname.endsWith(".woff2")
-  ) {
+  /* Next.js build output — hashed releases cached, dev chunks never (see
+   * `nextAsset`). */
+  if (url.pathname.startsWith("/_next/")) {
+    event.respondWith(nextAsset(request, url));
+    return;
+  }
+
+  /* Our own static assets (fonts, /images): stale-while-revalidate. */
+  if (url.pathname.startsWith("/images/") || url.pathname.endsWith(".woff2")) {
     event.respondWith(swrAsset(request));
     return;
   }

@@ -80,6 +80,19 @@ const POLLABLE = [
   { test: /^\/api\/sports\/live/, ttl: 15, swr: 45 },
   { test: /^\/api\/sports\/predictions/, ttl: 30, swr: 90 },
   { test: /^\/api\/sports\/referrals/, ttl: 300, swr: 900 },
+  // One fixture's deep read. An open match panel polls this every 30s while the
+  // game is live, and the payload is identical for every anonymous reader — so
+  // the edge answers it and the origin sees one fetch per window rather than one
+  // per viewer per poll. Short TTL because a goal must land quickly; the SWR
+  // window is what keeps it instant under load.
+  { test: /^\/api\/sports\/match/, ttl: 20, swr: 60 },
+  // Form and head-to-head. Slow-moving, reader-independent, and previously a
+  // round trip per opened fixture.
+  { test: /^\/api\/sports\/h2h/, ttl: 300, swr: 900 },
+  // The fixture calendar: generated once, identical for everyone, and expensive
+  // upstream (a league sweep per date range), which is exactly the shape that
+  // should never be recomputed per viewer.
+  { test: /^\/api\/sports\/calendar/, ttl: 900, swr: 1800 },
 ];
 
 /** Read-only JSON that is identical for every anonymous caller. */

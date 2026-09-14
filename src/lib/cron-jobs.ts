@@ -156,14 +156,53 @@ export async function runRecoverThumbnails(limit = 20): Promise<ThumbnailRecover
  * latest fixtures, and regenerate predictions. Runs inline for cron-job.org and
  * as per-feed-style Inngest steps when the queue is available.
  */
-export async function runSportsIntel(limit = 40): Promise<{
+export async function runSportsIntel(limit = 60): Promise<{
   generated: number;
   skipped: number;
   settled: number;
   taught: number;
+  weeklyGenerated: number;
+  weeklyFixtures: number;
+  /** Competitions whose observed patterns were re-derived on this run. */
+  trendsLearned: number;
 }> {
-  const { runSportsIntelligence } = await import("@/lib/sports-intelligence");
-  return runSportsIntelligence({ limit, teach: true });
+  const { runSportsIntelligence, runWeeklySportsIntelligence } =
+    await import("@/lib/sports-intelligence");
+  const { learnCompetitionTrends } = await import("@/lib/sports-trends");
+
+  // Observe first. The trend table is re-derived from finished matches BEFORE
+  // the prediction passes run, so a league that has started scoring differently
+  // changes this run's numbers rather than the next day's.
+  const trends = await learnCompetitionTrends().catch((error) => {
+    log.warn("trend learning failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { competitions: 0, lessons: 0, trends: [] };
+  });
+
+  // Today first, with the learning half switched on: this pass is what folds the
+  // day's fixtures, results and mind consultations back into NeuralMemory, so it
+  // is the one that must run when the snapshot is current.
+  const today = await runSportsIntelligence({ limit, teach: true, horizonDays: 1 });
+
+  // …then the week ahead, from the fixture calendar rather than the live
+  // snapshot (which only ever holds today). Teaching is off because it already
+  // happened above — this pass only writes picks, and it exists so that the
+  // calendar has analysis days in advance instead of filling in on the morning
+  // of each match.
+  const weekly = await runWeeklySportsIntelligence({ horizonDays: 7, limit: 160 }).catch((error) => {
+    log.warn("weekly prediction pass failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  });
+
+  return {
+    ...today,
+    weeklyGenerated: (weekly?.generated ?? 0) + (weekly?.refreshed ?? 0),
+    weeklyFixtures: weekly?.fixtures ?? 0,
+    trendsLearned: trends.competitions,
+  };
 }
 
 /**
@@ -180,12 +219,11 @@ export async function runSportsLive(minutesAhead = 180): Promise<{
   live: number;
   settled: number;
   refreshed: number;
+  kickoffRefreshed: number;
   sources: string[];
 }> {
-  const [{ getSportsHub }, { settlePredictions, runSportsIntelligence }] = await Promise.all([
-    import("@/lib/sports"),
-    import("@/lib/sports-intelligence"),
-  ]);
+  const [{ getSportsHub }, { settlePredictions, runSportsIntelligence, refreshApproachingKickoff }] =
+    await Promise.all([import("@/lib/sports"), import("@/lib/sports-intelligence")]);
 
   // `persist: false` — the analyser pass below writes the fixtures it ranks, so
   // mirroring the whole board here would double the write load for no gain.
@@ -194,12 +232,23 @@ export async function runSportsLive(minutesAhead = 180): Promise<{
   // Bounded top-up: enough to cover new fixtures arriving in the window without
   // re-running the whole model on a two-minute cadence.
   const refreshed = await runSportsIntelligence({ limit: 12, teach: false });
+  // …plus the fixtures about to start, whose picks were written before team news
+  // and the market moved. Separate from the top-up above because it is targeting
+  // a different question: not "is there a pick?" but "is this pick still the
+  // one we would make now?".
+  const kickoff = await refreshApproachingKickoff({ limit: 8 }).catch(() => ({
+    due: 0,
+    generated: 0,
+    refreshed: 0,
+    windowMinutes: 0,
+  }));
 
   log.info("sports live sweep", {
     matches: hub.matches.length,
     live: hub.liveCount,
     settled,
     generated: refreshed.generated,
+    kickoffDue: kickoff.due,
     sources: hub.sources,
     minutesAhead,
   });
@@ -209,6 +258,7 @@ export async function runSportsLive(minutesAhead = 180): Promise<{
     live: hub.liveCount,
     settled,
     refreshed: refreshed.refreshed + refreshed.generated,
+    kickoffRefreshed: kickoff.refreshed + kickoff.generated,
     sources: hub.sources,
   };
 }
