@@ -60,8 +60,47 @@ describe("cron ownership", () => {
   it("declares a cadence that matches the cron expression", () => {
     const everyFive = CRON_JOBS.filter((j) => j.cron === "*/5 * * * *").map((j) => j.everyMinutes);
     expect(everyFive.every((m) => m === 5)).toBe(true);
-    const hourly = CRON_JOBS.find((j) => j.id === "rss-poll");
-    expect(hourly?.everyMinutes).toBe(60);
+  });
+
+  it("polls syndication six-hourly rather than hourly", () => {
+    // Hourly re-downloaded the same unchanged documents six times a day for news
+    // that does not move that fast. The registry, the Inngest trigger and the
+    // declared spacing all have to agree, or the console reports a healthy job
+    // that is actually running on a different clock.
+    const rss = CRON_JOBS.find((j) => j.id === "rss-poll");
+    expect(rss?.cron).toBe("0 */6 * * *");
+    expect(rss?.everyMinutes).toBe(360);
+  });
+
+  it("keeps the Cloudflare edge schedules pointed at real jobs", () => {
+    // The worker owns the high-frequency jobs (radio metadata, livescore,
+    // model refresh) through Cron Triggers. It names a job id rather than doing
+    // the work, so a rename in the registry has to fail here instead of silently
+    // pinging an endpoint that answers 404 forever.
+    const worker = read("workers/edge-cache/src/index.mjs");
+    const triggers = [...worker.matchAll(/trigger: "([a-z-]+)"/g)].map((m) => m[1]!);
+    expect(triggers.length).toBeGreaterThan(0);
+    const ids = new Set(CRON_JOBS.map((j) => j.id));
+    const unknown = triggers.filter((t) => !ids.has(t));
+    expect(unknown, `edge schedules naming jobs that do not exist: ${unknown.join(", ")}`).toEqual([]);
+
+    // The deploy script registers the same crons as the worker maps.
+    const deploy = read("scripts/deploy-worker.mjs");
+    const deployCrons = [...deploy.matchAll(/cron: "([^"]+)"/g)].map((m) => m[1]!);
+    for (const cron of deployCrons) {
+      expect(worker, `deploy registers ${cron} but the worker has no handler for it`).toContain(
+        `cron: "${cron}"`
+      );
+    }
+  });
+
+  it("schedules a payment reconciliation job", () => {
+    const payments = CRON_JOBS.find((j) => j.id === "payments-lifecycle");
+    expect(payments).toBeDefined();
+    // Not in the daily safety net: reconciling six-hourly drift once a day would
+    // fire on every pass because the job always looks stale to a daily check.
+    expect(payments?.essential).toBe(false);
+    expect(read("src/lib/cron-jobs.ts")).toContain("expireLapsedSubscriptions");
   });
 
   it("derives the external scheduler's triggers from the registry", () => {

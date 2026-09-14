@@ -137,10 +137,9 @@ export const rssPoll = inngest.createFunction(
   {
     id: "rss-poll",
     name: "Poll RSS feeds",
-    // cron-job.org owns the hourly cadence; per-feed lastPolled intervals
-    // throttle actual fetches. One run at a time + a cap keeps outbound egress
-    // and Postgres writes flat.
-    triggers: [{ event: "rss-poll" }, { cron: "0 * * * *" }],
+    // Six-hourly. Per-feed lastPolled intervals still throttle individual
+    // sources, and one run at a time + a cap keeps outbound egress flat.
+    triggers: [{ event: "rss-poll" }, { cron: "0 */6 * * *" }],
     concurrency: 1,
     retries: 2,
   },
@@ -312,6 +311,28 @@ export const radioStatusSweep = inngest.createFunction(
       return sweepAllStationStatuses();
     });
     return summary;
+  }
+);
+
+/**
+ * Payment reconciliation and expiry. Mirrors `payments-lifecycle` in the cron
+ * registry: repairs PayPal drift, ends lapsed periods, and reports prompts that
+ * never resolved.
+ */
+export const paymentsLifecycle = inngest.createFunction(
+  {
+    id: "payments-lifecycle",
+    name: "Reconcile payments & expire lapsed memberships",
+    triggers: [{ event: "payments-lifecycle" }, { cron: "30 */6 * * *" }],
+    concurrency: 1,
+    retries: 2,
+  },
+  async ({ step }) => {
+    await step.run("heartbeat", () => recordHeartbeat("payments-lifecycle"));
+    return step.run("reconcile", async () => {
+      const { runPaymentsLifecycle } = await import("@/lib/cron-jobs");
+      return runPaymentsLifecycle();
+    });
   }
 );
 
@@ -647,4 +668,5 @@ export const functions = [
   sportsIntel,
   statusWatchdog,
   statusDailySnapshot,
+  paymentsLifecycle,
 ];

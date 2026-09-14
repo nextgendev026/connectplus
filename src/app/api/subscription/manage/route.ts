@@ -1,13 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getStripe, stripeConfigured, appUrl, periodWindow } from "@/lib/stripe";
+import {
+  PaymentProviderError,
+  anyPaymentProviderConfigured,
+  normalizeCycle,
+  paymentProviders,
+  periodWindow,
+  providerConfigured,
+  type PaymentProviderId,
+} from "@/lib/payments";
+import { startCheckout } from "@/lib/payments/checkout";
+import { cancelPaypalSubscription } from "@/lib/payments/lifecycle";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** GET /api/subscription/manage — get current user's subscription(s) */
+/**
+ * GET /api/subscription/manage — the member's own memberships.
+ *
+ * `managedBy` replaces the old Stripe-only flag: a member paying by PayPal has
+ * a provider-side subscription we can genuinely cancel for them, while an
+ * M-Pesa member is billed a period at a time and cancels locally. The UI needs
+ * to know which, so it does not offer "cancel at PayPal" to someone who has no
+ * PayPal subscription.
+ */
 export async function GET() {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -20,6 +37,13 @@ export async function GET() {
   });
 
   return NextResponse.json({
+    providers: paymentProviders().map((p) => ({
+      id: p.id,
+      name: p.name,
+      method: p.method,
+      currency: p.currency,
+      configured: p.configured,
+    })),
     subscriptions: subscriptions.map((s) => ({
       id: s.id,
       status: s.status,
@@ -28,7 +52,13 @@ export async function GET() {
       currentPeriodEnd: s.currentPeriodEnd,
       cancelAtPeriodEnd: s.cancelAtPeriodEnd,
       usageThisPeriod: s.usageThisPeriod,
-      managedByStripe: Boolean(s.stripeSubscriptionId),
+      provider: s.provider,
+      providerSubscriptionId: s.providerSubscriptionId,
+      lastPaymentRef: s.lastPaymentRef,
+      lastPaymentAt: s.lastPaymentAt,
+      payerPhone: s.payerPhone,
+      /** True only when the rail itself has a subscription we can manage. */
+      managedByProvider: Boolean(s.providerSubscriptionId),
       plan: {
         id: s.plan.id,
         name: s.plan.name,
@@ -37,6 +67,7 @@ export async function GET() {
         audience: s.plan.audience,
         priceMonthly: s.plan.priceMonthly,
         priceYearly: s.plan.priceYearly,
+        currency: s.plan.currency,
         features: JSON.parse(s.plan.features),
         limits: JSON.parse(s.plan.limits),
       },
@@ -46,11 +77,11 @@ export async function GET() {
 
 /**
  * POST /api/subscription/manage
- *   subscribe(userId, planId, billingCycle) — free plans are granted locally;
- *     paid plans open a Stripe Checkout session and return its URL.
- *   cancel(subscriptionId) — next-cycle cancellation (local or via Stripe).
+ *   subscribe(planId, billingCycle, provider, phone?) — free plans are granted
+ *     locally; paid plans start a rail and return what the UI needs next (an
+ *     M-Pesa prompt to wait on, or a PayPal page to navigate to).
+ *   cancel(subscriptionId) — next-cycle cancellation, propagated to the rail.
  *   reactivate(subscriptionId) — un-cancel before the period end.
- *   portal(subscriptionId?) — open the Stripe billing portal for the sub.
  */
 export async function POST(request: NextRequest) {
   const session = await auth();
@@ -67,8 +98,6 @@ export async function POST(request: NextRequest) {
       return cancel(userId, body);
     case "reactivate":
       return reactivate(userId, body);
-    case "portal":
-      return portal(userId, body);
     default:
       return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   }
@@ -78,9 +107,11 @@ async function subscribe(userId: string, body: Record<string, unknown>): Promise
   if (!body.planId) return NextResponse.json({ error: "planId is required" }, { status: 400 });
 
   const plan = await prisma.subscriptionPlan.findUnique({ where: { id: body.planId as string } });
-  if (!plan || !plan.isActive) return NextResponse.json({ error: "Plan not found or inactive" }, { status: 404 });
+  if (!plan || !plan.isActive) {
+    return NextResponse.json({ error: "Plan not found or inactive" }, { status: 404 });
+  }
 
-  const billingCycle = body.billingCycle === "yearly" ? "yearly" : "monthly";
+  const cycle = normalizeCycle(body.billingCycle);
   const now = new Date();
 
   const existing = await prisma.userSubscription.findUnique({
@@ -90,17 +121,19 @@ async function subscribe(userId: string, body: Record<string, unknown>): Promise
     return NextResponse.json({ error: "Already subscribed to this plan" }, { status: 409 });
   }
 
-  // Free plans are granted locally — no Stripe involvement.
-  if (plan.tier === "free" || plan.priceMonthly === 0) {
-    const periodEnd = periodWindow(billingCycle, now).end;
+  // Free tiers never touch a payment rail.
+  const free = plan.tier === "free" || (plan.priceMonthly === 0 && plan.priceYearly === 0);
+  if (free) {
+    const periodEnd = periodWindow(cycle, now).end;
     const sub = await prisma.userSubscription.upsert({
       where: { userId_planId: { userId, planId: plan.id } },
       update: {
         status: "active",
-        billingCycle,
+        billingCycle: cycle,
         currentPeriodStart: now,
         currentPeriodEnd: periodEnd,
         cancelAtPeriodEnd: false,
+        provider: "manual",
         usageThisPeriod: 0,
         updatedAt: now,
       },
@@ -108,10 +141,11 @@ async function subscribe(userId: string, body: Record<string, unknown>): Promise
         userId,
         planId: plan.id,
         status: "active",
-        billingCycle,
+        billingCycle: cycle,
         currentPeriodStart: now,
         currentPeriodEnd: periodEnd,
         cancelAtPeriodEnd: false,
+        provider: "manual",
         usageThisPeriod: 0,
         createdAt: now,
         updatedAt: now,
@@ -120,65 +154,81 @@ async function subscribe(userId: string, body: Record<string, unknown>): Promise
     return NextResponse.json({ ok: true, free: true, subscription: { id: sub.id, status: sub.status } });
   }
 
-  // Paid plans require the billing stack.
-  if (!stripeConfigured()) {
+  if (!anyPaymentProviderConfigured()) {
     return NextResponse.json(
-      { error: "Billing isn't configured yet — please try again later.", code: "BILLING_NOT_CONFIGURED" },
+      {
+        error:
+          "Payments aren't configured yet. Add the Safaricom Daraja or PayPal credentials to enable paid plans.",
+        code: "PAYMENTS_NOT_CONFIGURED",
+      },
       { status: 503 }
     );
   }
-  const stripe = getStripe()!;
-  const priceId =
-    billingCycle === "yearly" ? plan.stripePriceYearlyId : plan.stripePriceMonthlyId;
-  if (!priceId) {
+
+  // Which rail? An explicit choice wins; otherwise the first configured one.
+  const requested = typeof body.provider === "string" ? body.provider : "";
+  const provider = (requested ||
+    paymentProviders().find((p) => p.configured)?.id ||
+    "") as PaymentProviderId;
+
+  if (!providerConfigured(provider)) {
     return NextResponse.json(
-      {
-        error: `No Stripe price is linked to this plan yet (${billingCycle} billing).`,
-        code: "PLAN_PRICE_MISSING",
-      },
-      { status: 409 }
+      { error: `${provider || "That"} payments are not enabled yet.`, code: "PROVIDER_UNAVAILABLE" },
+      { status: 503 }
     );
   }
 
-  const session = await auth();
-  const email = ((session?.user as { email?: string | null })?.email ?? undefined) || undefined;
+  try {
+    const result = await startCheckout({
+      userId,
+      plan: {
+        id: plan.id,
+        name: plan.name,
+        displayName: plan.displayName,
+        priceMonthly: plan.priceMonthly,
+        priceYearly: plan.priceYearly,
+        currency: plan.currency,
+        paypalPlanMonthlyId: plan.paypalPlanMonthlyId,
+        paypalPlanYearlyId: plan.paypalPlanYearlyId,
+      },
+      cycle,
+      provider,
+      phone: typeof body.phone === "string" ? body.phone : null,
+    });
 
-  const checkout = await stripe.checkout.sessions.create({
-    mode: "subscription",
-    customer_email: email,
-    client_reference_id: userId,
-    line_items: [{ price: priceId, quantity: 1 }],
-    subscription_data: {
-      metadata: { userId, planId: plan.id, billingCycle, planName: plan.name },
-    },
-    metadata: { userId, planId: plan.id, billingCycle, planName: plan.name },
-    success_url: `${appUrl()}/settings?checkout=success`,
-    cancel_url: `${appUrl()}/pricing?checkout=cancelled`,
-    allow_promotion_codes: true,
-  });
-
-  return NextResponse.json({ ok: true, free: false, checkoutUrl: checkout.url });
+    return NextResponse.json({ ok: true, free: false, ...result });
+  } catch (err) {
+    const status = err instanceof PaymentProviderError ? 502 : 500;
+    return NextResponse.json(
+      {
+        error: err instanceof Error ? err.message : "Could not start the payment.",
+        code: err instanceof PaymentProviderError ? "PROVIDER_ERROR" : "CHECKOUT_FAILED",
+        provider,
+      },
+      { status }
+    );
+  }
 }
 
 async function cancel(userId: string, body: Record<string, unknown>): Promise<NextResponse> {
-  if (!body.subscriptionId) return NextResponse.json({ error: "subscriptionId is required" }, { status: 400 });
+  if (!body.subscriptionId) {
+    return NextResponse.json({ error: "subscriptionId is required" }, { status: 400 });
+  }
 
   const sub = await prisma.userSubscription.findFirst({
     where: { id: body.subscriptionId as string, userId },
   });
   if (!sub) return NextResponse.json({ error: "Subscription not found" }, { status: 404 });
 
-  if (sub.stripeSubscriptionId && stripeConfigured()) {
-    try {
-      await getStripe()!.subscriptions.update(sub.stripeSubscriptionId, {
-        cancel_at_period_end: true,
-      });
-    } catch (err) {
-      // Never record a local cancellation Stripe refused: telling a member
-      // they cancelled while billing continues is the worst failure here.
-      console.error("Stripe cancel failed:", sub.stripeSubscriptionId, err);
+  // A PayPal subscription keeps billing until PayPal is told to stop. Recording
+  // a local cancellation while PayPal keeps charging is the worst failure here,
+  // so the remote call must succeed (or determine it is already cancelled)
+  // before we write anything.
+  if (sub.provider === "paypal" && sub.providerSubscriptionId) {
+    const remote = await cancelPaypalSubscription(sub.providerSubscriptionId, "Member cancelled from settings");
+    if (!remote.ok) {
       return NextResponse.json(
-        { error: "Stripe couldn't schedule the cancellation — please try again." },
+        { error: `PayPal couldn't schedule the cancellation: ${remote.reason}` },
         { status: 502 }
       );
     }
@@ -186,35 +236,41 @@ async function cancel(userId: string, body: Record<string, unknown>): Promise<Ne
 
   const updated = await prisma.userSubscription.update({
     where: { id: sub.id },
-    data: { cancelAtPeriodEnd: true, updatedAt: new Date() },
+    data: {
+      cancelAtPeriodEnd: true,
+      // M-Pesa has no renewer to stop, so cancelling a one-off period is final
+      // at period end rather than a status change today.
+      updatedAt: new Date(),
+    },
   });
 
   return NextResponse.json({
     ok: true,
-    subscription: { id: updated.id, cancelAtPeriodEnd: updated.cancelAtPeriodEnd },
+    subscription: {
+      id: updated.id,
+      cancelAtPeriodEnd: updated.cancelAtPeriodEnd,
+      accessUntil: updated.currentPeriodEnd,
+    },
   });
 }
 
 async function reactivate(userId: string, body: Record<string, unknown>): Promise<NextResponse> {
-  if (!body.subscriptionId) return NextResponse.json({ error: "subscriptionId is required" }, { status: 400 });
+  if (!body.subscriptionId) {
+    return NextResponse.json({ error: "subscriptionId is required" }, { status: 400 });
+  }
 
   const sub = await prisma.userSubscription.findFirst({
     where: { id: body.subscriptionId as string, userId },
   });
   if (!sub) return NextResponse.json({ error: "Subscription not found" }, { status: 404 });
 
-  if (sub.stripeSubscriptionId && stripeConfigured()) {
-    try {
-      await getStripe()!.subscriptions.update(sub.stripeSubscriptionId, {
-        cancel_at_period_end: false,
-      });
-    } catch (err) {
-      console.error("Stripe reactivate failed:", sub.stripeSubscriptionId, err);
-      return NextResponse.json(
-        { error: "Stripe couldn't resume the subscription — please try again." },
-        { status: 502 }
-      );
-    }
+  // Reactivating means the window is still open. Once it lapsed there is nothing
+  // to resume — the member has to buy a new period (and for PayPal, re-approve).
+  if (sub.currentPeriodEnd.getTime() < Date.now()) {
+    return NextResponse.json(
+      { error: "That membership has already lapsed — start a new one to continue.", code: "PERIOD_LAPSED" },
+      { status: 409 }
+    );
   }
 
   const updated = await prisma.userSubscription.update({
@@ -223,34 +279,4 @@ async function reactivate(userId: string, body: Record<string, unknown>): Promis
   });
 
   return NextResponse.json({ ok: true, subscription: { id: updated.id, status: updated.status } });
-}
-
-async function portal(userId: string, body: Record<string, unknown>): Promise<NextResponse> {
-  if (!stripeConfigured()) {
-    return NextResponse.json(
-      { error: "Billing isn't configured yet — please try again later.", code: "BILLING_NOT_CONFIGURED" },
-      { status: 503 }
-    );
-  }
-
-  const whereOptions: Prisma.UserSubscriptionWhereInput = body.subscriptionId
-    ? { id: body.subscriptionId as string, userId }
-    : { userId, status: { in: ["active", "trialing"] } };
-
-  const sub = await prisma.userSubscription.findFirst({
-    where: whereOptions,
-    orderBy: { updatedAt: "desc" },
-  });
-
-  const customerId = sub?.stripeCustomerId;
-  if (!customerId) {
-    return NextResponse.json({ error: "No billing portal available for this membership." }, { status: 404 });
-  }
-
-  const session = await getStripe()!.billingPortal.sessions.create({
-    customer: customerId,
-    return_url: `${appUrl()}/settings`,
-  });
-
-  return NextResponse.json({ ok: true, portalUrl: session.url });
 }

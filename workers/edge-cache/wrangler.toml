@@ -21,5 +21,23 @@ workers_dev = true
 # The Vercel origin this worker fronts. Change here, or override per-environment.
 ORIGIN = "https://connectplusapp.vercel.app"
 
+# Secrets (set with `wrangler secret put`, or by scripts/deploy-worker.mjs):
+#   CRON_SECRET — the same shared secret /api/cron verifies, so this worker can
+#                 drive the jobs it owns. Without it the pings are still sent but
+#                 the app refuses them (401), which the console reports as stale.
+
+[triggers]
+# Cloudflare owns the high-frequency jobs whose staleness is user-visible: the
+# radio metadata sweep (the "radio degraded" warning) and the livescore /
+# prediction cadence. They map one-to-one onto SCHEDULES in src/index.mjs, and
+# each entry there names the job id in src/lib/cron-schedule.ts.
+crons = [
+  "*/2 * * * *",    # sports-live      — snapshot + settle picks
+  "*/5 * * * *",    # sports-notify    — favourite match alerts
+  "*/15 * * * *",   # radio-status-sweep — now-playing / listener counts
+  "*/30 * * * *",   # sports-intel     — model training + pick regeneration
+  "30 */6 * * *",   # payments-lifecycle — reconcile PayPal, expire lapsed plans
+]
+
 [observability]
 enabled = true

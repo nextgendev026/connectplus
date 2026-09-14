@@ -28,8 +28,8 @@ interface Plan {
   features: string[];
   limits: Record<string, number>;
   sortOrder: number;
-  stripePriceMonthlyId?: string | null;
-  stripePriceYearlyId?: string | null;
+  paypalPlanMonthlyId?: string | null;
+  paypalPlanYearlyId?: string | null;
 }
 
 interface Stats {
@@ -91,12 +91,12 @@ function PlanCard({
   onSaved: () => void;
 }) {
   const TierIcon = TIER_ICONS[plan.tier] ?? Zap;
-  const [monthly, setMonthly] = useState(plan.stripePriceMonthlyId ?? "");
-  const [yearly, setYearly] = useState(plan.stripePriceYearlyId ?? "");
+  const [monthly, setMonthly] = useState(plan.paypalPlanMonthlyId ?? "");
+  const [yearly, setYearly] = useState(plan.paypalPlanYearlyId ?? "");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  async function saveStripeIds() {
+  async function savePaypalPlanIds() {
     setSaving(true);
     setMsg(null);
     try {
@@ -105,16 +105,16 @@ function PlanCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: plan.name,
-          stripePriceMonthlyId: monthly.trim() || null,
-          stripePriceYearlyId: yearly.trim() || null,
+          paypalPlanMonthlyId: monthly.trim() || null,
+          paypalPlanYearlyId: yearly.trim() || null,
         }),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setMsg({ ok: false, text: d?.error ?? "Could not save Stripe prices." });
+        setMsg({ ok: false, text: d?.error ?? "Could not save the PayPal plan ids." });
         return;
       }
-      setMsg({ ok: true, text: "Saved. Checkout now uses these prices." });
+      setMsg({ ok: true, text: "Saved. PayPal checkout now renews against these plans." });
       onSaved();
     } catch {
       setMsg({ ok: false, text: "Network error — please try again." });
@@ -172,36 +172,41 @@ function PlanCard({
           <div className="flex items-center gap-1.5 mb-2">
             <Link2 className="h-3.5 w-3.5 text-brand-500" />
             <span className="text-[11px] font-semibold uppercase tracking-wider text-surface-500">
-              Stripe price linkage
+              PayPal recurring plans
             </span>
           </div>
+          <p className="mb-2 text-[10px] leading-relaxed text-surface-500">
+            Optional. With a PayPal plan id, PayPal bills this plan every cycle on its own. Without one, members pay a
+            single period up front and renew deliberately — nothing auto-charges. M-Pesa prices come from the amount
+            above and need no id.
+          </p>
           <div className="space-y-2">
             <label className="block">
-              <span className="text-[10px] text-surface-500">Monthly price id</span>
+              <span className="text-[10px] text-surface-500">Monthly PayPal plan id</span>
               <input
                 value={monthly}
                 onChange={(e) => setMonthly(e.target.value)}
-                placeholder="price_1..."
+                placeholder="P-1AB..."
                 className="mt-0.5 w-full rounded-md border border-surface-200 bg-white px-2 py-1.5 text-[11px] text-surface-800 placeholder:text-surface-400 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-surface-700 dark:bg-surface-900 dark:text-surface-100"
               />
             </label>
             <label className="block">
-              <span className="text-[10px] text-surface-500">Yearly price id</span>
+              <span className="text-[10px] text-surface-500">Yearly PayPal plan id</span>
               <input
                 value={yearly}
                 onChange={(e) => setYearly(e.target.value)}
-                placeholder="price_1..."
+                placeholder="P-2CD..."
                 className="mt-0.5 w-full rounded-md border border-surface-200 bg-white px-2 py-1.5 text-[11px] text-surface-800 placeholder:text-surface-400 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-surface-700 dark:bg-surface-900 dark:text-surface-100"
               />
             </label>
             <button
               type="button"
-              onClick={() => void saveStripeIds()}
+              onClick={() => void savePaypalPlanIds()}
               disabled={saving}
               className="inline-flex items-center gap-1.5 rounded-lg border border-brand-500/40 bg-brand-500/10 px-3 py-1.5 text-[11px] font-semibold text-brand-600 transition-colors hover:bg-brand-500/20 disabled:opacity-60 dark:text-brand-400"
             >
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-              Save prices
+              Save plans
             </button>
             {msg && (
               <p className={cn("text-[10px] leading-relaxed", msg.ok ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>

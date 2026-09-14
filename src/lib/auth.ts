@@ -5,6 +5,9 @@ import Google from "next-auth/providers/google";
 import { compare, hash } from "bcryptjs";
 import { randomUUID } from "crypto";
 import { prisma } from "./prisma";
+import { createLogger } from "./logger";
+
+const logger = createLogger("auth");
 
 declare module "next-auth" {
   interface User {
@@ -85,6 +88,11 @@ async function provisionOAuthUser(profile: {
 }
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  // Always behind a proxy (Vercel, or the Cloudflare edge in front of it), so the
+  // forwarded host header is the only correct source of the external origin.
+  // Set here rather than relying on AUTH_TRUST_HOST alone so a missing env var
+  // cannot turn every OAuth round trip into a redirect_uri_mismatch.
+  trustHost: true,
   providers: [
     ...(googleEnabled
       ? [
@@ -158,6 +166,32 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     strategy: "jwt",
   },
   callbacks: {
+    /**
+     * Google's email claim has to be trusted before it can be used as an
+     * identity — and this is the one place where that matters.
+     *
+     * `allowDangerousEmailAccountLinking` links an OAuth identity to an existing
+     * local account *by email*. Without this check, an attacker who controls a
+     * Google account that merely claims `victim@example.com` could sign in with
+     * Google and land inside the victim's password account. Google verifies
+     * gmail.com addresses, but a Google Workspace account on a customer domain
+     * can carry any address the administrator has not proved, so the claim is
+     * checked explicitly instead of assumed.
+     *
+     * Anthropic-style provider mismatch is not a concern here: credential
+     * sign-in never reaches this callback.
+     */
+    async signIn({ user, account, profile }) {
+      if (account?.provider !== "google") return true;
+
+      const verified = (profile as { email_verified?: boolean } | undefined)?.email_verified;
+      const email = user.email?.trim().toLowerCase();
+      if (!email || verified !== true) {
+        logger.warn("rejected Google sign-in: unverified email claim", { email });
+        return false;
+      }
+      return true;
+    },
     async jwt({ token, user, account }) {
       // OAuth first sign-in: resolve (or create) the local row and key the JWT
       // to ITS id, never the raw provider profile id.

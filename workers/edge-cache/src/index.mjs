@@ -87,16 +87,58 @@ const API_ALLOWLIST = [
   { test: /^\/api\/trending\/topics/, ttl: 120 },
   { test: /^\/api\/posts\/check/, ttl: 30 },
   { test: /^\/api\/subscription\/plans/, ttl: 600 },
+  // Which rails are live and what each charges — identical for every visitor
+  // until an admin edits a plan, so a long TTL costs nothing.
+  { test: /^\/api\/payments\/providers/, ttl: 300 },
 ];
+
+/**
+ * Scheduled jobs this worker drives.
+ *
+ * Cloudflare Cron Triggers are the one scheduler that is free, always on, and
+ * independent of both Vercel and Inngest — which matters because the jobs here
+ * are the ones that quietly rot when nothing is watching them: the radio
+ * metadata sweep (whose staleness is exactly the "radio degraded" warning the
+ * admin console raises) and the livescore/prediction sweep that keeps the board
+ * and the model current.
+ *
+ * The worker does no work itself. It pings the app's registry-driven endpoint,
+ * so the jobs, their cadence and their heartbeats stay owned by
+ * `src/lib/cron-schedule.ts` and this table cannot drift into a second, wrong
+ * definition of what a job does — only of when it runs, which is one line here
+ * against one cron expression there.
+ */
+const SCHEDULES = [
+  { cron: "*/2 * * * *", trigger: "sports-live" },
+  { cron: "*/5 * * * *", trigger: "sports-notify" },
+  { cron: "*/15 * * * *", trigger: "radio-status-sweep" },
+  { cron: "*/30 * * * *", trigger: "sports-intel" },
+  { cron: "30 */6 * * *", trigger: "payments-lifecycle" },
+];
+
+/**
+ * What to ping when a trigger fires: the trigger named in SCHEDULES, or the
+ * single job named in the `CRON_TRIGGER` var for a hand-rolled schedule.
+ */
+function triggersFor(cron, env) {
+  const fromTable = SCHEDULES.filter((s) => s.cron === cron).map((s) => s.trigger);
+  if (fromTable.length > 0) return fromTable;
+  const fallback = (env.CRON_TRIGGER || "").trim();
+  return fallback ? [fallback] : [];
+}
 
 /** Never cache these, even anonymously (sessions, writes, telemetry). */
 const NEVER_CACHE = [
   /^\/api\/auth/,
   /^\/api\/upload/,
   /^\/api\/track/,
-  /^\/api\/stripe/,
+  // Payments: callbacks and webhooks are writes, and the status poll is
+  // reader-scoped. `/api/payments/providers` is the one public read and is
+  // explicitly allowlisted below instead.
+  /^\/api\/payments\/(?!providers$)/,
   /^\/api\/status\//,
   /^\/api\/rss/,
+  /^\/api\/cron/,
   // Per-reader sports state: favourites and reminders are scoped to a session.
   /^\/api\/sports\/(follows|reminders|track)/,
 ];
@@ -237,6 +279,8 @@ export default {
         origin,
         now: new Date().toISOString(),
         livescore: `${url.origin}/__livescore`,
+        schedules: SCHEDULES.map((s) => `${s.cron} → ${s.trigger}`),
+        cronSecret: Boolean(env.CRON_SECRET),
       });
     }
 
@@ -342,5 +386,50 @@ export default {
     await caches.default.put(cacheKey, storable.clone());
     const answered = tagged(new Response(storable.body, storable), "MISS");
     return poll ? withCors(answered) : answered;
+  },
+
+  /**
+   * Cron Trigger handler.
+   *
+   * Fires the app's own scheduler endpoint for the jobs this worker owns. The
+   * shared secret is sent as both `x-cron-secret` and a bearer token, matching
+   * what `/api/cron` accepts, so the same secret works whichever scheduler
+   * calls it.
+   *
+   * Failures are swallowed after being logged: the app heartbeats every run, so
+   * a job that stops being reachable shows up in the admin console as stale
+   * rather than as a worker throwing into the void — and one bad ping must never
+   * cost us the next trigger.
+   */
+  async scheduled(event, env, ctx) {
+    const origin = (env.ORIGIN || DEFAULT_ORIGIN).replace(/\/+$/, "");
+    const triggers = triggersFor(event.cron, env);
+
+    if (triggers.length === 0) {
+      console.log(`edge-cron: no trigger mapped to "${event.cron}" — add it to SCHEDULES`);
+      return;
+    }
+
+    const headers = { accept: "application/json" };
+    const secret = (env.CRON_SECRET || "").trim();
+    if (secret) {
+      headers["x-cron-secret"] = secret;
+      headers.authorization = `Bearer ${secret}`;
+    }
+
+    const run = async (trigger) => {
+      const url = `${origin}/api/cron?trigger=${encodeURIComponent(trigger)}&source=cloudflare-cron`;
+      try {
+        const res = await fetch(url, { method: "GET", headers });
+        const body = await res.text();
+        console.log(`edge-cron: ${trigger} (${event.cron}) → ${res.status} ${body.slice(0, 200)}`);
+      } catch (err) {
+        console.log(`edge-cron: ${trigger} failed — ${err && err.message ? err.message : err}`);
+      }
+    };
+
+    // `ctx.waitUntil` lets one trigger drive several jobs without holding the
+    // scheduled invocation open on each response.
+    ctx.waitUntil(Promise.all(triggers.map(run)));
   },
 };

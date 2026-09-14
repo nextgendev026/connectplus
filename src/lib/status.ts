@@ -51,6 +51,10 @@ const SERVICE_META: Record<string, { name: string; description: string; critical
   forex: { name: "Forex Rates", description: "open.er-api.com — daily reference rates" },
   weather: { name: "Weather Service", description: "Open-Meteo — forecasts and GPS weather" },
   inngest: { name: "Background Jobs", description: "Inngest — cron sweeps, scheduled publishing, RSS polling" },
+  payments: {
+    name: "Payments",
+    description: "Safaricom Daraja (M-Pesa) and PayPal — membership checkout and renewals",
+  },
   edge: { name: "Edge Cache", description: "Cloudflare Workers — anonymous HTML, API and image caching in front of the origin" },
 };
 
@@ -188,6 +192,76 @@ async function checkEdge(): Promise<{ status: ServiceStatus; detail: string }> {
   }
 }
 
+/**
+ * Payment rails.
+ *
+ * A rail that is configured but silently rejecting credentials is the worst
+ * failure mode this page can catch: members see a prompt that never arrives or
+ * a PayPal page that errors, while nothing else in the system looks broken. So
+ * a configured rail is actually authenticated here — the tokens are cached for
+ * an hour in the provider clients, so this costs one exchange per hour rather
+ * than one per check.
+ *
+ * Unconfigured is reported as `unconfigured` (level 0), not `down`: a fork that
+ * has not injected keys yet is a valid state, and the status page should not
+ * cry wolf about a deployment that simply has not started selling.
+ */
+async function checkPayments(): Promise<{ status: ServiceStatus; detail: string }> {
+  const { paymentProviders } = await import("@/lib/payments");
+  const rails = paymentProviders();
+  const configured = rails.filter((r) => r.configured);
+
+  if (configured.length === 0) {
+    return {
+      status: "unconfigured",
+      detail: `No rail configured — add ${rails.flatMap((r) => r.missing).slice(0, 3).join(", ")} to enable paid plans`,
+    };
+  }
+
+  const results = await Promise.all(
+    configured.map(async (rail) => {
+      try {
+        if (rail.id === "daraja") {
+          const { darajaAccessToken } = await import("@/lib/payments/daraja");
+          await darajaAccessToken();
+        } else {
+          const { paypalAccessToken } = await import("@/lib/payments/paypal");
+          await paypalAccessToken();
+        }
+        return { id: rail.id, ok: true as const };
+      } catch (err) {
+        return {
+          id: rail.id,
+          ok: false as const,
+          reason: err instanceof Error ? err.message : String(err),
+        };
+      }
+    })
+  );
+
+  const healthy = results.filter((r) => r.ok);
+  const broken = results.filter((r) => !r.ok);
+
+  if (broken.length === 0) {
+    return {
+      status: "operational",
+      detail: `${healthy.map((r) => r.id).join(" + ")} credentials verified`,
+    };
+  }
+  if (healthy.length === 0) {
+    return {
+      status: "down",
+      detail: broken.map((r) => `${r.id}: ${"reason" in r ? r.reason : "rejected"}`).join("; ").slice(0, 160),
+    };
+  }
+  return {
+    status: "degraded",
+    detail: `${broken.map((r) => r.id).join(", ")} rejected — members on that rail cannot pay (${healthy
+      .map((r) => r.id)
+      .join(", ")} still works)`,
+  };
+}
+
 export function checkInngest(): { status: ServiceStatus; detail: string } {
   const eventKey = Boolean(process.env.INNGEST_EVENT_KEY);
   const signKey = Boolean(process.env.INNGEST_SIGN_KEY ?? process.env.INNGEST_SIGNING_KEY);
@@ -205,16 +279,17 @@ export function checkInngest(): { status: ServiceStatus; detail: string } {
 /* ------------------------------------------------------------------ */
 
 export async function runChecks(): Promise<Omit<StatusResponse, "crons" | "history">> {
-  const [database, redis, radio, forex, weather, edge] = await Promise.all([
+  const [database, redis, radio, forex, weather, edge, payments] = await Promise.all([
     wrap("database", checkDatabase),
     wrap("redis", checkRedis),
     wrap("radio", checkRadio),
     wrap("forex", checkForex),
     wrap("weather", checkWeather),
     wrap("edge", checkEdge),
+    wrap("payments", checkPayments),
   ]);
   const inngest = { ...serviceBase("inngest"), ...checkInngest(), latencyMs: null as number | null };
-  const services = [database, redis, radio, forex, weather, inngest, edge];
+  const services = [database, redis, radio, forex, weather, inngest, payments, edge];
 
   const criticalDown = services.some((s) => s.critical && s.status === "down");
   const anyDown = services.some((s) => s.status === "down");

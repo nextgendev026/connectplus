@@ -1,12 +1,14 @@
 /* connectPlus service worker — hardened offline shell + push + update channel.
- * Bump CACHE_VERSION whenever app-shell URLs or cache policies change.
+ * Bump CACHE_VERSION whenever app-shell URLs or cache policies change. It is
+ * also the only purge lever a service worker has: bumping it drops every prior
+ * cache on the next activation, which is what a stale install needs.
  *
  * Same-origin assets are stale-while-revalidate (NOT cache-first): production
  * chunk URLs are content-hashed, but a SW that blindly cache-firsts /_next/
  * can serve stale JS after a recompile, which bricks the app. SWR returns the
  * cached copy instantly on repeat loads and revalidates in the background, so
  * it is just as fast and cannot serve a permanently-wrong bundle. */
-const CACHE_VERSION = "connectplus-v5";
+const CACHE_VERSION = "connectplus-v6";
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 const IMAGE_CACHE = `${CACHE_VERSION}-images`;
@@ -32,8 +34,13 @@ const NEVER_INTERCEPT = [
   /^\/studio(\/|$)/,
   /^\/api\/admin(\/|$)/,
   /^\/api\/auth(\/|$)/,
-  /^\/api\/stripe(\/|$)/,
   /^\/api\/subscription(\/|$)/,
+  // Payments. Listed explicitly rather than left to fall through: the status
+  // poll a member's checkout page runs is reader-scoped, and a cached "pending"
+  // is a member waiting on a prompt that already settled. Today nothing matches
+  // these paths — but that safety is incidental, and one catch-all rule added
+  // later would silently make a payment state cacheable.
+  /^\/api\/payments(\/|$)/,
   /^\/api\/notifications(\/|$)/,
   /^\/api\/upload(\/|$)/,
   /^\/login(\/|$)/,

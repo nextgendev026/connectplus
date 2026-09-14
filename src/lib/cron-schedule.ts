@@ -9,6 +9,7 @@ import {
 import {
   runEmbedPosts,
   runHiveSweep,
+  runPaymentsLifecycle,
   runPublishScheduled,
   runRadioSweep,
   runRecoverThumbnails,
@@ -60,8 +61,13 @@ export const CRON_JOBS: readonly CronJobDef[] = [
     id: "rss-poll",
     name: "RSS syndication",
     description: "Polls every active Kenyan/regional feed, filters spam, and files items by category.",
-    cron: "0 * * * *",
-    everyMinutes: 60,
+    // Every six hours, not hourly. News does not arrive faster than that, and
+    // the hourly cycle re-downloaded the same unchanged documents six times a
+    // day (conditional GETs help, but they still cost a request per feed per
+    // hour). Six-hourly keeps the feed current while cutting the poll volume to
+    // a quarter. Per-feed `pollInterval` still throttles individual sources.
+    cron: "0 */6 * * *",
+    everyMinutes: 360,
     essential: true,
     run: () => runRssPollInline(),
   },
@@ -86,7 +92,10 @@ export const CRON_JOBS: readonly CronJobDef[] = [
   {
     id: "sports-live",
     name: "Livescore heartbeat",
-    description: "Refreshes the multi-source livescore snapshot and grades finished picks every two minutes.",
+    description: "Refreshes the multi-source livescore snapshot, regenerates upcoming picks and grades finished ones every two minutes.",
+    // Driven by the Cloudflare edge Worker's Cron Trigger as well as Inngest,
+    // so the board and the model keep moving even when Inngest Cloud is not
+    // synced — and so the front end never has to be the thing that triggers it.
     cron: "*/2 * * * *",
     everyMinutes: 2,
     essential: false,
@@ -143,6 +152,18 @@ export const CRON_JOBS: readonly CronJobDef[] = [
     everyMinutes: 1440,
     essential: false,
     run: () => runEmbedPosts(400),
+  },
+  {
+    id: "payments-lifecycle",
+    name: "Payment reconciliation",
+    description:
+      "Reconciles PayPal memberships against the provider, expires lapsed periods, and reports stuck M-Pesa prompts.",
+    // Every six hours is enough: this repairs drift (a webhook that never
+    // arrived, a period that has ended), and drift does not compound in minutes.
+    cron: "30 */6 * * *",
+    everyMinutes: 360,
+    essential: false,
+    run: () => runPaymentsLifecycle(),
   },
   {
     id: "status-daily-snapshot",

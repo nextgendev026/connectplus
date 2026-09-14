@@ -10,6 +10,7 @@ import {
   Radar,
   Clock,
   AlertTriangle,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ReferralCards from "./ReferralCards";
@@ -47,8 +48,23 @@ interface TipsResponse {
   sort: string;
   /** Set when the model's data store could not be reached — distinct from "no tips". */
   degraded?: boolean;
+  /** When the server assembled this payload. */
+  generatedAt?: string;
+  /** Newest model write behind the picks on screen. */
+  updatedAt?: string | null;
   picks: Tip[];
 }
+
+/**
+ * How often the board re-reads the model while the tab is open.
+ *
+ * The board used to fetch once on mount and then never again, so a reader who
+ * left the tab open through a kick-off watched yesterday's picks: the engine had
+ * published fresh ones, the server was serving them, and the page had no reason
+ * to ask. Sixty seconds is well inside the two-minute model cadence, so the
+ * board is never more than one pass behind.
+ */
+const AUTO_REFRESH_MS = 60_000;
 
 const MARKET_FILTERS = [
   { value: "", label: "All markets" },
@@ -92,29 +108,92 @@ export default function BettingTips({
   const [error, setError] = useState<string | null>(null);
   const [market, setMarket] = useState("");
   const [sort, setSort] = useState<"confidence" | "edge">("confidence");
+  const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
+  const [ageMinutes, setAgeMinutes] = useState<number | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params = new URLSearchParams({ limit: "40", sort });
-      if (market) params.set("market", market);
-      const res = await fetch(`/api/sports/predictions?${params.toString()}`, { cache: "no-store" });
-      if (!res.ok) throw new Error("Tips are unavailable right now.");
-      setData((await res.json()) as TipsResponse);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load tips");
-    } finally {
-      setLoading(false);
-    }
-  }, [market, sort]);
+  /**
+   * `silent` is the background refresh: it must not blank the board or flash the
+   * spinner, because the reader is mid-read and the data on screen is still
+   * valid — it is a second old, not wrong.
+   *
+   * `bust` is reserved for a refresh the reader explicitly asked for. The
+   * periodic poll deliberately leaves it off so it keeps hitting the edge cache:
+   * a cache-busting param on every tick would turn every viewer into an origin
+   * request every minute, which is precisely the traffic the Cloudflare
+   * livescore/tips tier exists to collapse.
+   */
+  const load = useCallback(
+    async (silent = false, bust = false) => {
+      if (!silent) setLoading(true);
+      setError(null);
+      try {
+        const params = new URLSearchParams({ limit: "40", sort });
+        if (market) params.set("market", market);
+        if (bust) params.set("bust", String(Date.now()));
+        const res = await fetch(`/api/sports/predictions?${params.toString()}`, { cache: "no-store" });
+        if (!res.ok) throw new Error("Tips are unavailable right now.");
+        const payload = (await res.json()) as TipsResponse;
+        setData(payload);
+        setFetchedAt(payload.generatedAt ? new Date(payload.generatedAt) : new Date());
+      } catch (err) {
+        // A failed *background* refresh keeps the last good board: replacing a
+        // usable set of picks with an error box is a worse outcome than a
+        // slightly old one.
+        if (!silent) setError(err instanceof Error ? err.message : "Failed to load tips");
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [market, sort]
+  );
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-filter-change
     void load();
   }, [load]);
 
+  // The relative timestamp ages on its own clock. Computing it during render
+  // would make every re-render read the wall clock (and read differently), so
+  // the age is a value the interval updates instead.
+  useEffect(() => {
+    const compute = () =>
+      setAgeMinutes(
+        fetchedAt ? Math.max(0, Math.round((Date.now() - fetchedAt.getTime()) / 60_000)) : null
+      );
+    compute();
+    const timer = setInterval(compute, 30_000);
+    return () => clearInterval(timer);
+  }, [fetchedAt]);
+
+  // Keep the board current while the tab is open, and catch up immediately when
+  // the reader comes back to it — the two moments when stale picks are most
+  // likely and most costly (a game has just started).
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === "visible") void load(true);
+    };
+    const timer = setInterval(tick, AUTO_REFRESH_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void load(true);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [load]);
+
   const record = data?.record;
+  const freshness =
+    ageMinutes === null
+      ? null
+      : ageMinutes < 1
+        ? "just now"
+        : ageMinutes === 1
+          ? "1 min ago"
+          : `${ageMinutes} min ago`;
 
   // ONE CARD PER FIXTURE.
   //
@@ -144,11 +223,24 @@ export default function BettingTips({
             </span>
           )}
         </div>
-        <p className="mt-1.5 max-w-2xl text-sm text-surface-400">
-          One card per match, with our model&apos;s pick for each market. Ranked by how confident it is,
-          or by how much its numbers differ from the bookmakers&apos;. Open the Scores tab for the full
-          breakdown behind any of these.
-        </p>
+        <div className="mt-1.5 flex flex-wrap items-center gap-3">
+          <p className="max-w-2xl text-sm text-surface-400">
+            One card per match, with our model&apos;s pick for each market. Ranked by how confident it is,
+            or by how much its numbers differ from the bookmakers&apos;. Open the Scores tab for the full
+            breakdown behind any of these.
+          </p>
+          {freshness ? (
+            <button
+              type="button"
+              onClick={() => void load(true, true)}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-surface-800 px-2.5 py-1 text-[10px] font-medium text-surface-500 transition hover:border-emerald-500/40 hover:text-emerald-300"
+              title="The board re-reads the model every minute on its own"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Updated {freshness}
+            </button>
+          ) : null}
+        </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
           {MARKET_FILTERS.map((f) => (

@@ -485,8 +485,13 @@ model SubscriptionPlan {
   limits        String   @db.Text // JSON object: { postsPerMonth, storageMb, aiRequests, ... }
   isActive      Boolean  @default(true)
   sortOrder     Int      @default(0)
-  stripePriceMonthlyId String? // Stripe Price for monthly billing (paid plans)
-  stripePriceYearlyId  String? // Stripe Price for yearly billing (paid plans)
+  /// Provider-side plan/product identifiers, per billing cycle. PayPal
+  /// Subscriptions needs a product + plan pair to bill recurrently; when these
+  /// are empty PayPal falls back to a one-off covered period (see
+  /// src/lib/payments/paypal.ts). Daraja needs no identifier at all — it bills
+  /// a one-off amount per cycle — so it never reads these.
+  paypalPlanMonthlyId String?
+  paypalPlanYearlyId  String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   subscriptions UserSubscription[]
@@ -506,8 +511,22 @@ model UserSubscription {
   currentPeriodStart DateTime
   currentPeriodEnd   DateTime
   cancelAtPeriodEnd  Boolean         @default(false)
-  stripeSubscriptionId String?
-  stripeCustomerId    String?
+  /// Which rail collected the money: daraja (M-Pesa) | paypal | manual
+  /// (free grants, comps and admin adjustments).
+  provider            String          @default("manual")
+  /// Provider-side subscription id when the rail supports recurring billing
+  /// (PayPal's `I-XXXXX`). M-Pesa has no subscription object, so its renewals
+  /// are driven by our own period window and this stays null.
+  providerSubscriptionId String?
+  providerCustomerId     String?
+  /// Last settled payment: the M-Pesa receipt number or the PayPal capture id,
+  /// kept so a member's payment can always be pointed at from the admin
+  /// console without a second lookup.
+  lastPaymentRef      String?
+  lastPaymentAt       DateTime?
+  /// Payer MSISDN (2547XXXXXXXX) for M-Pesa members — the number the STK prompt
+  /// was sent to, shown in the console when reconciling a payment.
+  payerPhone          String?
   usageThisPeriod     Int             @default(0)
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
@@ -517,12 +536,71 @@ model UserSubscription {
   @@index([status])
 }
 
-/// Idempotency ledger for Stripe webhook deliveries.
-model StripeEvent {
-  id         String   @id @default(cuid())
-  eventId    String   @unique
-  type       String
-  handledAt  DateTime @default(now())
+/// One attempt to buy a paid plan — created *before* the reader is handed to a
+/// payment provider.
+///
+/// This is the row every asynchronous rail reconciles against: PayPal returns
+/// the reader with an order id, M-Pesa calls back with a CheckoutRequestID, and
+/// both have to find something durable that says who was paying for what. It
+/// also makes the inverse visible — a settled payment that matches no intent is
+/// a replay or a mistake, and the admin console can say so instead of guessing.
+model PaymentIntent {
+  id           String   @id @default(cuid())
+  userId       String
+  planId       String
+  billingCycle String   @default("monthly") // monthly | yearly
+  /// daraja | paypal
+  provider     String
+  /// Our own reference, sent to the provider (PayPal `custom_id`, Daraja
+  /// `AccountReference`) and echoed back, so a callback is matched to an intent
+  /// without trusting anything the caller claims.
+  reference    String   @unique
+  /// Amount actually charged, in the provider's settlement currency.
+  amount       Float
+  currency     String
+  /// Amount the plan is priced at, in the plan's own currency, kept for display.
+  listAmount   Float?
+  listCurrency String?
+  /// pending | processing | succeeded | failed | cancelled | expired
+  status       String   @default("pending")
+  /// PayPal: the hosted approval URL returned by createOrder.
+  checkoutUrl     String? @db.Text
+  /// PayPal order id (the handle used to capture).
+  providerOrderId String?
+  /// Daraja CheckoutRequestID (the handle used to query STK status).
+  providerRequestId String?
+  /// Settlement reference: M-Pesa receipt number or PayPal capture id.
+  providerReceipt String?
+  payerPhone      String?
+  failureReason   String?
+  /// Raw provider payload, kept for dispute/audit work.
+  metadata        String? @db.Text
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  settledAt       DateTime?
+
+  @@index([userId, status])
+  @@index([provider, status])
+  @@index([providerOrderId])
+  @@index([providerRequestId])
+  @@index([createdAt])
+}
+
+/// Idempotency ledger for inbound payment notifications.
+///
+/// Both rails retry: PayPal redelivers a webhook until it gets a 2xx, and
+/// Safaricom can deliver the same STK callback more than once. Claiming the
+/// event id *before* running the handler (and treating the unique violation as
+/// "already handled") is race-free, where a read-then-write would let two
+/// concurrent deliveries double-extend a subscription.
+model PaymentEvent {
+  id        String   @id @default(cuid())
+  eventId   String   @unique
+  provider  String
+  type      String
+  handledAt DateTime @default(now())
+
+  @@index([provider, handledAt])
 }
 
 /// Third-party ad slot configuration — allows admins to inject Google AdSense,

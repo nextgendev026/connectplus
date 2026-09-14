@@ -230,6 +230,69 @@ export async function runRadioSweep(): Promise<{ total: number; live: number; wi
 }
 
 /**
+ * Payment reconciliation and expiry.
+ *
+ * Two repairs that only a scheduler can make reliably:
+ *
+ *   • **Reconcile** every live PayPal membership against PayPal's own copy. A
+ *     webhook PayPal failed to deliver (or one we refused) otherwise leaves the
+ *     local status wrong forever, and PayPal is the only party that knows which
+ *     cards will actually be charged.
+ *   • **Expire** memberships whose paid period has closed. Without this a
+ *     cancelled plan keeps its entitlements indefinitely: the period end gates
+ *     access, and nothing was moving the status to `cancelled` once it passed.
+ *
+ * It also counts prompts that never resolved, which is how a silently broken
+ * M-Pesa shortcode shows up before members start complaining.
+ */
+export async function runPaymentsLifecycle(limit = 50): Promise<{
+  reconciled: number;
+  updated: number;
+  expired: number;
+  abandoned: number;
+  stalePending: number;
+}> {
+  const {
+    reconcileSubscription,
+    expireLapsedSubscriptions,
+    expireStaleIntents,
+    paymentPipelineHealth,
+  } = await import("@/lib/payments/lifecycle");
+
+  const live = await prisma.userSubscription.findMany({
+    where: { provider: "paypal", status: { in: ["active", "trialing", "past_due"] }, providerSubscriptionId: { not: null } },
+    select: { id: true },
+    orderBy: { updatedAt: "asc" },
+    take: limit,
+  });
+
+  let updated = 0;
+  for (const sub of live) {
+    const result = await reconcileSubscription(sub.id).catch(() => null);
+    if (result?.action === "updated") updated++;
+  }
+
+  const expiry = await expireLapsedSubscriptions();
+  // Close out prompts nobody ever approved BEFORE reading the health counters,
+  // so "stuck" means a payment genuinely in flight rather than one abandoned
+  // hours ago and still sitting in the table.
+  const abandoned = await expireStaleIntents();
+  const health = await paymentPipelineHealth();
+
+  if (health.stalePending > 0) {
+    log.warn("payments: prompts that never resolved", { stalePending: health.stalePending });
+  }
+
+  return {
+    reconciled: live.length,
+    updated,
+    expired: expiry.expired,
+    abandoned: abandoned.expired,
+    stalePending: health.stalePending,
+  };
+}
+
+/**
  * Status watchdog: probes services and alerts on degradation/downtime, with a
  * Redis cooldown so a flapping service doesn't spam (one alert per episode).
  */

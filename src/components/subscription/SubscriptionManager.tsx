@@ -13,6 +13,12 @@ interface SubView {
   currentPeriodEnd: string;
   cancelAtPeriodEnd: boolean;
   usageThisPeriod: number;
+  /** daraja | paypal | manual | stripe (legacy rows migrated from the old rail). */
+  provider?: string;
+  providerSubscriptionId?: string | null;
+  lastPaymentRef?: string | null;
+  lastPaymentAt?: string | null;
+  payerPhone?: string | null;
   plan: {
     id: string;
     displayName: string;
@@ -23,8 +29,15 @@ interface SubView {
     features: string[];
     limits: Record<string, number>;
   };
-  managedByStripe?: boolean;
+  managedByProvider?: boolean;
 }
+
+const PROVIDER_LABELS: Record<string, string> = {
+  daraja: "M-Pesa",
+  paypal: "PayPal",
+  manual: "granted",
+  stripe: "Stripe (legacy)",
+};
 
 /**
  * Self-service membership control: shows every active/cancelled subscription
@@ -71,28 +84,6 @@ export function SubscriptionManager() {
       } else {
         await load();
       }
-    } catch {
-      setError("Network error — please try again.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function openBillingPortal(subscriptionId: string) {
-    setBusy(subscriptionId);
-    setError(null);
-    try {
-      const res = await fetch("/api/subscription/manage", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "portal", subscriptionId }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok || !d.portalUrl) {
-        setError(d?.error ?? "Could not open the billing portal.");
-        return;
-      }
-      window.location.assign(d.portalUrl);
     } catch {
       setError("Network error — please try again.");
     } finally {
@@ -173,7 +164,13 @@ export function SubscriptionManager() {
                     {!isFree && s.plan.priceMonthly > 0
                       ? ` · $${s.billingCycle === "yearly" ? s.plan.priceYearly : s.plan.priceMonthly}`
                       : ""}
+                    {s.provider ? ` · paid via ${PROVIDER_LABELS[s.provider] ?? s.provider}` : ""}
                   </p>
+                  {s.lastPaymentRef ? (
+                    <p className="mt-0.5 text-[11px] text-surface-500">
+                      Last payment reference {s.lastPaymentRef}
+                    </p>
+                  ) : null}
                   {!isFree && (
                     <p className="mt-0.5 text-[11px] text-surface-500">
                       {cancelling ? "Access until" : "Renews"} {ends}
@@ -182,21 +179,6 @@ export function SubscriptionManager() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {s.managedByStripe && (
-                    <button
-                      type="button"
-                      disabled={busy === s.id}
-                      onClick={() => openBillingPortal(s.id)}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-brand-500/40 bg-brand-500/10 px-3 py-2 text-[11px] font-semibold text-brand-300 hover:bg-brand-500/20 transition-colors disabled:opacity-60"
-                    >
-                      {busy === s.id ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      )}
-                      Manage billing
-                    </button>
-                  )}
                   {cancelling ? (
                     <button
                       type="button"

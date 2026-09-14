@@ -32,8 +32,8 @@ export async function GET(request: NextRequest) {
       currency: p.currency,
       features: JSON.parse(p.features),
       limits: JSON.parse(p.limits),
-      stripePriceMonthlyId: p.stripePriceMonthlyId,
-      stripePriceYearlyId: p.stripePriceYearlyId,
+      paypalPlanMonthlyId: p.paypalPlanMonthlyId,
+      paypalPlanYearlyId: p.paypalPlanYearlyId,
     })),
   });
 }
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
     where: { name: body.name },
     update: {
       // Merge semantics: only fields the caller actually sends are replaced,
-      // so a partial update (e.g. just Stripe price ids) never wipes the
+      // so a partial update (e.g. just PayPal plan ids) never wipes the
       // plan's display settings, features or limits.
       ...(body.displayName !== undefined ? { displayName: body.displayName || body.name } : {}),
       ...(body.tier !== undefined ? { tier: body.tier } : {}),
@@ -67,11 +67,11 @@ export async function POST(request: NextRequest) {
       ...(body.limits !== undefined ? { limits: JSON.stringify(body.limits || {}) } : {}),
       ...(body.isActive !== undefined ? { isActive: body.isActive !== false } : {}),
       ...(body.sortOrder !== undefined ? { sortOrder: body.sortOrder ?? 0 } : {}),
-      ...(body.stripePriceMonthlyId !== undefined
-        ? { stripePriceMonthlyId: body.stripePriceMonthlyId || null }
+      ...(body.paypalPlanMonthlyId !== undefined
+        ? { paypalPlanMonthlyId: body.paypalPlanMonthlyId || null }
         : {}),
-      ...(body.stripePriceYearlyId !== undefined
-        ? { stripePriceYearlyId: body.stripePriceYearlyId || null }
+      ...(body.paypalPlanYearlyId !== undefined
+        ? { paypalPlanYearlyId: body.paypalPlanYearlyId || null }
         : {}),
       updatedAt: now,
     },
@@ -87,8 +87,8 @@ export async function POST(request: NextRequest) {
       limits: JSON.stringify(body.limits || {}),
       isActive: body.isActive !== false,
       sortOrder: body.sortOrder ?? 0,
-      stripePriceMonthlyId: body.stripePriceMonthlyId || null,
-      stripePriceYearlyId: body.stripePriceYearlyId || null,
+      paypalPlanMonthlyId: body.paypalPlanMonthlyId || null,
+      paypalPlanYearlyId: body.paypalPlanYearlyId || null,
       createdAt: now,
       updatedAt: now,
     },

@@ -3,8 +3,9 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
-import { SubscribeButton } from "@/components/subscription/SubscribeButton";
-import { Check, Sparkles, BookOpen, PenLine, ArrowRight } from "lucide-react";
+import { SubscribeButton, type RailOption } from "@/components/subscription/SubscribeButton";
+import { paymentProviders, settlementAmount, type PaymentProviderId } from "@/lib/payments";
+import { Check, Sparkles, BookOpen, PenLine, ArrowRight, Smartphone, CreditCard, ShieldCheck } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -60,16 +61,29 @@ function PlanCard({
   signedIn,
   activePlanIds,
   billingCycle,
+  rails,
 }: {
   plan: PlanView;
   signedIn: boolean;
   activePlanIds: Set<string>;
   billingCycle: "monthly" | "yearly";
+  rails: RailOption[];
 }) {
   const free = plan.priceMonthly === 0 && plan.priceYearly === 0;
   const price = billingCycle === "yearly" ? plan.priceYearly : plan.priceMonthly;
   const popular = plan.tier === "pro";
   const current = activePlanIds.has(plan.id);
+
+  // What each live rail will actually take, computed by the same helper the
+  // checkout uses so the card cannot quote a price the prompt does not charge.
+  const quotes = free
+    ? []
+    : paymentProviders()
+        .filter((p) => p.configured)
+        .map((p) => ({
+          meta: p,
+          quote: settlementAmount(plan, billingCycle, p.id as PaymentProviderId),
+        }));
 
   const limitEntries = Object.entries(plan.limits).filter(
     ([, v]) => typeof v === "number" && !Number.isNaN(v)
@@ -126,6 +140,28 @@ function PlanCard({
         })}
       </ul>
 
+      {quotes.length > 0 ? (
+        <div className="mt-5 space-y-1 border-t border-surface-800/60 pt-3">
+          {quotes.map(({ meta, quote }) => (
+            <p key={meta.id} className="flex items-center justify-between text-[11px] text-surface-400">
+              <span className="inline-flex items-center gap-1.5">
+                {meta.id === "daraja" ? (
+                  <Smartphone className="w-3 h-3 text-emerald-400" />
+                ) : (
+                  <CreditCard className="w-3 h-3 text-brand-400" />
+                )}
+                {meta.method}
+              </span>
+              <span className="tabular-nums text-surface-300">
+                {quote.currency === "KES" ? "KSh " : quote.currency === "USD" ? "$" : ""}
+                {quote.amount.toLocaleString()}
+                <span className="text-surface-500">/{billingCycle === "yearly" ? "yr" : "mo"}</span>
+              </span>
+            </p>
+          ))}
+        </div>
+      ) : null}
+
       <div className="mt-6">
         <SubscribeButton
           planId={plan.id}
@@ -134,6 +170,7 @@ function PlanCard({
           signedIn={signedIn}
           current={current}
           free={free}
+          rails={rails}
         />
       </div>
     </div>
@@ -162,6 +199,14 @@ export default async function PricingPage() {
   const parsed = plans.map(parsePlan);
   const readerPlans = parsed.filter((p) => p.audience === "reader");
   const writerPlans = parsed.filter((p) => p.audience === "writer");
+  const rails: RailOption[] = paymentProviders().map((p) => ({
+    id: p.id,
+    name: p.name,
+    method: p.method,
+    currency: p.currency,
+    configured: p.configured,
+  }));
+  const configuredRails = rails.filter((r) => r.configured);
 
   return (
     <div className="min-h-screen bg-surface-950 text-surface-50">
@@ -222,12 +267,54 @@ export default async function PricingPage() {
                     signedIn={signedIn}
                     activePlanIds={activePlanIds}
                     billingCycle="monthly"
+                    rails={rails}
                   />
                 ))}
               </div>
             )}
           </section>
         ))}
+
+        {/* How you pay. Two rails for two realities: a Kenyan handset, and a
+            card anywhere else in the world. */}
+        <section className="rounded-2xl border border-surface-800/60 bg-surface-900/50 p-6">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-emerald-400" />
+            <h3 className="text-sm font-semibold text-surface-100">How you pay</h3>
+          </div>
+          {configuredRails.length === 0 ? (
+            <p className="mt-3 text-xs leading-relaxed text-surface-400">
+              Payments are being connected. M-Pesa and PayPal are wired up, but this deployment hasn&apos;t had its
+              provider credentials injected yet — free plans work as normal in the meantime.
+            </p>
+          ) : (
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              {configuredRails.map((rail) => (
+                <div key={rail.id} className="rounded-xl border border-surface-800 bg-surface-950/40 p-4">
+                  <div className="flex items-center gap-2">
+                    {rail.id === "daraja" ? (
+                      <Smartphone className="w-4 h-4 text-emerald-400" />
+                    ) : (
+                      <CreditCard className="w-4 h-4 text-brand-400" />
+                    )}
+                    <span className="text-xs font-semibold text-surface-100">{rail.method}</span>
+                  </div>
+                  <p className="mt-2 text-[11px] leading-relaxed text-surface-400">
+                    {rail.id === "daraja"
+                      ? "A payment request arrives on your phone; approve it with your M-Pesa PIN. Nothing is charged until you do, and your plan activates the moment Safaricom confirms."
+                      : "Pay with your PayPal balance or any linked card. Prices are settled in USD, which PayPal converts at its own rate for your card."}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="mt-4 text-[11px] leading-relaxed text-surface-500">
+            Payments are handled by Safaricom (M-Pesa) and PayPal — connectPlus never sees or stores your card number or
+            your M-Pesa PIN. Cancelling stops the next charge; you keep access until the end of the period you already
+            paid for. See our <Link href="/terms" className="underline hover:text-surface-300">terms</Link> and{" "}
+            <Link href="/privacy" className="underline hover:text-surface-300">privacy policy</Link>.
+          </p>
+        </section>
 
         <div className="rounded-2xl border border-surface-800/60 bg-surface-900/50 p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>

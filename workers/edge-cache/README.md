@@ -1,8 +1,9 @@
-# Cloudflare edge cache + livescore tier
+# Cloudflare edge cache, livescore tier + edge cron
 
-A single-purpose Cloudflare Worker that sits in front of the Vercel deployment,
-answers anonymous traffic from Cloudflare's cache, and serves the live scores
-board from the edge.
+A single-purpose Cloudflare Worker with two jobs: it sits in front of the Vercel
+deployment and answers anonymous traffic from Cloudflare's cache (including the
+live scores board), and it drives the high-frequency scheduled jobs whose
+staleness nobody would otherwise notice.
 
 ```
 reader ──▶ Cloudflare edge (Worker) ──▶ Vercel origin
@@ -39,10 +40,42 @@ cover requests are answered at the edge, not re-fetched and re-resized.
 | **`/api/sports/predictions`** | **30s / 90s SWR** | the tips board |
 | **`/api/sports/referrals`** | **300s / 900s SWR** | partner offers |
 
-Never cached: `/api/auth*`, `/api/upload`, `/api/track`, `/api/stripe*`,
+Never cached: `/api/auth*`, `/api/upload`, `/api/track`, `/api/payments/*`
+(except the public `/api/payments/providers` allowlist), `/api/cron*`,
 `/api/status/*`, `/api/rss*`, the reader-scoped sports routes
 (`/api/sports/follows`, `/api/sports/reminders`, `/api/sports/track`), every
 non-GET method.
+
+## The edge cron
+
+A cache worker that can also *schedule* is a deliberately cheap trade: Cloudflare
+Cron Triggers are free, always on, and independent of both Vercel and Inngest,
+so the jobs that quietly rot when nothing is watching them get a scheduler that
+is not the thing being watched.
+
+| Trigger | Job |
+| --- | --- |
+| every 2 min | `sports-live` — snapshot + settle picks |
+| every 5 min | `sports-notify` — favourite match alerts |
+| every 15 min | `radio-status-sweep` — now-playing / listener counts |
+| every 30 min | `sports-intel` — model training + pick regeneration |
+| every 6 h | `payments-lifecycle` — reconcile PayPal, expire lapsed plans |
+
+The worker does **no work itself**. It pings
+`/api/cron?trigger=<job id>&source=cloudflare-cron` with the shared secret, so the
+job definitions, their cadence and their heartbeats stay owned by
+`src/lib/cron-schedule.ts`. `SCHEDULES` in `src/index.mjs` maps a cron expression
+to a job *id*, and a unit test asserts every id it names still exists in the
+registry — a rename fails the build instead of pinging a 404 forever.
+
+Requires `CRON_SECRET` (the same value the app verifies). Without it the pings
+are sent but the app answers 401, which the admin console reports as stale jobs
+rather than as silence. Register the triggers with the deploy script
+(`CRON_SECRET=… node scripts/deploy-worker.mjs`) or from `wrangler.toml`.
+
+```bash
+curl -s https://connectplus-edge.connectplusapp.workers.dev/__edge | jq .schedules
+```
 
 ## The livescore tier
 

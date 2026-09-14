@@ -467,55 +467,173 @@ export async function getIntegrations(): Promise<IntegrationsReport> {
     });
   }
 
-  /* ── Stripe ─────────────────────────────────────────────────────── */
+  /* ── Safaricom Daraja (M-Pesa) ──────────────────────────────────── */
   {
-    const secret = env("STRIPE_SECRET_KEY");
-    const webhook = env("STRIPE_WEBHOOK_SECRET");
-    let status: IntegrationStatus = secret && webhook ? "operational" : secret ? "degraded" : "unconfigured";
-    let detail = !secret
-      ? "Not configured — subscriptions fall back to the free plan"
-      : !webhook
-        ? "Secret key present but the webhook secret is missing — paid events cannot be verified"
-        : "Keys configured";
+    const key = env("MPESA_CONSUMER_KEY");
+    const secret = env("MPESA_CONSUMER_SECRET");
+    const shortcode = env("MPESA_SHORTCODE");
+    const passkey = env("MPESA_PASSKEY");
+    const production = env("MPESA_ENV").toLowerCase() === "production";
+    const hasAll = Boolean(key && secret && shortcode && passkey);
+    const anyPresent = Boolean(key || secret || shortcode || passkey);
+
+    let status: IntegrationStatus = hasAll ? "operational" : anyPresent ? "degraded" : "unconfigured";
+    let detail = !anyPresent
+      ? "Not configured — M-Pesa checkout is disabled and paid plans cannot be bought"
+      : !hasAll
+        ? "Partially configured — a missing shortcode or passkey makes every STK push fail"
+        : production
+          ? "Production credentials configured"
+          : "Sandbox credentials configured — no real money moves";
     let latencyMs: number | null = null;
 
-    if (secret) {
-      const r = await probe("https://api.stripe.com/v1/balance", {
-        headers: { Authorization: `Bearer ${secret}` },
-        timeoutMs: 6000,
-      });
+    if (key && secret) {
+      // The OAuth exchange is the honest credential test: it proves both halves
+      // of the pair, not merely that the variables are non-empty.
+      const r = await probe(
+        `${production ? "https://api.safaricom.co.ke" : "https://sandbox.safaricom.co.ke"}/oauth/v1/generate?grant_type=client_credentials`,
+        {
+          headers: { Authorization: `Basic ${Buffer.from(`${key}:${secret}`).toString("base64")}` },
+          timeoutMs: 7000,
+        }
+      );
       latencyMs = r.ms;
-      if (!r.ok) {
-        status = secret ? "down" : status;
-        detail = `Stripe rejected the secret key${r.error ? `: ${r.error}` : ` (HTTP ${r.status})`}`;
-      } else {
-        status = webhook ? "operational" : "degraded";
-        detail = `${secret.startsWith("sk_live") ? "Live" : "Test"} mode key verified (${r.ms}ms)${
-          webhook ? " — webhook secret set" : " — webhook secret missing"
+      const token = (r.body as { access_token?: string } | null)?.access_token;
+      if (!r.ok || !token) {
+        status = "down";
+        detail = `Safaricom rejected the Daraja credentials${
+          r.error ? `: ${r.error}` : ` (HTTP ${r.status})`
         }`;
+      } else if (!hasAll) {
+        status = "degraded";
+        detail = `Credentials verified (${r.ms}ms) but the ${
+          !shortcode ? "shortcode" : "passkey"
+        } is missing — STK pushes cannot be sent`;
+      } else {
+        status = "operational";
+        detail = `${production ? "Production" : "Sandbox"} credentials verified (${r.ms}ms) — shortcode ${shortcode}`;
       }
     }
 
     integrations.push({
-      id: "stripe",
-      name: "Stripe billing",
+      id: "daraja",
+      name: "Safaricom Daraja (M-Pesa)",
       category: "Payments",
       description:
-        "Subscriptions, the plans catalogue, the customer portal and the webhook that keeps entitlements in sync.",
+        "STK-push subscriptions: the prompt lands on the member's handset and the STK result settles their plan.",
       status,
       detail,
       latencyMs,
       verdict: verdictFor(status, false),
       fields: [
-        field("Secret key", "STRIPE_SECRET_KEY", { secret: true }),
-        field("Webhook secret", "STRIPE_WEBHOOK_SECRET", { secret: true }),
+        field("Consumer key", "MPESA_CONSUMER_KEY", { secret: true }),
+        field("Consumer secret", "MPESA_CONSUMER_SECRET", { secret: true }),
+        field("Paybill / till shortcode", "MPESA_SHORTCODE"),
+        field("Lipa na M-Pesa passkey", "MPESA_PASSKEY", { secret: true }),
+        field("Environment", "MPESA_ENV", {
+          required: false,
+          hint: '"production" for live money; anything else uses the Daraja sandbox.',
+        }),
+        field("Transaction type", "MPESA_TRANSACTION_TYPE", {
+          required: false,
+          hint: "CustomerPayBillOnline (paybill) or CustomerBuyGoodsOnline (till). Defaults to paybill.",
+        }),
+        field("Callback URL", "MPESA_CALLBACK_URL", {
+          required: false,
+          hint: "Defaults to <APP_URL>/api/payments/daraja/callback.",
+        }),
+        field("Callback secret", "MPESA_CALLBACK_TOKEN", {
+          required: false,
+          hint: "Shared secret appended to the callback URL — a second gate in front of the intent match.",
+        }),
+        field("KES per USD", "MPESA_KES_PER_USD", {
+          required: false,
+          hint: "Conversion used to price USD plans on the M-Pesa rail (default 129).",
+        }),
       ],
       links: [
-        { label: "Stripe dashboard", href: "https://dashboard.stripe.com/" },
-        { label: "Webhooks", href: "https://dashboard.stripe.com/webhooks" },
+        { label: "Daraja portal", href: "https://developer.safaricom.co.ke/" },
+        { label: "Payment console", href: "/admin/payments" },
       ],
       notes:
-        "The webhook lives at /api/stripe/webhook and claims each event id once, so a retried delivery can never double-apply.",
+        'The callback lives at /api/payments/daraja/callback, matches the CheckoutRequestID against a PaymentIntent we created, and refuses a "success" with no receipt or the wrong amount. Set MPESA_CALLBACK_IP_CHECK=on to also enforce Safaricom\'s published source IPs.',
+    });
+  }
+
+  /* ── PayPal ─────────────────────────────────────────────────────── */
+  {
+    const clientId = env("PAYPAL_CLIENT_ID");
+    const secret = env("PAYPAL_CLIENT_SECRET");
+    const webhook = env("PAYPAL_WEBHOOK_ID");
+    const live = env("PAYPAL_ENV").toLowerCase() === "live";
+    const hasKeys = Boolean(clientId && secret);
+
+    let status: IntegrationStatus = hasKeys && webhook ? "operational" : hasKeys ? "degraded" : "unconfigured";
+    let detail = !clientId && !secret
+      ? "Not configured — PayPal checkout is disabled"
+      : !hasKeys
+        ? "Partially configured — both the client id and the secret are required"
+        : !webhook
+          ? "Credentials present but PAYPAL_WEBHOOK_ID is missing, so no webhook can be verified"
+          : live
+            ? "Live credentials configured"
+            : "Sandbox credentials configured — no real money moves";
+    let latencyMs: number | null = null;
+
+    if (hasKeys) {
+      const r = await probe(
+        `${live ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com"}/v1/oauth2/token`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Basic ${Buffer.from(`${clientId}:${secret}`).toString("base64")}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: "grant_type=client_credentials",
+          timeoutMs: 7000,
+        }
+      );
+      latencyMs = r.ms;
+      const token = (r.body as { access_token?: string } | null)?.access_token;
+      if (!r.ok || !token) {
+        status = "down";
+        detail = `PayPal rejected the API credentials${r.error ? `: ${r.error}` : ` (HTTP ${r.status})`}`;
+      } else if (!webhook) {
+        status = "degraded";
+        detail = `Credentials verified (${r.ms}ms) but PAYPAL_WEBHOOK_ID is missing — inbound webhooks are refused (503) rather than trusted unverified`;
+      } else {
+        status = "operational";
+        detail = `${live ? "Live" : "Sandbox"} credentials verified (${r.ms}ms) — webhook verification enabled`;
+      }
+    }
+
+    integrations.push({
+      id: "paypal",
+      name: "PayPal",
+      category: "Payments",
+      description:
+        "Card and wallet subscriptions for international and diaspora members, settled in USD (PayPal cannot settle KES).",
+      status,
+      detail,
+      latencyMs,
+      verdict: verdictFor(status, false),
+      fields: [
+        field("Client id", "PAYPAL_CLIENT_ID"),
+        field("Client secret", "PAYPAL_CLIENT_SECRET", { secret: true }),
+        field("Webhook id", "PAYPAL_WEBHOOK_ID", {
+          hint: "From the app's Webhooks page — without it, inbound webhooks are refused rather than trusted.",
+        }),
+        field("Environment", "PAYPAL_ENV", {
+          required: false,
+          hint: '"live" for production; anything else uses the PayPal sandbox.',
+        }),
+      ],
+      links: [
+        { label: "PayPal developer dashboard", href: "https://developer.paypal.com/dashboard/applications" },
+        { label: "Payment console", href: "/admin/payments" },
+      ],
+      notes:
+        "Webhook URL: <APP_URL>/api/payments/paypal/webhook. Subscribe to PAYMENT.CAPTURE.* and BILLING.SUBSCRIPTION.* — the browser's return trip is never the authority.",
     });
   }
 

@@ -59,6 +59,15 @@ const RATE_LIMIT_NAMES = {
   ADMIN_STATS: "/api/admin/stats",
   USER_SETTINGS: "/api/user/settings",
   USER_PASSWORD: "/api/user/password",
+  // Checkout starts an STK push, which costs a real Safaricom round trip and
+  // buzzes a member's phone: a loop here is both an egress bill and a nuisance.
+  SUBSCRIPTION_MANAGE: "/api/subscription/manage",
+  // The two provider notification endpoints are unauthenticated by necessity
+  // (the providers cannot present a session), so the only defence in front of
+  // them is a ceiling on how often one caller can make us do the lookup work.
+  DARAJA_CALLBACK: "/api/payments/daraja/callback",
+  PAYPAL_WEBHOOK: "/api/payments/paypal/webhook",
+  PAYMENT_INTENT: "/api/payments/intents",
 } as const;
 
 const DEFAULTS: Record<LimitKey, LimitRule> = {
@@ -79,6 +88,14 @@ const DEFAULTS: Record<LimitKey, LimitRule> = {
   ADMIN_STATS: { limit: 30, windowMs: 60 * 1000 },
   USER_SETTINGS: { limit: 20, windowMs: 60 * 1000 },
   USER_PASSWORD: { limit: 10, windowMs: 60 * 1000 },
+  SUBSCRIPTION_MANAGE: { limit: 12, windowMs: 60 * 1000 },
+  // High ceilings: Safaricom can legitimately deliver a burst of callbacks after
+  // a promotion, and PayPal retries aggressively. The limit is here to stop a
+  // flood, not to rate-limit normal settlement traffic.
+  DARAJA_CALLBACK: { limit: 120, windowMs: 60 * 1000 },
+  PAYPAL_WEBHOOK: { limit: 120, windowMs: 60 * 1000 },
+  // The checkout page polls this every few seconds while a prompt is open.
+  PAYMENT_INTENT: { limit: 60, windowMs: 60 * 1000 },
 };
 
 export const DEFAULT_API_LIMIT = 100;

@@ -38,11 +38,44 @@ Full-stack publishing and live-sports platform built with Next.js 16 (App Router
 - **Real-time ad analytics** — impression and click tracking for both first-party and third-party slots, displayed in the admin Monetization console.
 
 ### Subscription System
+
 - **3 tiers × 2 audiences** — Free / Pro / Premium for both Readers and Writers.
 - **Reader plans:** unlimited reading → ad-free + AI recommendations → exclusive content + offline reading.
 - **Writer plans:** 5 articles/month → unlimited + AI editor + SEO → team collab + API + revenue share.
-- **User controls** — subscribe, cancel (at period end), reactivate. Usage tracking per billing cycle.
-- **Admin console** — manage plans, view features/pricing cards, filter by audience.
+- **Two payment rails, because the audience is two audiences** — Safaricom
+  **Daraja (M-Pesa)** for a Kenyan handset and **PayPal** for cards and diaspora
+  members. Stripe was removed: it does not serve East Africa, so every paid plan
+  was unreachable for the people this platform is built for.
+- **M-Pesa via STK push** — the member enters a phone number, a payment prompt
+  arrives on the handset, and the plan activates when Safaricom confirms.
+  Checkout polls `/api/payments/intents/<id>`, which asks Safaricom directly, so
+  a payer sees the outcome even if the callback is slow or cannot reach a local
+  dev machine. M-Pesa settles in **whole shillings**: USD plans are converted at
+  `MPESA_KES_PER_USD` and rounded, because a fractional shilling cannot be
+  charged.
+- **PayPal via Orders or Subscriptions** — a plan with a PayPal plan id buys a
+  true recurring subscription that PayPal renews by itself; without one, the
+  member pays a single period and renews deliberately, so nothing auto-charges
+  by accident. PayPal cannot settle KES, so its prices are USD.
+- **Money is never trusted from a callback.** Every checkout writes a
+  `PaymentIntent` **first**, and each notification is matched back to it by the
+  reference we issued. A Daraja "success" with no `MpesaReceiptNumber`, or with
+  an amount that does not match what we asked for, is refused and logged; a
+  PayPal webhook that fails signature verification is answered 503 rather than
+  trusted. Both deliveries are claimed in a `PaymentEvent` ledger first, so a
+  retry — Safaricom repeats, PayPal retries for days — can never extend a
+  membership twice.
+- **Self-service controls** — subscribe, cancel (at period end, propagated to
+  PayPal so it genuinely stops billing), reactivate. Usage tracking per cycle.
+- **Admin console** — **Payments** shows each rail, the exact environment
+  variables still missing, a live credential check, settlement prices per rail,
+  revenue split per currency, every attempt with the provider's failure reason,
+  and the inbound notification ledger. Operators can reconcile a membership
+  against PayPal, expire lapsed periods, mark a payment refunded, or grant a
+  plan for money taken outside the app.
+- **Scheduled reconciliation** — `payments-lifecycle` repairs PayPal drift and
+  ends lapsed periods every six hours, from Inngest and from the Cloudflare edge
+  Worker, so a webhook that never arrived is corrected rather than permanent.
 
 ### Sports Hub
 
@@ -163,7 +196,7 @@ always see that a human, not the model, moved a pick.
 - **Monetization** — first-party ad manager, third-party ad slot configurator.
 - **Subscriptions** — plan management cards with pricing and features.
 - **RSS Feeds** — feed health dashboard with status, error rates, last polled.
-- **Integrations** — one console over every platform connection (Cloudflare edge, Inngest, Postgres, Redis, Convex, storage, Stripe, Resend, AI providers, RSS, alerts, hosting, PWA): live health probes, credential audit per env var, and a scheduled-jobs table with run-now.
+- **Integrations** — one console over every platform connection (Cloudflare edge, Inngest, Postgres, Redis, Convex, storage, Safaricom Daraja, PayPal, Resend, AI providers, RSS, alerts, hosting, PWA): live health probes, credential audit per env var, and a scheduled-jobs table with run-now.
 - **Settings** — site identity, SEO, analytics, chat widget, feature flags, API keys.
 - **Sticky sidebar** — stays in view while scrolling on desktop.
 
@@ -273,7 +306,15 @@ Open [http://localhost:3000](http://localhost:3000).
 | `APP_URL` | Deployment base URL cron-job.org should hit (default `https://connectplusapp.vercel.app`) |
 | `RSS_POLL_MAX_FEEDS_PER_RUN` | Max feeds polled per cron cycle (default 10) — caps free-tier egress when feeds fall behind |
 | `THUMB_RECOVERY_MAX_NETWORK` | Max publisher page fetches per thumbnail-recovery run (default 12) |
-| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | Stripe API key + webhook signing secret (billing for paid plans) |
+| `MPESA_CONSUMER_KEY` / `MPESA_CONSUMER_SECRET` | Safaricom Daraja app credentials (M-Pesa checkout) |
+| `MPESA_SHORTCODE` / `MPESA_PASSKEY` | Paybill/till number and its Lipa na M-Pesa passkey |
+| `MPESA_ENV` | `production` for live money; anything else uses the Daraja sandbox |
+| `MPESA_KES_PER_USD` | Rate used to price a USD plan on the M-Pesa rail (default 129) |
+| `MPESA_CALLBACK_URL` / `MPESA_CALLBACK_TOKEN` | Optional callback override and shared secret appended to the callback URL |
+| `MPESA_CALLBACK_IP_CHECK` / `MPESA_ALLOWED_IPS` | Optional Safaricom source-IP allowlist for the callback |
+| `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` | PayPal REST app credentials |
+| `PAYPAL_WEBHOOK_ID` | Required to verify inbound webhooks — without it they are refused, not trusted |
+| `PAYPAL_ENV` | `live` for production; anything else uses the PayPal sandbox |
 | `RATE_LIMIT_<KEY>` / `RATE_LIMIT_DEFAULT` | Optional rate-limit overrides |
 | `LOG_LEVEL` | `debug` / `info` / `warn` / `error` for server logging |
 
@@ -301,7 +342,14 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Deploying
 
-- **Vercel** — connect the repo; set all env vars in project settings. Inngest owns every scheduled job; Vercel's single cron slot runs the safety net.
+- **Vercel** — the repo is linked to the `connectplus` project (`project.json`
+  in `.vercel/` carries the project and org ids), deploys from `main`, region
+  `fra1`, with `npm run vercel-build` as the build command: migrate → generate →
+  ensure settings → `next build`. Every runtime secret lives in **project
+  settings → Environment Variables**; `.env.example` is the checklist, and
+  Admin → Integrations / Payments reports which of them are still absent at
+  runtime. Vercel's single cron slot runs the safety net only (`vercel.json`
+  declares exactly one entry, a contract a unit test enforces).
 - **GitHub Actions** — typecheck, lint, unit tests, and build on every push/PR.
 
 ### Scheduled jobs
@@ -314,11 +362,12 @@ registry the admin console reads:
 | --- | --- | --- |
 | Scheduled publishing | every 5 min | ✅ |
 | Status watchdog | every 5 min | ✅ |
-| RSS syndication | hourly | ✅ |
+| RSS syndication | every 6 h | ✅ |
 | Livescore heartbeat | every 2 min | |
 | Favourite alerts | every 5 min | |
 | Radio metadata sweep | every 15 min | |
 | Sports intelligence | every 30 min | |
+| Payment reconciliation | every 6 h | |
 | Thumbnail recovery | every 6 h | |
 | Nightly hive training | 01:00 UTC | |
 | Semantic index | 01:30 UTC | |
@@ -331,12 +380,10 @@ credentials rejected and no second tier, every job reads back as "never ran",
 which surfaces as *"Inngest is degraded — 3 essential jobs past due"* and sends
 you to investigate the queue while the real fault is the cache. Staleness has to
 be a measurement of the job, not of the cache. The console says which tier
-answered.
-
-- **Vercel** keeps exactly **one** cron: `/api/cron/safety-net` daily at 00:15
+answered.- **Vercel** keeps exactly **one** cron: `/api/cron/safety-net` daily at 00:15
   UTC. It reads the heartbeats and re-runs **only the essential jobs that have
-  gone stale**. While Inngest is healthy it is a no-op — a few Redis reads, no
-  database or upstream traffic.
+gone stale**. While Inngest is healthy it is a no-op — a few Redis reads, no
+database or upstream traffic.
 - `/api/cron?trigger=…` remains for cron-job.org and the admin console, and
   `?force=1` on the safety net runs all essentials immediately.
 
@@ -369,17 +416,36 @@ Inngest cron triggers only fire while the app is synced to Inngest Cloud; if the
 app is unsynced or paused, the daily safety net is what keeps publishing, the
 feed and the watchdog alive.
 
-### Cloudflare edge cache (free tier)
+### Cloudflare edge cache + edge cron (free tier)
 
 Cloudflare sits in front of the Vercel deployment so anonymous traffic never
 reaches an origin function. On an edge HIT the Vercel function is not invoked
 and no bytes travel origin→edge, which is what keeps **Fast Origin Transfer**
 and **Fluid Active CPU** flat.
 
+The same Worker also **owns the high-frequency jobs**, through Cron Triggers:
+
+| Trigger | Job | Why the edge owns it |
+| --- | --- | --- |
+| every 2 min | `sports-live` | the board and the model must move without a visitor asking |
+| every 5 min | `sports-notify` | kick-off alerts are only useful on time |
+| every 15 min | `radio-status-sweep` | the staleness behind the console's "radio degraded" warning |
+| every 30 min | `sports-intel` | pick regeneration and model training |
+| every 6 h | `payments-lifecycle` | repair PayPal drift, expire lapsed periods |
+
+The Worker does no work itself — it pings `/api/cron?trigger=<job>` with the
+shared secret, so the jobs, their cadence and their heartbeats stay owned by
+`src/lib/cron-schedule.ts`. A rename in the registry fails a unit test rather
+than silently pinging an endpoint that 404s forever. Deploy with
+`CRON_SECRET=…` alongside the Cloudflare credentials; without it the pings are
+refused with a 401.
+
 - **Worker:** `workers/edge-cache` — deployed as `connectplus-edge` and served at
   `https://connectplus-edge.connectplusapp.workers.dev`
-- **Deploy:** `CLOUDFLARE_API_TOKEN=… CLOUDFLARE_ACCOUNT_ID=… node scripts/deploy-worker.mjs`
-  (no wrangler install required; `wrangler.toml` is there if you prefer it)
+- **Deploy:** `CLOUDFLARE_API_TOKEN=… CLOUDFLARE_ACCOUNT_ID=… CRON_SECRET=… node scripts/deploy-worker.mjs`
+  (no wrangler install required; `wrangler.toml` is there if you prefer it).
+  The script also registers the Worker's Cron Triggers, so the edge cadence is
+  deployed with the code instead of configured by hand in the dashboard.
 - **What is cached:** anonymous HTML (60s), read-only API JSON (30–600s), covers,
   optimised images and static assets (immutable). Root files that are not
   content-hashed — `/favicon.ico`, the PWA icons, `/sw.js`, `robots.txt`, the
@@ -440,7 +506,7 @@ connectPlus/
 
 ## Testing
 
-- **Unit (Vitest)** — `npm test` (328 tests). Beyond utilities, intent classification
+- **Unit (Vitest)** — `npm test` (344 tests). Beyond utilities, intent classification
   and sentiment, the suite pins the contracts that were expensive to learn:
   RSS due-feed ordering and per-run batching (`rss-poll-order`), cron registry ↔
   Inngest wiring (`cron-wiring`, including the scheduler-independent self-heal),
@@ -453,7 +519,11 @@ connectPlus/
   and social types (`notification-display`), the heartbeat ledger's Postgres
   fallback and the throttle built on it (`job-heartbeat-fallback`),
   transient-DB retry (`db-retry`), and WCAG AA contrast for both themes
-  (`contrast`).
+  (`contrast`). The payment contracts are pinned too (`payments`): Kenyan phone
+  normalisation, the Daraja timestamp/password construction, success vs
+  cancelled STK callbacks, result-code→status mapping, refundable per-rail
+  pricing in whole shillings, and the rule that a webhook with incomplete
+  transmission headers is never trusted.
 - **E2E (Playwright)** — `npm run test:e2e` smoke-checks public pages and sign-in.
 
 ```bash

@@ -176,7 +176,7 @@ describe("service worker privacy", () => {
       throw new Error("offline");
     });
 
-    await (await caches.open("connectplus-v5-shell" as never)).put(
+    await (await caches.open("connectplus-v6-shell" as never)).put(
       new Request("https://app.test/offline"),
       new Response("<html>offline shell</html>", { headers: { "Content-Type": "text/html" } })
     );

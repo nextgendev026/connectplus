@@ -25,6 +25,9 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const limit = Math.min(Math.max(Number(searchParams.get("limit") ?? 20) || 20, 1), 100);
   const matchId = searchParams.get("matchId") ?? undefined;
+  // A reader-triggered refresh (the board's own poll, or the Updated button)
+  // must not be answered from an intermediary's copy of the previous poll.
+  const busted = searchParams.has("bust");
   const marketParam = searchParams.get("market") ?? "";
   const market = (MARKETS as readonly string[]).includes(marketParam) ? marketParam : undefined;
   const sort = searchParams.get("sort") === "edge" ? "edge" : "confidence";
@@ -90,9 +93,18 @@ export async function GET(request: NextRequest) {
     const settledCount = settled.n;
     const wonCount = won.n;
 
+    // The newest model write behind what we are about to return. The board shows
+    // it, so a reader can tell "no new tips" apart from "this page is stale" —
+    // which is exactly the confusion that made the old board look frozen.
+    const newestPick = picks.reduce<Date | null>((acc, p) => {
+      const t = new Date(p.updatedAt ?? p.createdAt);
+      return !acc || t > acc ? t : acc;
+    }, null);
+
     return NextResponse.json(
       {
         generatedAt: new Date().toISOString(),
+        updatedAt: newestPick ? newestPick.toISOString() : null,
         market: market ?? null,
         sort,
         degraded,
@@ -110,7 +122,16 @@ export async function GET(request: NextRequest) {
           },
         })),
       },
-      { headers: { "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60" } }
+      {
+        headers: {
+          // A busted request is a deliberate refresh: no shared cache may answer
+          // it. Normal reads keep the short CDN window, which is what lets the
+          // Cloudflare tier collapse every viewer's poll into one origin fetch.
+          "Cache-Control": busted
+            ? "no-store"
+            : "public, s-maxage=30, stale-while-revalidate=60",
+        },
+      }
     );
   } catch (error) {
     return NextResponse.json(
