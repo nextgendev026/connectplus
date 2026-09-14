@@ -375,6 +375,49 @@ describe("edge cron — cache-first snapshots", () => {
     expect(cronFetches()).toHaveLength(1);
   });
 
+  it("rebuilds when the snapshot cache cannot be read, rather than skipping", async () => {
+    // A scheduler that skips because its own cache was unreachable is a
+    // scheduler that quietly stops running jobs — the failure mode nobody
+    // notices until the board is hours old. Unreadable means stale.
+    const original = cacheStorage.default.match;
+    cacheStorage.default.match = async () => {
+      throw new Error("cache unavailable");
+    };
+    originReturns('{"matches":[]}', "application/json");
+    try {
+      await tick("*/2 * * * *");
+    } finally {
+      cacheStorage.default.match = original;
+    }
+    expect(cronFetches()).toHaveLength(1);
+  });
+
+  it("records what the tick decided, and reports it on the liveness probe", async () => {
+    seedSnapshot("livescore-football", 300);
+    seedSnapshot("livescore-basketball", 300);
+    originReturns('{"matches":[]}', "application/json");
+    await tick("*/2 * * * *");
+
+    const res = await request("/__edge");
+    const body = (await res.json()) as {
+      lastTick: { cron: string; at: string; triggers: { trigger: string; action: string; ping?: string }[] };
+    };
+    expect(body.lastTick.cron).toBe("*/2 * * * *");
+    expect(body.lastTick.triggers).toEqual([
+      expect.objectContaining({ trigger: "sports-live", action: "rebuilt", ping: "200" }),
+    ]);
+  });
+
+  it("records an unmapped cron instead of returning silently", async () => {
+    // Silence and "nothing to do" used to look identical from outside.
+    await tick("7 3 * * *");
+    expect(cronFetches()).toEqual([]);
+    const res = await request("/__edge");
+    const body = (await res.json()) as { lastTick: { cron: string; triggers: { action: string }[] } };
+    expect(body.lastTick.cron).toBe("7 3 * * *");
+    expect(body.lastTick.triggers[0]?.action).toBe("unmapped-cron");
+  });
+
   it("leaves the jobs it does not hold a snapshot for alone", async () => {
     originReturns("{\"success\":true}", "application/json");
     await tick("*/5 * * * *");

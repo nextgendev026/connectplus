@@ -164,6 +164,26 @@ const SNAPSHOTS = [
 const snapshotKey = (id) =>
   new Request(`https://snapshot.edge.internal/${id}?v=${CACHE_VERSION}`, { method: "GET" });
 
+/**
+ * Where the last tick's outcome is kept.
+ *
+ * A Cron Trigger has no request and no reader, so a handler that throws is
+ * silent: no response, no log anybody is watching, and the only symptom is a
+ * job that quietly stops running — which is the exact failure this worker was
+ * built to cover for. The tick therefore records what it decided, and `/__edge`
+ * reports it, so "is the edge cron alive?" has an answer that does not require
+ * the Cloudflare dashboard.
+ */
+const tickKey = () =>
+  new Request(`https://snapshot.edge.internal/tick?v=${CACHE_VERSION}`, { method: "GET" });
+
+/** Read back the last tick's record, or null when there has never been one. */
+async function lastTick() {
+  const cached = await caches.default.match(tickKey());
+  if (!cached) return null;
+  return cached.json().catch(() => null);
+}
+
 /** Look a snapshot up by id. */
 const snapshotById = (id) => SNAPSHOTS.find((s) => s.id === id) ?? null;
 
@@ -440,6 +460,23 @@ function stamped(headers) {
   return headers;
 }
 
+const shortError = (err) => (err && err.message ? err.message : String(err));
+
+/** Record a tick outcome for `/__edge`. Best-effort: never fails the invocation. */
+async function recordTick(record) {
+  try {
+    await caches.default.put(
+      tickKey(),
+      new Response(JSON.stringify(record), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=86400" },
+      })
+    );
+  } catch (err) {
+    console.log(`edge-cron: could not record tick — ${shortError(err)}`);
+  }
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -468,6 +505,9 @@ export default {
         livescore: `${url.origin}/__livescore`,
         status: `${url.origin}/api/status`,
         snapshots,
+        // The last tick's decisions. Without this, "the edge cron is silent"
+        // and "the edge cron decided there was nothing to do" look identical.
+        lastTick: await lastTick(),
         schedules: SCHEDULES.map((s) => `${s.cron} → ${s.trigger}`),
         cronSecret: Boolean(env.CRON_SECRET),
       });
@@ -598,17 +638,24 @@ export default {
    * that copy current by itself. When a copy is stale the worker pings, then
    * re-warms its own copy so the next tick has something to measure.
    *
-   * Failures are swallowed after being logged: the app heartbeats every run, so
-   * a job that stops being reachable shows up in the admin console as stale
-   * rather than as a worker throwing into the void — and one bad ping must never
-   * cost us the next trigger.
+   * Nothing here may throw out of the handler. A Cron Trigger has no request
+   * and no reader, so an exception is silent: no response, no page anybody is
+   * loading, just a job that stops running — and for the two jobs this worker
+   * owns, the symptom is a scoreboard and a radio panel that quietly go stale.
+   * So each trigger is contained, a cache that cannot be read counts as stale,
+   * and the tick's decisions land in a record `/__edge` reports.
    */
-  async scheduled(event, env, ctx) {
+  async scheduled(event, env) {
     const origin = (env.ORIGIN || DEFAULT_ORIGIN).replace(/\/+$/, "");
     const triggers = triggersFor(event.cron, env);
+    const tick = { at: new Date().toISOString(), cron: event.cron, triggers: [] };
 
     if (triggers.length === 0) {
+      // This used to return silently, which is indistinguishable from a cron
+      // that never fired. It is now logged *and* reported on /__edge.
       console.log(`edge-cron: no trigger mapped to "${event.cron}" — add it to SCHEDULES`);
+      tick.triggers.push({ trigger: null, action: "unmapped-cron" });
+      await recordTick(tick);
       return;
     }
 
@@ -659,7 +706,17 @@ export default {
       // Which of the worker's own copies does this job refresh? A snapshot that
       // is still fresh means there is nothing here worth a Vercel invocation.
       const guarded = SNAPSHOTS.filter((s) => s.trigger === trigger);
-      const ages = await Promise.all(guarded.map(snapshotAge));
+      // A snapshot we cannot read counts as stale, never as fresh: a scheduler
+      // has to fail towards running the job. Skipping because the cache was
+      // unreachable is the one outcome nobody notices until the board is hours
+      // old, which is precisely what this worker exists to prevent.
+      let ages;
+      try {
+        ages = await Promise.all(guarded.map((s) => snapshotAge(s)));
+      } catch (err) {
+        console.log(`edge-cron: ${trigger} snapshot read failed — ${shortError(err)}`);
+        ages = guarded.map(() => null);
+      }
       const stale = guarded.filter((s, i) => ages[i] === null || ages[i] > s.ttl);
 
       if (guarded.length > 0 && stale.length === 0) {
@@ -667,25 +724,46 @@ export default {
           .map((s, i) => `${s.id} ${Math.round(ages[i])}s/${s.ttl}s`)
           .join(", ");
         console.log(`edge-cron: ${trigger} skipped — cached snapshot still fresh (${detail})`);
-        return;
+        return { trigger, action: "skipped-fresh", snapshots: guarded.map((s) => s.id) };
       }
 
       const url = `${origin}/api/cron?trigger=${encodeURIComponent(trigger)}&source=cloudflare-cron`;
+      let ping = "ok";
       try {
         const res = await fetch(url, { method: "GET", headers });
         const body = await res.text();
+        ping = String(res.status);
         console.log(`edge-cron: ${trigger} (${event.cron}) → ${res.status} ${body.slice(0, 200)}`);
       } catch (err) {
-        console.log(`edge-cron: ${trigger} failed — ${err && err.message ? err.message : err}`);
+        ping = shortError(err);
+        console.log(`edge-cron: ${trigger} failed — ${ping}`);
       }
 
       // Re-warm only what was stale — the tight copy needs no help, and this is
       // the one origin read the tick still makes.
-      await Promise.all(stale.map(warm));
+      await Promise.all(stale.map((s) => warm(s)));
+
+      return {
+        trigger,
+        action: "rebuilt",
+        ping,
+        stale: stale.map((s) => s.id),
+      };
     };
 
-    // `ctx.waitUntil` lets one trigger drive several jobs without holding the
-    // scheduled invocation open on each response.
-    ctx.waitUntil(Promise.all(triggers.map(run)));
+    // Each trigger is contained and awaited. Awaiting matters: a Cron Trigger
+    // has no response to return early from, so `waitUntil` was only ever buying
+    // the illusion of a shorter invocation — and if the work rejected there, it
+    // took the whole tick's log with it. `allSettled` because one job failing
+    // must never silence the others.
+    const settled = await Promise.allSettled(triggers.map((t) => run(t)));
+    for (const [i, outcome] of settled.entries()) {
+      tick.triggers.push(
+        outcome.status === "fulfilled"
+          ? outcome.value
+          : { trigger: triggers[i], action: "error", detail: shortError(outcome.reason) }
+      );
+    }
+    await recordTick(tick);
   },
 };

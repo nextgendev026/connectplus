@@ -112,6 +112,31 @@ to look at when asking why the edge did or did not rebuild this hour:
 curl -s https://connectplus-edge.connectplusapp.workers.dev/__edge | jq .snapshots
 ```
 
+### Silence is a failure mode
+
+A Cron Trigger has no request and no reader, so a handler that throws is silent:
+no response, no page anybody loads, just a job that stops running. For the two
+jobs this worker owns, the symptom is a scoreboard and a radio panel that quietly
+go stale — which is exactly what the edge cron was added to prevent, so it cannot
+be allowed to fail the same way.
+
+Three rules follow from that, and the unit tests pin all three:
+
+1. **Every trigger is contained.** One job failing never silences the others,
+   and nothing throws out of the handler.
+2. **An unreadable snapshot counts as stale.** A scheduler has to fail towards
+   running the job; skipping because the cache was unreachable is worse than
+   doing the work twice.
+3. **The tick records its decisions.** `lastTick` on `/__edge` lists what each
+   trigger did (`rebuilt`, `skipped-fresh`, `unmapped-cron`, `error`) and the
+   origin status it got, so "the edge cron is silent" and "the edge cron decided
+   there was nothing to do" stop looking identical from outside — which is how
+   the first production tick was diagnosed:
+
+```bash
+curl -s https://connectplus-edge.connectplusapp.workers.dev/__edge | jq .lastTick
+```
+
 Requires `CRON_SECRET` (the same value the app verifies). Without it the pings
 are sent but the app answers 401, which the admin console reports as stale jobs
 rather than as silence. Register the triggers with the deploy script
