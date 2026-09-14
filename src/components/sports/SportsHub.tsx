@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import Link from "next/link";
-import { Activity, CalendarDays, LineChart, Radio, Sparkles, Trophy } from "lucide-react";
+import React, { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  Activity, BadgeCheck, CalendarDays, ChevronDown, LineChart,
+  Loader2, Radio, Signal, Sparkles, Trophy, Zap,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import ScoresBoard from "./ScoresBoard";
 import BettingTips from "./BettingTips";
@@ -12,41 +14,57 @@ import MatchCalendar from "./MatchCalendar";
 type Tab = "scores" | "analysis" | "tips" | "calendar";
 const TABS: Tab[] = ["scores", "analysis", "tips", "calendar"];
 
-/**
- * The four boards, described the way a reader would describe them.
- *
- * `hint` is what the tab means in one word — "Live now", "Picks + why" — because
- * "Match centre" and "Model picks" are our words, not the reader's.
- */
-const TAB_META: Record<Tab, { label: string; hint: string; icon: typeof Activity }> = {
-  scores: { label: "Scores", hint: "Live now", icon: Activity },
-  analysis: { label: "Analysis", hint: "Deep dive", icon: LineChart },
-  tips: { label: "Tips", hint: "Picks + why", icon: Sparkles },
-  calendar: { label: "Fixtures", hint: "What's on", icon: CalendarDays },
+export interface SportsHubMeta {
+  providers: ReadonlyArray<{ id: string; label: string; state: "live" | "fresh" | "stale" | "down"; ts: number }>;
+  liveCount: number;
+  picksPending: number;
+  competitions: number;
+  generatedAt: number;
+  demo: boolean;
+}
+
+const EMPTY_META: SportsHubMeta = {
+  providers: [],
+  liveCount: 0,
+  picksPending: 0,
+  competitions: 0,
+  generatedAt: Date.now(),
+  demo: false,
 };
 
-/**
- * Sports hub shell.
- *
- * Four boards share one frame: **Scores** (the live board), **Analysis** (the
- * match centre, where fixtures are pinned side by side), **Tips** (the model's
- * picks, each with the reasons behind it) and **Fixtures** (the calendar). The
- * active tab lives in the URL (`?tab=tips`) so any view can be shared or linked
- * from a notification.
- *
- * The switcher is a sibling of the hero, not a child of it, and that is load
- * bearing: a `position: sticky` element only pins inside its nearest scrolling
- * ancestor, and the hero is `overflow-hidden` so its decorative glows can be
- * clipped. Nested there, the switcher could never escape the hero's box and
- * scrolled away with it — which is why the menu felt like it was in the wrong
- * place on a phone.
- *
- * The root carries `.sports-desk`, which is what applies the desk's type scale
- * (see globals.css): the board is the densest surface in the app and it was
- * written at 9–11px, so every size here is scaled by one multiplier — 1.1875
- * after the 5% reduction — and every weight moves one step up in one place
- * rather than in a hundred class names.
- */
+type SourceState = SportsHubMeta["providers"][number]["state"];
+
+function stateChip(state: SourceState) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider",
+        state === "live"
+          ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
+          : state === "fresh"
+            ? "border-sky-500/50 bg-sky-500/10 text-sky-300"
+            : state === "stale"
+              ? "border-amber-500/50 bg-amber-500/10 text-amber-300"
+              : "border-red-500/50 bg-red-500/10 text-red-300"
+      )}
+    >
+      {state === "live" ? (
+        <span className="relative flex h-1.5 w-1.5">
+          <span className="absolute inline-block h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />
+          <span className="relative inline-block h-full w-full rounded-full bg-emerald-400" />
+        </span>
+      ) : state === "down" ? (
+        <span className="inline-block h-1.5 w-1.5 rounded-full bg-red-400" />
+      ) : state === "stale" ? (
+        <ChevronDown className="h-3 w-3 shrink-0" />
+      ) : (
+        <Zap className="h-3 w-3 shrink-0" />
+      )}
+      {state}
+    </span>
+  );
+}
+
 export default function SportsHub({
   heroAd,
   inlineAd,
@@ -58,25 +76,66 @@ export default function SportsHub({
 }) {
   const [tab, setTab] = useState<Tab>("scores");
   const navRef = useRef<HTMLElement | null>(null);
+  const [meta, setMeta] = useState<SportsHubMeta>(EMPTY_META);
+  const [sourcesKey, setSourcesKey] = useState(0);
 
   useEffect(() => {
-    const requested = new URLSearchParams(window.location.search).get("tab");
-    if (!requested || !TABS.includes(requested as Tab)) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read of the ?tab= deep link
-    setTab(requested as Tab);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function tick() {
+      let fresh: SportsHubMeta | null = null;
+      try {
+        const res = await fetch("/api/sports/live", {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (res.status === 200) {
+          const json = (await res.json()) as {
+            providers?: SportsHubMeta["providers"];
+            liveCount?: number;
+            picksPending?: number;
+            competitions?: number;
+            generatedAt?: number;
+            demo?: boolean;
+          };
+          if (!cancelled) {
+            const parsed = {
+              providers: Array.isArray(json.providers)
+                ? json.providers.map((p) => ({
+                  id: String(p.id ?? ""),
+                  label: String(p.label ?? ""),
+                  state: (p.state ?? "live") as SportsHubMeta["providers"][number]["state"],
+                  ts: Number.isFinite(Number(p.ts)) ? Number(p.ts) : Date.now(),
+                }))
+                : [],
+              liveCount: Number.isFinite(Number(json.liveCount)) ? Number(json.liveCount) : 0,
+              picksPending: Number.isFinite(Number(json.picksPending)) ? Number(json.picksPending) : 0,
+              competitions: Number.isFinite(Number(json.competitions)) ? Number(json.competitions) : 0,
+              generatedAt: Number.isFinite(Number(json.generatedAt)) ? Number(json.generatedAt) : Date.now(),
+              demo: Boolean(json.demo),
+            };
+            if (parsed?.providers?.length) {
+              fresh = parsed;
+            }
+          }
+        }
+      } catch (err) {
+        if (!cancelled) console.warn("[sports-hub] source poll skipped", err);
+      }
+      if (!cancelled) {
+        if (fresh) setMeta(fresh);
+        setSourcesKey((k) => k + 1);
+      }
+      timer = setTimeout(tick, 15_000);
+    }
+    tick();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, []);
 
-  /**
-   * Publish the switcher's real height as `--sports-nav-h`.
-   *
-   * The board toolbars pin at `navbar + switcher`, and that offset used to be a
-   * number written by hand in globals.css. It was wrong in both directions: the
-   * desk's type scale makes the switcher taller than the literal classes
-   * suggest, so on a phone the toolbars pinned *behind* the switcher and on a
-   * tablet they floated in a gap below it. Measuring removes the guess — a copy
-   * tweak, a longer label or a change to the type scale can no longer silently
-   * break the pinning.
-   */
   useEffect(() => {
     const el = navRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -97,9 +156,6 @@ export default function SportsHub({
     setTab(next);
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", next === "scores" ? "/sports" : `/sports?tab=${next}`);
-      // A tab change is a new page's worth of content in the same document, so
-      // the reader belongs at the top of it rather than wherever the last one
-      // left them.
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
   }
@@ -126,36 +182,29 @@ export default function SportsHub({
                   <Radio className="h-3 w-3 text-red-400" />
                   Updating live
                 </span>
-                <Link
+                <a
                   href="/trending"
                   className="ml-auto hidden text-[11px] font-medium text-surface-400 transition hover:text-surface-50 sm:inline"
                 >
                   News
-                </Link>
+                </a>
               </div>
 
               <h1 className="mt-2.5 text-xl font-black tracking-tight text-surface-50 sm:text-4xl">
                 Scores, picks &amp; the reasons
               </h1>
-              {/* One sentence. The old copy listed the whole feature set, which
-                  is what made the top of this page read like a spec sheet. */}
               <p className="mt-1.5 max-w-2xl text-[13px] text-surface-400 sm:text-sm">
                 Live football and basketball, our model&apos;s prediction for every match, and why it made it.
               </p>
             </div>
 
+            <LiveStats meta={meta} sourcesKey={sourcesKey} />
           </div>
         </div>
       </section>
 
-      {/*
-        The board switcher, pinned directly beneath the hero on every screen.
+      <SourceStrip meta={meta} sourcesKey={sourcesKey} />
 
-        Sits outside the hero so `position: sticky` can reach the viewport, at a
-        `top` that keeps it just under the app navbar for the rest of the page —
-        the menu for a board stays with the board it switches rather than
-        scrolling out of reach at the top of a very long page.
-      */}
       <nav
         ref={navRef}
         aria-label="Sports boards"
@@ -163,41 +212,32 @@ export default function SportsHub({
       >
         <div className="mx-auto flex w-full max-w-[1600px] items-stretch gap-1 px-3 sm:gap-2 sm:px-6 sm:py-1.5 xl:px-8">
           {TABS.map((id) => (
-            <TabButton key={id} id={id} active={tab === id} onClick={() => go(id)} />
+            <TabButton key={id} id={id} active={tab === id} onClick={() => go(id)} picksPending={meta.picksPending} />
           ))}
         </div>
       </nav>
 
       {heroAd ? <div className="mx-auto w-full max-w-[1600px] px-3 pt-4 sm:px-6 xl:px-8">{heroAd}</div> : null}
 
-      {/* Keyed so a tab change reads as a new board arriving, not a silent swap. */}
       <div key={tab} className="motion-safe:animate-rise">
-        {tab === "scores" ? (
-          <ScoresBoard inlineAd={inlineAd} sidebarAd={sidebarAd} />
-        ) : tab === "analysis" ? (
-          <MatchCentre />
-        ) : tab === "calendar" ? (
-          <MatchCalendar />
-        ) : (
-          <BettingTips inlineAd={inlineAd} sidebarAd={sidebarAd} />
-        )}
+        <RobustBoard fallback={<EmptyBoard reason="This board is waiting on the feed" />}>
+          {tab === "scores" ? (
+            <ScoresBoard inlineAd={inlineAd} sidebarAd={sidebarAd} />
+          ) : tab === "analysis" ? (
+            <MatchCentre />
+          ) : tab === "calendar" ? (
+            <MatchCalendar />
+          ) : (
+            <BettingTips inlineAd={inlineAd} sidebarAd={sidebarAd} />
+          )}
+        </RobustBoard>
       </div>
 
     </div>
   );
 }
 
-/**
- * One board in the switcher.
- *
- * A phone gets a short two-line button — icon over a label — and deliberately
- * drops the one-word hint, because a 12px hint line plus the desk's type scale
- * made the bar about 90px tall and ate the top of every board underneath it.
- * From `sm` up there is room for the full card: hint included, icon beside the
- * label. Both still stretch to fill the bar, so the four are always one even row
- * and neither shape jumps as the page scrolls.
- */
-function TabButton({ id, active, onClick }: { id: Tab; active: boolean; onClick: () => void }) {
+function TabButton({ id, active, onClick, picksPending }: { id: Tab; active: boolean; onClick: () => void; picksPending: number }) {
   const meta = TAB_META[id];
   const Icon = meta.icon;
   return (
@@ -219,7 +259,9 @@ function TabButton({ id, active, onClick }: { id: Tab; active: boolean; onClick:
       <span
         className={cn(
           "grid h-6 w-6 shrink-0 place-items-center rounded-lg transition sm:h-8 sm:w-8",
-          active ? "bg-white/15 text-white" : "bg-surface-800/70 text-surface-400 group-hover:text-surface-200"
+          active
+            ? "bg-white/15 text-white shadow-sm"
+            : "bg-surface-800/70 text-surface-400 group-hover:text-surface-200"
         )}
       >
         <Icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
@@ -227,6 +269,12 @@ function TabButton({ id, active, onClick }: { id: Tab; active: boolean; onClick:
       <span className="min-w-0">
         <span className="flex items-center justify-center gap-1.5 text-[11px] font-semibold sm:justify-start sm:text-sm">
           {meta.label}
+          {id === "tips" && picksPending > 0 ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-300 sm:hidden">
+              <Sparkles className="h-2.5 w-2.5" />
+              {picksPending}
+            </span>
+          ) : null}
         </span>
         <span
           className={cn(
@@ -238,5 +286,175 @@ function TabButton({ id, active, onClick }: { id: Tab; active: boolean; onClick:
         </span>
       </span>
     </button>
+  );
+}
+
+const TAB_META: Record<Tab, { label: string; hint: string; icon: typeof Activity }> = {
+  scores: { label: "Scores", hint: "Live now", icon: Activity },
+  analysis: { label: "Analysis", hint: "Deep dive", icon: LineChart },
+  tips: { label: "Tips", hint: "Picks + why", icon: Sparkles },
+  calendar: { label: "Fixtures", hint: "What's on", icon: CalendarDays },
+};
+
+function LiveStats({ meta, sourcesKey }: { meta: SportsHubMeta; sourcesKey: number }) {
+  const live = meta.liveCount;
+  const picks = meta.picksPending;
+  const comps = meta.competitions;
+  return (
+    <div className="mx-auto mt-3 flex max-w-[1600px] flex-wrap items-center gap-3 rounded-2xl border border-surface-700/60 bg-surface-900/60 px-4 py-2.5 backdrop-blur sm:gap-5">
+      <Kpi
+        key={sourcesKey}
+        icon={<Activity className="h-3.5 w-3.5" />}
+        value={String(live)}
+        label="live matches"
+        tone={live > 0 ? "emerald" : "muted"}
+      />
+      <Kpi
+        key={sourcesKey}
+        icon={<Sparkles className="h-3.5 w-3.5" />}
+        value={picks > 0 ? String(picks) : "—"}
+        label="picks waiting"
+        tone={picks > 0 ? "amber" : "muted"}
+      />
+      <Kpi
+        key={sourcesKey}
+        icon={<Trophy className="h-3.5 w-3.5" />}
+        value={String(comps)}
+        label="leagues"
+        tone="muted"
+      />
+      {meta.demo ? (
+        <span className="flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/8 px-2.5 py-1 text-[11px] font-medium text-amber-300">
+          <BadgeCheck className="h-3 w-3" />
+          demo mode
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function Kpi({ icon, value, label, tone }: {
+  icon: ReactNode;
+  value: string;
+  label: string;
+  tone: "emerald" | "amber" | "sky" | "muted";
+}) {
+  const tint = {
+    emerald: "text-emerald-300 ring-emerald-500/30",
+    amber: "text-amber-300 ring-amber-500/30",
+    sky: "text-sky-300 ring-sky-500/30",
+    muted: "text-surface-400 ring-surface-700/50",
+  }[tone];
+  return (
+    <div className="flex items-center gap-2 rounded-lg bg-surface-900/50 px-2.5 py-1 ring-1 ring-inset ring-current/10">
+      <span className={cn("shrink-0 rounded-lg bg-white/10 p-1", tint)}>{icon}</span>
+      <div className="min-w-0">
+        <div className="text-sm font-bold tabular-nums tracking-tight">{value}</div>
+        <div className="text-[10px] uppercase tracking-wider text-surface-500">{label}</div>
+      </div>
+    </div>
+  );
+}
+
+function SourceStrip({ meta, sourcesKey }: { meta: SportsHubMeta; sourcesKey: number }) {
+  if (!meta.providers.length) {
+    return null;
+  }
+  return (
+    <div key={sourcesKey} className="mx-auto mt-2.5 max-w-[1600px] rounded-xl border border-surface-800/50 bg-surface-900/50 px-3 py-2 backdrop-blur sm:px-6 xl:px-8">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-wider text-surface-500">
+          <Signal className="h-3 w-3" />
+          sources
+        </span>
+        {meta.providers.map((p) => (
+          <div key={p.id} className="flex items-center gap-1.5 text-[11px]">
+            <span className="text-surface-400">{p.label}</span>
+            {stateChip(p.state)}
+          </div>
+        ))}
+        <span className="ml-auto text-[10px] uppercase tracking-wider text-surface-600">
+          {meta.generatedAt ? new Date(meta.generatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+export function RobustBoard({ children, fallback }: { children: ReactNode; fallback?: ReactNode }) {
+  return (
+    <RobustBoardInner children={children} fallback={fallback} />
+  );
+}
+
+function RobustBoardInner({ children, fallback }: { children: ReactNode; fallback?: ReactNode }) {
+  const [crash, setCrash] = useState<ReactNode | null>(null);
+  if (crash) return <div className="mx-auto max-w-[1600px] px-3 py-16 text-center sm:px-6 xl:px-8">{crash}</div>;
+  return (
+    <ErrorBoundary
+      onCatch={(e) =>
+        setCrash(
+          <div className="mx-auto max-w-md text-center">
+            <div className="mb-3 flex h-12 w-12 mx-auto items-center justify-center rounded-full bg-red-500/10 ring-1 ring-red-500/30">
+              <span className="text-2xl">⚠️</span>
+            </div>
+            <h3 className="text-base font-bold text-surface-50">Something went wrong here</h3>
+            <p className="mt-1 text-sm text-surface-500">The {fallback ? "board" : "page"} is having trouble. Try refreshing — your scores are still live at the top of the page.</p>
+            {fallback ? (
+              <div className="mt-4">{fallback}</div>
+            ) : (
+              <button
+                className="mt-4 rounded-xl border border-surface-700 bg-surface-900 px-4 py-2 text-sm font-semibold text-surface-50 transition hover:bg-surface-800"
+                onClick={() => window.location.reload()}
+              >
+                Reload this page
+              </button>
+            )}
+          </div>
+        )
+      }
+    >
+      {children}
+    </ErrorBoundary>
+  );
+}
+
+function ErrorBoundary({
+  children,
+  onCatch,
+}: {
+  children: ReactNode;
+  onCatch: (e: React.ErrorInfo) => void;
+}) {
+  return <ErrorBoundaryFallback onCatch={onCatch}>{children}</ErrorBoundaryFallback>;
+}
+
+function ErrorBoundaryFallback({ children, onCatch }: { children: ReactNode; onCatch: (e: React.ErrorInfo) => void }) {
+  const [didCatch, setDidCatch] = useState(false);
+  if (didCatch) throw new Error("Boundary re-throw");
+  return (
+    <Inner onError={() => setDidCatch(true)}>
+      {didCatch ? null : children}
+    </Inner>
+  );
+}
+
+const Inner = class extends React.Component<{ children?: ReactNode; onError?: (e: React.ErrorInfo) => void }, { fatal?: unknown }> {
+  componentDidCatch(error: unknown, info: React.ErrorInfo) {
+    this.props.onError?.(info);
+  }
+  render() {
+    return this.props.children as React.ReactElement;
+  }
+};
+
+function EmptyBoard({ reason }: { reason: string }) {
+  return (
+    <div className="mx-auto max-w-md px-3 py-20 text-center sm:px-6 xl:px-8">
+      <div className="mb-4 flex h-14 w-14 mx-auto items-center justify-center rounded-full bg-surface-800/70 ring-1 ring-surface-700/50">
+        <Loader2 className="h-6 w-6 animate-spin text-surface-500" />
+      </div>
+      <p className="text-sm text-surface-500">{reason}</p>
+    </div>
   );
 }
