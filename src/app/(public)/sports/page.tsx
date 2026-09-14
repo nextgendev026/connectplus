@@ -24,16 +24,22 @@ export const metadata: Metadata = {
   ],
   alternates: { canonical: "/sports" },
   openGraph: {
-    title: "Live Scores & Betting Tips · connectPlus",
-    description:
+  // The brand comes from the root title template — see about/page.tsx. The
+  // openGraph/Twitter titles below keep it explicitly, because share cards are
+  // not templated and would otherwise lose the name entirely.
+  title: "Live Scores & Betting Tips",
+  description:
       "Live scores, in-app betting analysis and today's highest-conviction model tips — updated as the games move.",
     type: "website",
     url: "/sports",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Live Scores & Betting Tips · connectPlus",
-    description:
+  // The brand comes from the root title template — see about/page.tsx. The
+  // openGraph/Twitter titles below keep it explicitly, because share cards are
+  // not templated and would otherwise lose the name entirely.
+  title: "Live Scores & Betting Tips",
+  description:
       "Real-time livescores and model-generated betting analysis for every fixture, across four markets.",
   },
 };

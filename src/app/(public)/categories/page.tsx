@@ -6,8 +6,11 @@ import { cn } from "@/lib/utils";
 import { RealtimeRefresh } from "@/components/feed/RealtimeRefresh";
 
 export const metadata: Metadata = {
-  title: "Categories | connectPlus",
+  // The brand comes from the root title template — see about/page.tsx.
+  title: "Categories",
   description: "Browse stories by category — technology, culture, business, lifestyle and more from East Africa.",
+  alternates: { canonical: "/categories" },
+  robots: { index: true, follow: true },
 };
 
 const CATEGORY_EMOJI: Record<string, string> = {

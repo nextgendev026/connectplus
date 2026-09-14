@@ -3,8 +3,11 @@ import { LifeBuoy } from "lucide-react";
 import { StaticPage } from "@/components/ui/StaticPage";
 
 export const metadata: Metadata = {
-  title: "Help Center | connectPlus",
+  // The brand comes from the root title template — see about/page.tsx.
+  title: "Help Center",
   description: "Answers to common questions about writing, reading, accounts, and payments on connectPlus.",
+  alternates: { canonical: "/help" },
+  robots: { index: true, follow: true },
 };
 
 export default function HelpPage() {

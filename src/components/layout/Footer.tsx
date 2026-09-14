@@ -69,6 +69,7 @@ const FOOTER_LINKS = {
     { label: "Pricing", href: "/pricing" },
     { label: "System Status", href: "/status" },
     { label: "Privacy", href: "/privacy" },
+    { label: "Cookies", href: "/cookies" },
     { label: "Terms", href: "/terms" },
   ],
 };

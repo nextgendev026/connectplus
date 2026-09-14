@@ -20,7 +20,15 @@ export default async function robots(): Promise<MetadataRoute.Robots> {
       ? {
           userAgent: "*",
           allow: "/",
-          disallow: ["/api/", "/studio", "/admin", "/auth/", "/settings"],
+          disallow: [
+            "/api/",
+            "/studio",
+            "/admin",
+            "/auth/",
+            "/settings",
+            // Signed-in only, and useless to a crawler that cannot see it.
+            "/notifications",
+          ],
         }
       : { userAgent: "*", disallow: "/" },
     sitemap: `${origin}/sitemap.xml`,

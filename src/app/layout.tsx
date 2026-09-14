@@ -136,8 +136,31 @@ export async function generateMetadata(): Promise<Metadata> {
     description,
     keywords,
     applicationName: siteName,
+    creator: siteName,
+    publisher: siteName,
+    category: "news",
     manifest: "/manifest.webmanifest",
-    robots: cfg && !cfg.robotsIndex ? { index: false, follow: false } : undefined,
+    // Phone numbers and addresses are not click-to-dial targets anywhere on the
+    // site, and leaving auto-detection on made iOS turn scores and prices into
+    // blue phone links.
+    formatDetection: { telephone: false, address: false, email: false },
+    // `max-image-preview: large` is what lets a full-size thumbnail render in
+    // search results instead of a cropped square — the same visual a share card
+    // gets, which is the point of the whole SEO surface.
+    robots:
+      cfg && !cfg.robotsIndex
+        ? { index: false, follow: false }
+        : {
+            index: true,
+            follow: true,
+            googleBot: {
+              index: true,
+              follow: true,
+              "max-image-preview": "large",
+              "max-snippet": -1,
+              "max-video-preview": -1,
+            },
+          },
     alternates: {
       canonical: "/",
       types: {
@@ -159,12 +182,16 @@ export async function generateMetadata(): Promise<Metadata> {
       description,
       type: "website",
       url,
+      // The audience is East African, and the locale is what tells a crawler
+      // which regional index and which reading experience to prefer.
+      locale: "en_KE",
       images: [{ url: ogImageUrl, width: 1200, height: 630, alt: `${siteName} — ${cfg?.siteTagline ?? "Voices of the Silicon Savanna"}` }],
     },
     twitter: {
       card: "summary_large_image",
       title,
       description,
+      site: `@${twitterHandle}`,
       creator: `@${twitterHandle}`,
       images: [ogImageUrl],
     },

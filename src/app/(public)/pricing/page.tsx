@@ -10,7 +10,8 @@ import { Check, Sparkles, BookOpen, PenLine, ArrowRight, Smartphone, CreditCard,
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Pricing — connectPlus",
+  // The brand comes from the root title template — see about/page.tsx.
+  title: "Pricing",
   description:
     "Support independent East African journalism. Choose a reader or writer plan that fits how you read and publish.",
   alternates: { canonical: "/pricing" },

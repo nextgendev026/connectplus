@@ -3,8 +3,11 @@ import { Wallet } from "lucide-react";
 import { StaticPage } from "@/components/ui/StaticPage";
 
 export const metadata: Metadata = {
-  title: "Monetize | connectPlus",
+  // The brand comes from the root title template — see about/page.tsx.
+  title: "Monetize",
   description: "Turn your writing into income on connectPlus — earn from reader engagement.",
+  alternates: { canonical: "/monetize" },
+  robots: { index: true, follow: true },
 };
 
 export default function MonetizePage() {

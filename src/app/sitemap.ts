@@ -13,10 +13,19 @@ export const dynamic = "force-dynamic";
  * edited, and the privacy policy changes roughly never — telling a crawler they
  * are the same wastes crawl budget on the pages that matter least.
  */
+/**
+ * The date the legal copy last changed. A policy page that reports "modified
+ * today" on every crawl teaches a search engine that its dates mean nothing,
+ * which is the opposite of what the rest of this sitemap is asking for.
+ */
+const LEGAL_UPDATED = new Date("2026-09-14T00:00:00.000Z");
+
 const STATIC_ROUTES: {
   path: string;
   changeFrequency: MetadataRoute.Sitemap[number]["changeFrequency"];
   priority: number;
+  /** Defaults to now — correct for a page that really does change hourly. */
+  lastModified?: Date;
 }[] = [
   { path: "", changeFrequency: "hourly", priority: 1 },
   // The sports desk is the highest-churn surface on the site and the one we
@@ -25,15 +34,18 @@ const STATIC_ROUTES: {
   { path: "/trending", changeFrequency: "hourly", priority: 0.9 },
   { path: "/radio", changeFrequency: "daily", priority: 0.8 },
   { path: "/categories", changeFrequency: "daily", priority: 0.8 },
-  { path: "/search", changeFrequency: "weekly", priority: 0.5 },
+  // /search is deliberately absent: it is noindex by metadata, and a sitemap
+  // that asks a crawler to index what the page itself asks it to skip is a
+  // contradiction that only dilutes the entries that matter.
   { path: "/pricing", changeFrequency: "weekly", priority: 0.6 },
   { path: "/monetize", changeFrequency: "weekly", priority: 0.6 },
   { path: "/about", changeFrequency: "monthly", priority: 0.6 },
   { path: "/contact", changeFrequency: "monthly", priority: 0.5 },
   { path: "/help", changeFrequency: "monthly", priority: 0.5 },
-  { path: "/guidelines", changeFrequency: "yearly", priority: 0.3 },
-  { path: "/privacy", changeFrequency: "yearly", priority: 0.3 },
-  { path: "/terms", changeFrequency: "yearly", priority: 0.3 },
+  { path: "/guidelines", changeFrequency: "yearly", priority: 0.4, lastModified: LEGAL_UPDATED },
+  { path: "/privacy", changeFrequency: "yearly", priority: 0.4, lastModified: LEGAL_UPDATED },
+  { path: "/cookies", changeFrequency: "yearly", priority: 0.4, lastModified: LEGAL_UPDATED },
+  { path: "/terms", changeFrequency: "yearly", priority: 0.4, lastModified: LEGAL_UPDATED },
 ];
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
@@ -48,7 +60,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   const staticPages: MetadataRoute.Sitemap = STATIC_ROUTES.map((route) => ({
     url: `${origin}${route.path}`,
-    lastModified: new Date(),
+    lastModified: route.lastModified ?? new Date(),
     changeFrequency: route.changeFrequency,
     priority: route.priority,
   }));

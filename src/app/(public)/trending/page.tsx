@@ -18,8 +18,11 @@ import { RealtimeRefresh } from "@/components/feed/RealtimeRefresh";
 import type { PostWithAuthor } from "@/types";
 
 export const metadata: Metadata = {
-  title: "Trending | connectPlus",
+  // The brand comes from the root title template — see about/page.tsx.
+  title: "Trending",
   description: "The most-read and most-loved stories from across East Africa right now.",
+  alternates: { canonical: "/trending" },
+  robots: { index: true, follow: true },
 };
 
 function formatCount(count: number): string {

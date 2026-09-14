@@ -3,9 +3,13 @@ import { Sparkles } from "lucide-react";
 import { StaticPage } from "@/components/ui/StaticPage";
 
 export const metadata: Metadata = {
-  title: "About | connectPlus",
+  // Bare titles only: the root layout's template appends " · connectPlus", so a
+  // hard-coded suffix rendered the brand twice in every search result.
+  title: "About",
   description:
     "connectPlus is a modern social blogging platform connecting East Africa through stories, ideas, and perspectives.",
+  alternates: { canonical: "/about" },
+  robots: { index: true, follow: true },
 };
 
 export default function AboutPage() {

@@ -5,8 +5,14 @@ import { PostCard } from "@/components/blog/PostCard";
 import type { PostWithAuthor } from "@/types";
 
 export const metadata = {
-  title: "Search - connectPlus",
+  // The brand comes from the root title template — see about/page.tsx.
+  title: "Search",
   description: "Search stories from across East Africa.",
+  // Result pages are thin, parameterised and infinitely many: crawling them
+  // spends a site's crawl budget on duplicates of the feed. `follow` keeps the
+  // links out of them useful, and it is also why /search is kept out of the
+  // sitemap — a page that asks not to be indexed must not be advertised there.
+  robots: { index: false, follow: true },
 };
 
 export default async function SearchPage({

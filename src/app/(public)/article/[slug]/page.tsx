@@ -10,6 +10,7 @@ import { auth } from "@/lib/auth";
 import { formatDate, estimateReadTime } from "@/lib/utils";
 import { postCoverSrc } from "@/lib/thumb";
 import { getSiteConfig } from "@/lib/settings";
+import { stripSourcePromo } from "@/lib/seo";
 import { BookmarkButton } from "@/components/ui/BookmarkButton";
 import { FollowButton } from "@/components/ui/FollowButton";
 import { LikeButton } from "@/components/ui/LikeButton";
@@ -64,14 +65,6 @@ const getPost = cache((slug: string) =>
   })
 );
 
-function stripText(content: string): string {
-  return content
-    .replace(/<[^>]+>/g, " ")
-    .replace(/[#*_~`>]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 export async function generateMetadata({ params }: ArticleParams): Promise<Metadata> {
   const { slug } = await params;
   const post = await getPost(slug);
@@ -86,28 +79,44 @@ export async function generateMetadata({ params }: ArticleParams): Promise<Metad
   } catch {
     cfg = null;
   }
-  const baseUrl = cfg?.siteUrl ?? process.env.AUTH_URL ?? "https://connectplusapp.vercel.app";
-  const canonical = `${baseUrl.replace(/\/$/, "")}/article/${post.slug}`;
+  const baseUrl = (cfg?.siteUrl ?? process.env.AUTH_URL ?? "https://connectplusapp.vercel.app").replace(/\/$/, "");
+  const siteName = cfg?.siteName ?? "connectPlus";
+  const canonical = `${baseUrl}/article/${post.slug}`;
 
+  // Syndicated stories carry their origin's promo text — "… Read more at
+  // https://publisher.co.ke/story". Stripped here, because this description is
+  // what other platforms print on the card: our article details, never another
+  // publisher's raw URL.
   const description =
-    (post.excerpt ?? "").trim() || stripText(post.title) || "Read this story on connectPlus.";
+    stripSourcePromo(post.excerpt) ||
+    stripSourcePromo(post.content, 200) ||
+    `Read "${post.title}" on ${siteName}.`;
   // Social crawlers must be able to FETCH the preview image. A stored base64
   // data URI (several covers are 2–4 MB) produced og:image="https://site/data:…",
   // which every platform rejects — that is why shared links arrived bare.
-  const imageUrl = `${baseUrl.replace(/\/$/, "")}${postCoverSrc(post.id)}`;
+  const imageUrl = `${baseUrl}${postCoverSrc(post.id)}`;
 
   return {
     title: post.title,
     description,
     alternates: { canonical },
+    // The article is the page that matters, so it asks to be indexed with a
+    // full-size preview rather than having the thumbnail cropped by a default.
+    robots: {
+      index: true,
+      follow: true,
+      googleBot: { index: true, follow: true, "max-image-preview": "large" },
+    },
     openGraph: {
       title: post.title,
       description,
       type: "article",
       url: canonical,
-      siteName: cfg?.siteName ?? "connectPlus",
+      siteName,
       publishedTime: post.publishedAt?.toISOString(),
+      modifiedTime: post.updatedAt.toISOString(),
       authors: [post.author.name ?? `@${post.author.username}`],
+      ...(post.category ? { section: post.category.name } : {}),
       tags: post.tags.map((t) => t.name),
       images: [{ url: imageUrl, width: 1200, height: 630, alt: post.title }],
     },
@@ -194,30 +203,39 @@ export default async function ArticlePage({ params }: ArticleParams) {
 
   const cover = postCoverSrc(post.id);
 
+  const siteOrigin = (siteConfig?.siteUrl ?? "https://connectplusapp.vercel.app").replace(/\/$/, "");
+  const canonicalUrl = `${siteOrigin}/article/${post.slug}`;
+  // No `isBasedOn`: the origin URL belongs in the on-page credit, not in the
+  // structured data that search engines and social platforms read the article
+  // through.
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "Article",
     headline: post.title,
-    description: post.excerpt ?? undefined,
-    image: cover,
+    description: stripSourcePromo(post.excerpt) || undefined,
+    // Absolute, and served by us — a relative path or the publisher's host is
+    // not a usable image for a crawler.
+    image: `${siteOrigin}${cover}`,
+    url: canonicalUrl,
     datePublished: post.publishedAt?.toISOString() ?? post.createdAt.toISOString(),
     dateModified: post.updatedAt.toISOString(),
     author: {
       "@type": "Person",
       name: post.author.name ?? `@${post.author.username}`,
-      url: `${siteConfig?.siteUrl ?? "https://connectplusapp.vercel.app"}/profile/${post.author.username}`,
+      url: `${siteOrigin}/profile/${post.author.username}`,
     },
     publisher: {
       "@type": "Organization",
       name: siteConfig?.siteName ?? "connectPlus",
+      logo: { "@type": "ImageObject", url: `${siteOrigin}/pwa-512.png` },
     },
     mainEntityOfPage: {
       "@type": "WebPage",
-      "@id": `${siteConfig?.siteUrl ?? "https://connectplusapp.vercel.app"}/article/${post.slug}`,
+      "@id": canonicalUrl,
     },
     ...(post.category ? { articleSection: post.category.name } : {}),
     keywords: post.tags.map((t) => t.name).join(", "),
-    ...(post.sourceUrl ? { isBasedOn: post.sourceUrl } : {}),
+    isAccessibleForFree: true,
   };
 
   return (
@@ -225,7 +243,7 @@ export default async function ArticlePage({ params }: ArticleParams) {
       {/* JSON-LD structured data for search engines */}
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
       />
 
       {/* Hero */}
@@ -339,7 +357,7 @@ export default async function ArticlePage({ params }: ArticleParams) {
                   <ArticleActions
                     url={`/article/${post.slug}`}
                     title={post.title}
-                    description={post.excerpt ?? undefined}
+                    description={stripSourcePromo(post.excerpt) || undefined}
                     image={cover}
                   />
                 </div>

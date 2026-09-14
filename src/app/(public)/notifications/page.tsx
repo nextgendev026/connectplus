@@ -18,8 +18,12 @@ import { MarkAllReadButton } from "./MarkAllRead";
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-  title: "Notifications - connectPlus",
+  // The brand comes from the root title template — see about/page.tsx.
+  title: "Notifications",
   description: "Stay up to date with activity on your connectPlus stories.",
+  // A signed-in inbox: nothing here is a public page, and an unauthenticated
+  // crawler only ever sees a redirect to sign-in anyway.
+  robots: { index: false, follow: false },
 };
 
 export default async function NotificationsPage() {
