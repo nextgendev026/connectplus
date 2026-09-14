@@ -4,7 +4,6 @@ import { getSettings, updateSettings, settingDef } from "@/lib/settings";
 import {
   OPENROUTER_FREE_MODELS,
   OPENCODE_PAID_MODELS,
-  OPENCODE_MODELS,
   fetchOpenRouterFreeModels,
   fetchOpenCodeModels,
   type AiProviderName,
@@ -42,7 +41,7 @@ async function buildProviders(): Promise<{
       label: "OpenCode Zen",
       keySetting: "opencodeApiKey",
       modelSetting: "opencodeModel",
-      defaultModel: ocModels[0] || OPENCODE_MODELS[0],
+      defaultModel: ocModels[0] || OPENCODE_PAID_MODELS[0],
       models: ocModels.length > 0 ? ocModels : [...OPENCODE_PAID_MODELS],
       note: `Zen API — ${ocModels.length} models. Free-tier models require OpenCode session; paid models work via API.`,
     },

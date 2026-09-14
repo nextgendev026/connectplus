@@ -1950,7 +1950,7 @@ export interface SportsHubSnapshot {
   sport: string;
   liveCount: number;
   /** Every source that contributed a fixture to this snapshot. */
-  sources: Array<{ source: string; label?: string }>;
+  sources: string[];
   /** True when the snapshot came from the database after every live source failed. */
   stale: boolean;
   matches: NormalizedMatch[];
@@ -2284,12 +2284,6 @@ function buildSnapshot(
     byComp.set(m.competition, entry);
   }
 
-  const sourceLabels: Record<string, string> = {
-    ESPN: "ESPN",
-    "api-sports": "API-Sports",
-    [DEMO_PROVIDER_ID]: "demo",
-  };
-
   return {
     generatedAt: new Date().toISOString(),
     provider: ctx.provider,
@@ -2298,10 +2292,7 @@ function buildSnapshot(
     date: ctx.date.toISOString().slice(0, 10),
     sport: ctx.sport,
     liveCount: matches.filter((m) => LIVE_STATUSES.includes(m.status)).length,
-    sources: (ctx.sources ?? [ctx.provider]).map((s) => ({
-      source: s,
-      label: sourceLabels[s] ?? s,
-    })),
+    sources: ctx.sources ?? [ctx.provider],
     stale: ctx.stale ?? false,
     matches: sortByRelevance(matches),
     competitions: [...byComp.values()].sort(

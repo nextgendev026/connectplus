@@ -106,18 +106,6 @@ export async function GET(request: NextRequest) {
       if (notify.ran) log.info("opportunistic favourite alert sweep");
     });
 
-      const sources = (hub.sources ?? []).map((s) => ({
-      id: s.source,
-      label: s.label ?? s.source,
-      state: (() => {
-        if (hub.demo) return "fresh";
-        if (hub.stale) return "stale";
-        if (s.source === "api-sports" || s.source === "ESPN") return "live";
-        return "fresh";
-      })(),
-      ts: hub.generatedAt ? new Date(hub.generatedAt).getTime() : Date.now(),
-    }));
-
     return NextResponse.json(
       {
         generatedAt: hub.generatedAt,
@@ -127,7 +115,7 @@ export async function GET(request: NextRequest) {
         date: hub.date,
         sport: hub.sport,
         liveCount: annotated.filter((m) => LIVE_STATUSES.includes(m.status)).length,
-        sources,
+        sources: hub.sources,
         stale: hub.stale,
         picksPending: missing,
         competitions: hub.competitions,
