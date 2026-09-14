@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronRight, Trophy } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { liveEndpoint } from "@/lib/sports-endpoint";
 
 /**

@@ -9,6 +9,7 @@ import {
   Loader2,
   RefreshCw,
   Sparkles,
+  TrendingUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { calendarEndpoint } from "@/lib/sports-endpoint";
@@ -50,10 +51,15 @@ interface CalendarResponse {
 }
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const DAY_MS = 86_400_000;
 
 /** A Date for a `YYYY-MM-DD` key, at UTC midnight so it never slips a day. */
 function dateOf(key: string): Date {
   return new Date(`${key}T00:00:00.000Z`);
+}
+
+function keyOf(date: Date): string {
+  return date.toISOString().slice(0, 10);
 }
 
 function kickoffTime(iso: string | null | undefined): string {
@@ -63,23 +69,57 @@ function kickoffTime(iso: string | null | undefined): string {
   return at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+/** Monday of the week containing `key`. */
+function weekStartOf(key: string): string {
+  const date = dateOf(key);
+  const offset = (date.getUTCDay() + 6) % 7;
+  return keyOf(new Date(date.getTime() - offset * DAY_MS));
+}
+
+/** Group a day's fixtures by competition, keeping kick-off order inside each. */
+function byCompetition(matches: CalendarMatch[]): { competition: string; matches: CalendarMatch[] }[] {
+  const groups = new Map<string, CalendarMatch[]>();
+  for (const match of matches) {
+    // A provider can omit the competition; those fixtures still need a heading
+    // rather than disappearing into an unnamed bucket.
+    const competition = match.competition?.trim() || "Other fixtures";
+    const list = groups.get(competition) ?? [];
+    list.push(match);
+    groups.set(competition, list);
+  }
+  return [...groups.entries()].map(([competition, list]) => ({
+    competition,
+    matches: list.slice().sort((a, b) => (a.kickoff ?? "").localeCompare(b.kickoff ?? "")),
+  }));
+}
+
+/** "Today", "Tomorrow", "Sat 19 Sep" — the words a reader plans with. */
+function dayWords(offsetFromToday: number, date: Date): string {
+  if (offsetFromToday === 0) return "Today";
+  if (offsetFromToday === 1) return "Tomorrow";
+  if (offsetFromToday === -1) return "Yesterday";
+  return date.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+}
+
 /**
  * The fixture calendar.
  *
- * A month at a time, because that is the unit a football reader actually plans
- * in — "what is on this weekend" is answered by the Scores tab, "what does the
- * next month look like" is not. Every day shows how many of its fixtures the
- * model has already analysed, so the calendar doubles as an honest progress view
- * of the week-ahead prediction pass rather than a wall of empty rows.
+ * A phone gets a week strip and one day's fixtures, grouped by competition:
+ * the old layout printed the whole month as one vertical stack of day cards, so
+ * a reader scrolled through thirty days of flat rows to answer "what is on
+ * today". A week is the unit people actually plan in, and a competition
+ * heading is what turns a list of rows into something scannable.
  *
- * Desktop and mobile are the same component: a seven-column month grid where
- * there is room for it, and the same days as a vertical list where there is not,
- * so a phone never gets a squeezed grid and a desktop never gets a phone layout
- * stretched across the screen.
+ * Desktop keeps the month grid — there is room for it there, and a monthly view
+ * is genuinely useful when you can see it at once. Selecting a day opens that
+ * day's fixtures beside/below the grid.
  */
 export default function MatchCalendar() {
   const now = new Date();
+  const todayKey = keyOf(now);
   const [cursor, setCursor] = useState({ year: now.getUTCFullYear(), month: now.getUTCMonth() });
+  const [weekStart, setWeekStart] = useState(() => weekStartOf(todayKey));
+  const [dayKey, setDayKey] = useState(todayKey);
   const [data, setData] = useState<CalendarResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -92,9 +132,9 @@ export default function MatchCalendar() {
     const first = new Date(Date.UTC(cursor.year, cursor.month, 1));
     const last = new Date(Date.UTC(cursor.year, cursor.month + 1, 0));
     const startPad = (first.getUTCDay() + 6) % 7;
-    const from = new Date(first.getTime() - startPad * 86_400_000);
+    const from = new Date(first.getTime() - startPad * DAY_MS);
     const endPad = 6 - ((last.getUTCDay() + 6) % 7);
-    const to = new Date(last.getTime() + endPad * 86_400_000);
+    const to = new Date(last.getTime() + endPad * DAY_MS);
     return { from, to, first, last };
   }, [cursor]);
 
@@ -136,19 +176,32 @@ export default function MatchCalendar() {
 
   const cells = useMemo(() => {
     const out: { key: string; inMonth: boolean; day: CalendarDay | null }[] = [];
-    for (let at = range.from.getTime(); at <= range.to.getTime(); at += 86_400_000) {
-      const key = new Date(at).toISOString().slice(0, 10);
-      const date = dateOf(key);
+    for (let at = range.from.getTime(); at <= range.to.getTime(); at += DAY_MS) {
+      const key = keyOf(new Date(at));
       out.push({
         key,
-        inMonth: date.getUTCMonth() === cursor.month,
+        inMonth: dateOf(key).getUTCMonth() === cursor.month,
         day: byDate.get(key) ?? null,
       });
     }
     return out;
   }, [range, byDate, cursor.month]);
 
-  const todayKey = new Date().toISOString().slice(0, 10);
+  /** The seven days of the strip the reader is looking at. */
+  const week = useMemo(
+    () =>
+      Array.from({ length: 7 }, (_, i) => {
+        const key = keyOf(new Date(dateOf(weekStart).getTime() + i * DAY_MS));
+        return { key, day: byDate.get(key) ?? null };
+      }),
+    [weekStart, byDate]
+  );
+
+  const dayMatches = useMemo(() => byDate.get(dayKey)?.matches ?? [], [byDate, dayKey]);
+  const dayGroups = useMemo(() => byCompetition(dayMatches), [dayMatches]);
+  const dayOffset = Math.round(
+    (dateOf(dayKey).getTime() - dateOf(todayKey).getTime()) / DAY_MS
+  );
 
   function shiftMonth(delta: number) {
     setCursor((current) => {
@@ -158,17 +211,37 @@ export default function MatchCalendar() {
     setSelected(null);
   }
 
+  function shiftWeek(delta: number) {
+    const next = keyOf(new Date(dateOf(weekStart).getTime() + delta * 7 * DAY_MS));
+    setWeekStart(next);
+    setDayKey(next);
+    const nextDate = dateOf(next);
+    setCursor({ year: nextDate.getUTCFullYear(), month: nextDate.getUTCMonth() });
+    setSelected(null);
+  }
+
+  function pickDay(key: string) {
+    setDayKey(key);
+    setWeekStart(weekStartOf(key));
+    const date = dateOf(key);
+    setCursor({ year: date.getUTCFullYear(), month: date.getUTCMonth() });
+    setSelected(null);
+  }
+
   const monthLabel = new Date(Date.UTC(cursor.year, cursor.month, 1)).toLocaleDateString([], {
     month: "long",
     year: "numeric",
   });
 
+  const analysedToday = byDate.get(dayKey)?.analysed ?? 0;
+
   return (
     <div className="mx-auto w-full max-w-[1600px] px-3 py-4 sm:px-6 xl:px-8">
+      {/* ── Header: month, jump-shortcuts, refresh ─────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-800/70 px-2.5 py-1 text-[11px] font-semibold text-surface-300">
           <CalendarDays className="h-3 w-3 text-brand-400" />
-          Fixture calendar
+          Fixtures
         </span>
         <div className="flex items-center gap-1 rounded-xl border border-surface-800 bg-surface-900/70 p-1">
           <button
@@ -178,7 +251,7 @@ export default function MatchCalendar() {
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
-          <span className="min-w-[9rem] px-1 text-center text-xs font-semibold text-surface-200">{monthLabel}</span>
+          <span className="min-w-[8.5rem] px-1 text-center text-xs font-semibold text-surface-200">{monthLabel}</span>
           <button
             onClick={() => shiftMonth(1)}
             className="rounded-lg p-1.5 text-surface-400 transition hover:text-surface-50"
@@ -188,17 +261,11 @@ export default function MatchCalendar() {
           </button>
         </div>
         <button
-          onClick={() => setCursor({ year: now.getUTCFullYear(), month: now.getUTCMonth() })}
+          onClick={() => pickDay(todayKey)}
           className="rounded-lg border border-surface-800 px-2.5 py-1.5 text-[11px] font-medium text-surface-400 transition hover:text-surface-100"
         >
-          This month
+          Today
         </button>
-        {data ? (
-          <span className="text-[11px] text-surface-500">
-            {data.total} fixtures · <span className="text-emerald-400">{data.analysed} analysed</span>
-            {data.sources.length > 0 ? ` · ${data.sources.join(" + ")}` : ""}
-          </span>
-        ) : null}
         <button
           onClick={() => void load({ fresh: true })}
           className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-surface-800 px-2.5 py-1.5 text-[11px] font-medium text-surface-400 transition hover:text-surface-100"
@@ -207,129 +274,181 @@ export default function MatchCalendar() {
         </button>
       </div>
 
+      {data ? (
+        <p className="mt-2 text-[11px] text-surface-500">
+          {data.total} fixtures this month ·{" "}
+          <span className="text-emerald-400">{data.analysed} with a prediction</span>
+        </p>
+      ) : null}
+
       {error ? (
         <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</div>
       ) : null}
 
-      {loading ? (
-        <div className="mt-4 flex items-center justify-center gap-2 rounded-2xl border border-surface-800/60 py-16 text-sm text-surface-500">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading the calendar…
-        </div>
-      ) : (
-        <>
-          <div className="mt-3 hidden gap-1 md:grid md:grid-cols-7">
-            {WEEKDAYS.map((day) => (
-              <span key={day} className="px-1 text-center text-[10px] font-semibold uppercase tracking-wide text-surface-600">
-                {day}
-              </span>
-            ))}
-          </div>
-
-          <div className="mt-1 space-y-3 md:grid md:grid-cols-7 md:gap-1 md:space-y-0">
-            {cells.map((cell) => {
-              const day = cell.day;
-              const isToday = cell.key === todayKey;
-              const dayLabel = dateOf(cell.key).toLocaleDateString([], {
-                weekday: "short",
-                day: "numeric",
-                month: "short",
-              });
+      {/* ── Mobile: week strip + the selected day ─────────────────────────── */}
+      <div className="mt-3 md:hidden">
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => shiftWeek(-1)}
+            className="rounded-lg border border-surface-800 p-1.5 text-surface-400 transition hover:text-surface-50"
+            aria-label="Previous week"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <div className="flex flex-1 gap-1">
+            {week.map(({ key, day }) => {
+              const date = dateOf(key);
+              const active = key === dayKey;
+              const isToday = key === todayKey;
               return (
-                <div
-                  key={cell.key}
+                <button
+                  key={key}
+                  onClick={() => pickDay(key)}
+                  aria-current={active ? "date" : undefined}
                   className={cn(
-                    "rounded-xl border p-2 md:min-h-[7.5rem]",
-                    cell.inMonth ? "border-surface-800/70 bg-surface-900/40" : "border-surface-800/40 bg-surface-950/40",
-                    isToday && "ring-1 ring-brand-500/50"
+                    "flex min-w-0 flex-1 flex-col items-center rounded-xl border px-0.5 py-1.5 transition",
+                    active
+                      ? "border-brand-500 bg-brand-500/15 text-brand-100"
+                      : "border-surface-800 text-surface-400 active:scale-[0.97]"
                   )}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span
-                      className={cn(
-                        "text-[11px] font-semibold",
-                        isToday ? "text-brand-300" : cell.inMonth ? "text-surface-300" : "text-surface-600"
-                      )}
-                    >
-                      {/* A phone reads the long label; the grid has no room for it. */}
-                      <span className="md:hidden">{dayLabel}</span>
-                      <span className="hidden md:inline">{dateOf(cell.key).getUTCDate()}</span>
-                    </span>
-                    {day && day.matches.length > 0 ? (
-                      <span className="flex items-center gap-1.5 text-[10px] text-surface-600">
-                        {day.live > 0 ? (
-                          <span className="inline-flex items-center gap-1 text-red-400">
-                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
-                            {day.live}
-                          </span>
-                        ) : null}
-                        <span>{day.matches.length}</span>
-                        {day.analysed > 0 ? <Brain className="h-3 w-3 text-emerald-400/80" /> : null}
-                      </span>
-                    ) : null}
-                  </div>
-
-                  {day && day.matches.length > 0 ? (
-                    <ul className="mt-1.5 space-y-1">
-                      {day.matches
-                        .slice()
-                        .sort((a, b) => (a.kickoff ?? "").localeCompare(b.kickoff ?? ""))
-                        .slice(0, 5)
-                        .map((match) => (
-                          <li key={`${match.provider}:${match.externalId}`}>
-                            <button
-                              onClick={() => setSelected(match)}
-                              className={cn(
-                                "w-full rounded-lg px-1.5 py-1 text-left transition hover:bg-surface-800/60",
-                                selected?.externalId === match.externalId && selected.provider === match.provider
-                                  ? "bg-brand-500/10 ring-1 ring-brand-500/40"
-                                  : ""
-                              )}
-                            >
-                              <div className="flex items-center gap-1.5">
-                                <span className="shrink-0 text-[10px] tabular-nums text-surface-500">
-                                  {match.status === "LIVE" || match.status === "HT"
-                                    ? match.status === "HT"
-                                      ? "HT"
-                                      : `${match.minute ?? 0}'`
-                                    : kickoffTime(match.kickoff)}
-                                </span>
-                                <span className="min-w-0 flex-1 truncate text-[11px] text-surface-200">
-                                  {match.homeTeam} <span className="text-surface-600">v</span> {match.awayTeam}
-                                </span>
-                                {match.prediction ? (
-                                  <span
-                                    className="shrink-0 rounded bg-emerald-500/15 px-1 py-0.5 text-[9px] font-bold text-emerald-300"
-                                    title={`${match.prediction.marketLabel}: ${match.prediction.selection} at ${Math.round(
-                                      match.prediction.confidence * 100
-                                    )}%`}
-                                  >
-                                    {Math.round(match.prediction.confidence * 100)}%
-                                  </span>
-                                ) : null}
-                              </div>
-                              <p className="truncate text-[9px] text-surface-600">{match.competition}</p>
-                            </button>
-                          </li>
-                        ))}
-                      {day.matches.length > 5 ? (
-                        <li className="px-1.5 text-[9px] text-surface-600">+{day.matches.length - 5} more</li>
-                      ) : null}
-                    </ul>
-                  ) : (
-                    <p className="mt-2 hidden text-[10px] text-surface-700 md:block">—</p>
-                  )}
-                </div>
+                  <span className="text-[9px] font-semibold uppercase tracking-wide">{WEEKDAYS[(date.getUTCDay() + 6) % 7]}</span>
+                  <span className={cn("text-sm font-bold tabular-nums", isToday && !active && "text-brand-300")}>
+                    {date.getUTCDate()}
+                  </span>
+                  <span className="mt-0.5 flex h-3 items-center gap-0.5">
+                    {day && day.live > 0 ? (
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
+                    ) : day && day.matches.length > 0 ? (
+                      <span className="text-[9px] tabular-nums text-surface-500">{day.matches.length}</span>
+                    ) : (
+                      <span className="h-1 w-1 rounded-full bg-surface-700" />
+                    )}
+                  </span>
+                </button>
               );
             })}
           </div>
-        </>
-      )}
+          <button
+            onClick={() => shiftWeek(1)}
+            className="rounded-lg border border-surface-800 p-1.5 text-surface-400 transition hover:text-surface-50"
+            aria-label="Next week"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+
+        <DaySection
+          heading={dayWords(dayOffset, dateOf(dayKey))}
+          subheading={`${dateOf(dayKey).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}${analysedToday > 0 ? ` · ${analysedToday} with a pick` : ""}`}
+          groups={dayGroups}
+          loading={loading}
+          selected={selected}
+          onSelect={setSelected}
+        />
+      </div>
+
+      {/* ── Desktop: the month grid, then the selected day beneath it ─────── */}
+      <div className="hidden md:block">
+        {loading ? (
+          <div className="mt-4 flex items-center justify-center gap-2 rounded-2xl border border-surface-800/60 py-16 text-sm text-surface-500">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading the calendar…
+          </div>
+        ) : (
+          <>
+            <div className="mt-3 grid grid-cols-7 gap-1">
+              {WEEKDAYS.map((day) => (
+                <span key={day} className="px-1 text-center text-[10px] font-semibold uppercase tracking-wide text-surface-600">
+                  {day}
+                </span>
+              ))}
+            </div>
+
+            <div className="mt-1 grid grid-cols-7 gap-1">
+              {cells.map((cell) => {
+                const day = cell.day;
+                const isToday = cell.key === todayKey;
+                const isSelected = cell.key === dayKey;
+                return (
+                  <button
+                    key={cell.key}
+                    onClick={() => pickDay(cell.key)}
+                    className={cn(
+                      "min-h-[7.5rem] rounded-xl border p-2 text-left transition",
+                      cell.inMonth ? "border-surface-800/70 bg-surface-900/40" : "border-surface-800/40 bg-surface-950/40",
+                      isSelected && "border-brand-500/60 bg-brand-500/[0.08]",
+                      isToday && !isSelected && "ring-1 ring-brand-500/50",
+                      "hover:border-brand-500/40"
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span
+                        className={cn(
+                          "text-[11px] font-semibold tabular-nums",
+                          isToday ? "text-brand-300" : cell.inMonth ? "text-surface-300" : "text-surface-600"
+                        )}
+                      >
+                        {dateOf(cell.key).getUTCDate()}
+                      </span>
+                      {day && day.matches.length > 0 ? (
+                        <span className="flex items-center gap-1.5 text-[10px] text-surface-600">
+                          {day.live > 0 ? (
+                            <span className="inline-flex items-center gap-1 text-red-400">
+                              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
+                              {day.live}
+                            </span>
+                          ) : null}
+                          <span className="tabular-nums">{day.matches.length}</span>
+                          {day.analysed > 0 ? <Brain className="h-3 w-3 text-emerald-400/80" /> : null}
+                        </span>
+                      ) : null}
+                    </div>
+
+                    {day && day.matches.length > 0 ? (
+                      <ul className="mt-1.5 space-y-1">
+                        {day.matches
+                          .slice()
+                          .sort((a, b) => (a.kickoff ?? "").localeCompare(b.kickoff ?? ""))
+                          .slice(0, 3)
+                          .map((match) => (
+                            <li key={`${match.provider}:${match.externalId}`} className="truncate text-[10px] text-surface-400">
+                              <span className="mr-1 tabular-nums text-surface-600">
+                                {match.status === "LIVE" || match.status === "HT"
+                                  ? match.status === "HT"
+                                    ? "HT"
+                                    : `${match.minute ?? 0}'`
+                                  : kickoffTime(match.kickoff)}
+                              </span>
+                              {match.homeTeam} v {match.awayTeam}
+                            </li>
+                          ))}
+                        {day.matches.length > 3 ? (
+                          <li className="text-[9px] text-surface-600">+{day.matches.length - 3} more</li>
+                        ) : null}
+                      </ul>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+
+            <DaySection
+              heading={dayWords(dayOffset, dateOf(dayKey))}
+              subheading={`${dateOf(dayKey).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}${analysedToday > 0 ? ` · ${analysedToday} with a pick` : ""}`}
+              groups={dayGroups}
+              loading={false}
+              selected={selected}
+              onSelect={setSelected}
+            />
+          </>
+        )}
+      </div>
 
       {selected ? (
-        <div className="mt-5">
+        <div className="mt-4 motion-safe:animate-rise">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-300">
-              <Sparkles className="h-3.5 w-3.5" /> Analysis for {selected.homeTeam} v {selected.awayTeam}
+              <Sparkles className="h-3.5 w-3.5" /> {selected.homeTeam} v {selected.awayTeam}
             </span>
             <span className="text-[10px] text-surface-500">{selected.competition}</span>
             <button
@@ -341,12 +460,119 @@ export default function MatchCalendar() {
           </div>
           <MatchDetail match={selected} pollSeconds={60} />
         </div>
-      ) : (
-        <p className="mt-4 text-[11px] text-surface-600">
-          Pick any fixture to open its full analysis — timeline, team stats, lineups with connectPlus Ratings,
-          attack momentum, shot map and the model&apos;s picks on it.
-        </p>
-      )}
+      ) : null}
     </div>
+  );
+}
+
+/**
+ * One day of fixtures, grouped by competition.
+ *
+ * The competition heading is what makes the list readable: without it these are
+ * just rows, and a reader cannot tell a league match from a friendly or find
+ * the one game they care about.
+ */
+function DaySection({
+  heading,
+  subheading,
+  groups,
+  loading,
+  selected,
+  onSelect,
+}: {
+  heading: string;
+  subheading: string;
+  groups: { competition: string; matches: CalendarMatch[] }[];
+  loading: boolean;
+  selected: CalendarMatch | null;
+  onSelect: (match: CalendarMatch) => void;
+}) {
+  const total = groups.reduce((sum, g) => sum + g.matches.length, 0);
+
+  return (
+    <section className="mt-4">
+      <div className="flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-base font-bold text-surface-50">{heading}</h2>
+          <p className="text-[11px] text-surface-500">{subheading}</p>
+        </div>
+        {total > 0 ? (
+          <span className="shrink-0 rounded-full bg-surface-800/70 px-2.5 py-1 text-[11px] font-semibold text-surface-300">
+            {total} {total === 1 ? "match" : "matches"}
+          </span>
+        ) : null}
+      </div>
+
+      {loading ? (
+        <div className="mt-3 flex items-center justify-center gap-2 rounded-2xl border border-surface-800/60 py-12 text-sm text-surface-500">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+        </div>
+      ) : total === 0 ? (
+        <div className="mt-3 rounded-2xl border border-dashed border-surface-800 px-4 py-10 text-center">
+          <CalendarDays className="mx-auto h-7 w-7 text-surface-600" />
+          <p className="mt-2 text-sm font-medium text-surface-400">Nothing scheduled</p>
+          <p className="text-xs text-surface-500">Pick another day in the week above.</p>
+        </div>
+      ) : (
+        <div className="mt-3 space-y-4">
+          {groups.map((group, index) => (
+            <div key={group.competition} className="motion-safe:animate-rise" style={{ animationDelay: `${index * 45}ms` }}>
+              <div className="mb-1.5 flex items-center gap-2 px-1">
+                <h3 className="truncate text-[11px] font-bold uppercase tracking-wider text-surface-400">
+                  {group.competition}
+                </h3>
+                <span className="shrink-0 text-[10px] text-surface-600">{group.matches.length}</span>
+                <span className="h-px flex-1 bg-surface-800/70" />
+              </div>
+              <ul className="overflow-hidden rounded-2xl border border-surface-800/70 bg-surface-900/40">
+                {group.matches.map((match) => {
+                  const active =
+                    selected?.externalId === match.externalId && selected?.provider === match.provider;
+                  const live = match.status === "LIVE" || match.status === "HT";
+                  return (
+                    <li key={`${match.provider}:${match.externalId}`} className="border-b border-surface-800/50 last:border-b-0">
+                      <button
+                        onClick={() => onSelect(match)}
+                        className={cn(
+                          "flex w-full items-center gap-3 px-3 py-2.5 text-left transition active:bg-surface-800/60",
+                          active ? "bg-brand-500/[0.08]" : "hover:bg-surface-800/40"
+                        )}
+                      >
+                        <span className="w-11 shrink-0 text-center">
+                          <span
+                            className={cn(
+                              "inline-block rounded-md px-1.5 py-0.5 text-[11px] font-bold tabular-nums",
+                              live ? "bg-red-500/15 text-red-400" : "text-surface-400"
+                            )}
+                          >
+                            {live ? (match.status === "HT" ? "HT" : `${match.minute ?? 0}'`) : kickoffTime(match.kickoff)}
+                          </span>
+                        </span>
+
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium text-surface-100">
+                            {match.homeTeam} <span className="text-surface-500">v</span> {match.awayTeam}
+                          </span>
+                          {match.prediction ? (
+                            <span className="mt-0.5 inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-300">
+                              <TrendingUp className="h-3 w-3" />
+                              {match.prediction.selection} · {Math.round(match.prediction.confidence * 100)}%
+                            </span>
+                          ) : (
+                            <span className="mt-0.5 block text-[10px] text-surface-600">No pick yet</span>
+                          )}
+                        </span>
+
+                        <ChevronRight className="h-4 w-4 shrink-0 text-surface-600" />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }

@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { matchEndpoint } from "@/lib/sports-endpoint";
+import { explainPick } from "@/lib/pick-insights";
+import { PickReasons } from "./PickReasons";
 
 /** What a caller needs to know to open one fixture's match centre. */
 export interface MatchRef {
@@ -275,7 +277,7 @@ export default function MatchDetail({ match, pollSeconds = 30 }: { match: MatchR
           <div className="px-3 py-3 sm:px-4 sm:py-4">
             {!detail?.found ? (
               <EmptyDetail
-                note={detail?.note ?? "This fixture has no deep data in the public feed."}
+                note={detail?.note ?? "We do not have the detailed match data for this one yet."}
                 predictions={payload?.predictions ?? []}
               />
             ) : active === "analysis" ? (
@@ -299,8 +301,8 @@ export default function MatchDetail({ match, pollSeconds = 30 }: { match: MatchR
 
           {detail?.sourceUrl ? (
             <p className="border-t border-surface-800/60 px-4 py-2 text-[10px] text-surface-600">
-              Measured data: {detail.source === "espn-summary" ? "ESPN public match feed" : detail.source}
-              {detail.derived.length > 0 ? ` · computed here: ${detail.derived.join(", ")}` : ""} ·{" "}
+              Match data from: {detail.source === "espn-summary" ? "ESPN" : detail.source}
+              {detail.derived.length > 0 ? ` · worked out by us: ${detail.derived.join(", ")}` : ""} ·{" "}
               <a href={detail.sourceUrl} target="_blank" rel="noreferrer noopener" className="underline hover:text-surface-400">
                 source
               </a>
@@ -389,8 +391,8 @@ function Header({
 
 function AnalysisTab({ detail, predictions }: { detail: MatchDetailPayload; predictions: ApiPrediction[] }) {
   const missing = [
-    { key: "heatmaps", label: "Positional heatmaps", why: "needs tracking data no keyless feed publishes" },
-    { key: "playerMarketValue", label: "Player market value", why: "licensed data, not in the public feed" },
+    { key: "heatmaps", label: "Positional heatmaps", why: "this needs player-tracking data we do not have" },
+    { key: "playerMarketValue", label: "Player market value", why: "this is paid data we do not licence" },
     { key: "careerAnalytics", label: "Career analytics", why: "not published by the free provider" },
   ].filter((m) => detail.coverage[m.key] !== true);
 
@@ -416,11 +418,11 @@ function AnalysisTab({ detail, predictions }: { detail: MatchDetailPayload; pred
                   )}
                   title={
                     insight.basis === "measured"
-                      ? "Read directly from the provider's match feed"
-                      : "Computed here from the provider's numbers"
+                      ? "Read straight from the match data"
+                      : "Worked out by us from the match numbers"
                   }
                 >
-                  {insight.basis}
+                  {insight.basis === "measured" ? "from the data" : "our working"}
                 </span>
               </div>
               <p className="mt-1.5 text-[11px] leading-relaxed text-surface-300">{insight.text}</p>
@@ -444,7 +446,7 @@ function AnalysisTab({ detail, predictions }: { detail: MatchDetailPayload; pred
                   {(p.confidence * 100).toFixed(0)}%
                   {p.valueEdge != null ? (
                     <span className={cn("ml-2 font-normal", p.valueEdge > 0 ? "text-emerald-400" : "text-amber-400")}>
-                      edge {p.valueEdge > 0 ? "+" : ""}
+value {p.valueEdge > 0 ? "+" : ""}
                       {p.valueEdge.toFixed(1)}
                     </span>
                   ) : null}
@@ -881,7 +883,7 @@ function H2HTab({ detail }: { detail: MatchDetailPayload }) {
       ) : null}
 
       {!detail.h2h && detail.lastFive.length === 0 ? (
-        <p className="text-xs text-surface-500">No head-to-head history in the public feed for this pair.</p>
+        <p className="text-xs text-surface-500">We have no recent meetings between these two on record.</p>
       ) : null}
     </div>
   );
@@ -891,62 +893,88 @@ function H2HTab({ detail }: { detail: MatchDetailPayload }) {
 /* Model                                                              */
 /* ------------------------------------------------------------------ */
 
+const TIER_STYLES: Record<string, string> = {
+  strong: "border-emerald-500/30 bg-emerald-500/15 text-emerald-300",
+  good: "border-brand-500/30 bg-brand-500/15 text-brand-200",
+  close: "border-amber-500/30 bg-amber-500/15 text-amber-300",
+  longshot: "border-surface-700 bg-surface-800 text-surface-300",
+};
+
 function ModelTab({ detail, predictions }: { detail: MatchDetailPayload; predictions: ApiPrediction[] }) {
   if (predictions.length === 0) {
     return (
       <p className="text-xs text-surface-500">
-        Our model has not published a pick on this fixture yet — it writes one before kick-off, and again as
-        team news lands.
+        No pick on this match yet. Our model writes one before kick-off, and updates it when team news lands.
       </p>
     );
   }
 
   return (
-    <div className="space-y-2.5">
-      {predictions.map((p) => (
-        <div key={p.id} className="rounded-xl border border-surface-800/60 bg-surface-900/40 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-surface-500">{p.marketLabel}</span>
-            <span className="flex items-center gap-2">
-              {p.status !== "PENDING" ? (
-                <span
-                  className={cn(
-                    "rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase",
-                    p.status === "WON" ? "bg-emerald-500/20 text-emerald-300" : "bg-red-500/20 text-red-300"
-                  )}
-                >
-                  {p.status}
+    <div className="space-y-3">
+      {predictions.map((p) => {
+        const insight = explainPick({
+          market: p.market,
+          selection: p.selection,
+          confidence: p.confidence,
+          valueEdge: p.valueEdge,
+          expectedHomeGoals: p.expectedHomeGoals,
+          expectedAwayGoals: p.expectedAwayGoals,
+          homeWinPct: p.homeWinPct,
+          drawPct: p.drawPct,
+          awayWinPct: p.awayWinPct,
+          rationale: p.rationale,
+          match: { homeTeam: detail.homeTeam, awayTeam: detail.awayTeam },
+        });
+
+        return (
+          <div
+            key={p.id}
+            className="rounded-xl border border-surface-800/60 bg-surface-900/40 p-3 motion-safe:animate-rise"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-surface-500">
+                {insight.marketPlain}
+              </span>
+              <span className="flex items-center gap-2">
+                {p.status !== "PENDING" ? (
+                  <span
+                    className={cn(
+                      "rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase",
+                      p.status === "WON" ? "bg-emerald-500/20 text-emerald-300" : "bg-red-500/20 text-red-300"
+                    )}
+                  >
+                    {p.status}
+                  </span>
+                ) : null}
+                <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-bold", TIER_STYLES[insight.tier.tone])}>
+                  {insight.tier.label}
                 </span>
-              ) : null}
-              <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">
-                {(p.confidence * 100).toFixed(0)}%
               </span>
-            </span>
-          </div>
+            </div>
 
-          <p className="mt-1 text-sm font-semibold text-surface-50">{p.selection}</p>
-          <p className="mt-1.5 text-[11px] leading-relaxed text-surface-400">{p.rationale}</p>
+            <p className="mt-1 text-sm font-semibold text-surface-50">{p.selection}</p>
+            <div className="mt-2 flex items-center gap-2">
+              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-800">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-brand-400 transition-all duration-700"
+                  style={{ width: `${insight.belief}%` }}
+                />
+              </div>
+              <span className="text-[11px] font-bold tabular-nums text-emerald-300">{insight.belief}%</span>
+            </div>
 
-          <div className="mt-2 flex flex-wrap gap-3 text-[10px] text-surface-500">
-            {p.expectedHomeGoals != null ? (
-              <span>
-                xG {p.expectedHomeGoals.toFixed(2)}–{p.expectedAwayGoals?.toFixed(2) ?? "—"}
-              </span>
+            <PickReasons insight={insight} className="mt-2.5" />
+
+            {detail.info.oddsSummary ? (
+              <p className="mt-2 text-[10px] text-surface-500">{detail.info.oddsSummary}</p>
             ) : null}
-            {p.valueEdge != null ? (
-              <span className={p.valueEdge > 0 ? "text-emerald-400" : "text-amber-400"}>
-                Edge {p.valueEdge > 0 ? "+" : ""}
-                {p.valueEdge.toFixed(1)}pp over the market
-              </span>
-            ) : null}
-            {detail.info.oddsSummary ? <span>{detail.info.oddsSummary}</span> : null}
           </div>
-        </div>
-      ))}
+        );
+      })}
 
       <p className="text-[10px] leading-relaxed text-surface-600">
-        The pick above is paired with what this feed actually measured — timeline, shots, momentum and lineup
-        ratings — so a reader can see the evidence, not just the verdict. Model output, not financial advice.
+        Every pick sits beside what we measured — timeline, shots, momentum and lineups — so the
+        verdict can be checked against the evidence. Model output, not financial advice.
       </p>
     </div>
   );

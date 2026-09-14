@@ -2,19 +2,22 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
+  AlertTriangle,
+  ChevronDown,
+  Clock,
+  Flame,
   Loader2,
+  Radar,
+  RefreshCw,
+  ShieldCheck,
   Sparkles,
   Target,
   TrendingUp,
-  Flame,
-  Radar,
-  Clock,
-  AlertTriangle,
-  RefreshCw,
-  ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { tipsEndpoint } from "@/lib/sports-endpoint";
+import { explainPick } from "@/lib/pick-insights";
+import { PickReasons } from "./PickReasons";
 import ReferralCards from "./ReferralCards";
 
 interface TipMatch {
@@ -41,6 +44,10 @@ interface Tip {
   rationale: string;
   expectedHomeGoals: number | null;
   expectedAwayGoals: number | null;
+  /** The model's win/draw/loss split, present on match-result picks. */
+  homeWinPct?: number | null;
+  drawPct?: number | null;
+  awayWinPct?: number | null;
   match: TipMatch;
 }
 
@@ -71,12 +78,14 @@ interface TipsResponse {
 const AUTO_REFRESH_MS = 60_000;
 
 const MARKET_FILTERS = [
-  { value: "", label: "All markets" },
-  { value: "1X2", label: "Match result" },
+  { value: "", label: "Everything" },
+  { value: "1X2", label: "Who wins" },
   { value: "over-under", label: "Total goals" },
-  { value: "btts", label: "BTTS" },
-  { value: "correct-score", label: "Correct score" },
+  { value: "btts", label: "Both to score" },
+  { value: "correct-score", label: "Exact score" },
 ];
+
+
 
 const LIVE = new Set(["LIVE", "HT"]);
 
@@ -213,43 +222,47 @@ export default function BettingTips({
   return (
     <div className="mx-auto grid w-full max-w-[1600px] gap-5 px-3 py-5 sm:gap-6 sm:px-6 sm:py-6 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px] xl:px-8">
       <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-3">
-          <h2 className="flex items-center gap-2 text-lg font-bold text-surface-50">
-            <Sparkles className="h-5 w-5 text-emerald-400" />
-            Today&apos;s betting tips
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="flex items-center gap-2 text-base font-bold text-surface-50 sm:text-lg">
+            <Sparkles className="h-4 w-4 text-emerald-400 sm:h-5 sm:w-5" />
+            Today&apos;s tips
           </h2>
           {record && record.settled > 0 ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-300 sm:text-xs">
               <Target className="h-3.5 w-3.5" />
-              {record.accuracy}% hit rate on {record.settled} settled picks
+              {record.accuracy}% right so far
+              <span className="hidden text-emerald-400/70 sm:inline">· {record.settled} settled</span>
             </span>
           ) : (
-            <span className="rounded-full border border-surface-700 px-3 py-1 text-xs text-surface-400">
-              record accruing
+            <span className="rounded-full border border-surface-700 px-2.5 py-1 text-[11px] text-surface-400 sm:text-xs">
+              Building the record
             </span>
           )}
         </div>
-        <div className="mt-1.5 flex flex-wrap items-center gap-3">
-          <p className="max-w-2xl text-sm text-surface-400">
-            One card per match, with our model&apos;s pick for each market. Ranked by how confident it is,
-            or by how much its numbers differ from the bookmakers&apos;. Open the Scores tab for the full
-            breakdown behind any of these.
-          </p>
+        {/*
+          One plain sentence, not a paragraph. The reader arriving here wants to
+          know what they are looking at and why it is trustworthy — everything
+          else is on the cards themselves.
+        */}
+        <p className="mt-1.5 text-sm text-surface-400">
+          Our model&apos;s picks for today, each with the reasons behind it. Not financial advice — 18+.
+        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
           {data?.stakeWindow ? (
             <span
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-surface-800 px-2.5 py-1 text-[10px] font-medium text-surface-500"
-              title={`A pick is dropped once its match passes ${data.stakeWindow.minuteCutoff}' — from there a reader can no longer act on it. Stale status strings are caught after ${data.stakeWindow.maxAgeMinutes} minutes.`}
+              className="inline-flex items-center gap-1.5 rounded-full border border-surface-800 px-2.5 py-1 text-[10px] font-medium text-surface-500"
+              title={`We stop showing a pick once its match reaches ${data.stakeWindow.minuteCutoff} minutes, because it can no longer be acted on.`}
             >
               <ShieldCheck className="h-3 w-3 text-emerald-400" />
-              Actionable picks only
+              Only picks you can still act on
             </span>
           ) : null}
           {freshness ? (
             <button
               type="button"
               onClick={() => void load(true, true)}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-surface-800 px-2.5 py-1 text-[10px] font-medium text-surface-500 transition hover:border-emerald-500/40 hover:text-emerald-300"
-              title="The board re-reads the model every minute on its own"
+              className="inline-flex items-center gap-1.5 rounded-full border border-surface-800 px-2.5 py-1 text-[10px] font-medium text-surface-500 transition hover:border-emerald-500/40 hover:text-emerald-300"
+              title="This board refreshes itself every minute"
             >
               <RefreshCw className="h-3 w-3" />
               Updated {freshness}
@@ -257,13 +270,15 @@ export default function BettingTips({
           ) : null}
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-2">
+        {/* Market chips scroll sideways on a phone instead of wrapping into a
+            second row of buttons that pushes the picks below the fold. */}
+        <div className="mt-3 flex items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:none] sm:flex-wrap">
           {MARKET_FILTERS.map((f) => (
             <button
               key={f.value}
               onClick={() => setMarket(f.value)}
               className={cn(
-                "rounded-full border px-3 py-1.5 text-xs font-medium transition",
+                "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition",
                 market === f.value
                   ? "border-emerald-500 bg-emerald-500/15 text-emerald-300"
                   : "border-surface-800 text-surface-400 hover:border-surface-700 hover:text-surface-50"
@@ -272,11 +287,11 @@ export default function BettingTips({
               {f.label}
             </button>
           ))}
-          <div className="ml-auto flex items-center rounded-xl border border-surface-800 bg-surface-900/70 p-1">
+          <div className="ml-auto flex shrink-0 items-center rounded-xl border border-surface-800 bg-surface-900/70 p-1">
             {(
               [
-                { value: "confidence", label: "Confidence", icon: Flame },
-                { value: "edge", label: "Edge", icon: TrendingUp },
+                { value: "confidence", label: "Most likely", icon: Flame },
+                { value: "edge", label: "Best price", icon: TrendingUp },
               ] as const
             ).map((option) => (
               <button
@@ -295,8 +310,8 @@ export default function BettingTips({
         </div>
 
         {loading ? (
-          <div className="mt-8 flex items-center justify-center gap-2 rounded-2xl border border-surface-800/60 py-16 text-sm text-surface-500">
-            <Loader2 className="h-4 w-4 animate-spin" /> Reading the model…
+          <div className="mt-6 flex items-center justify-center gap-2 rounded-2xl border border-surface-800/60 py-16 text-sm text-surface-500">
+            <Loader2 className="h-4 w-4 animate-spin" /> Getting today&apos;s picks…
           </div>
         ) : error ? (
           <div className="mt-6 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</div>
@@ -368,6 +383,29 @@ function groupByFixture(picks: Tip[]): FixtureGroup[] {
   return [...groups.values()];
 }
 
+const TIER_STYLES: Record<string, string> = {
+  strong: "border-emerald-500/30 bg-emerald-500/15 text-emerald-300",
+  good: "border-brand-500/30 bg-brand-500/15 text-brand-200",
+  close: "border-amber-500/30 bg-amber-500/15 text-amber-300",
+  longshot: "border-surface-700 bg-surface-800 text-surface-300",
+};
+
+const kickoffPill = (kickoff: { text: string; live: boolean }) =>
+  cn(
+    "inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold",
+    kickoff.live ? "bg-red-500/15 text-red-400" : "bg-surface-800 text-surface-400"
+  );
+
+/**
+ * One match, with the model's headline pick on it and why it likes it.
+ *
+ * The card is built the way a phone reads it, top to bottom: which match, what
+ * the pick is, how sure we are, then the reasons. The reasons are the point —
+ * a percentage with no explanation is a number a reader has no way to judge, so
+ * "Why this pick" is a first-class section of the card rather than a footnote,
+ * and the model's own audit trail is available in a disclosure for anyone who
+ * wants the working.
+ */
 function FixtureTipsCard({ group }: { group: FixtureGroup }) {
   const { match, tips } = group;
   const kickoff = kickoffLabel(match);
@@ -376,88 +414,131 @@ function FixtureTipsCard({ group }: { group: FixtureGroup }) {
   const [lead, ...rest] = [...tips].sort((a, b) => b.confidence - a.confidence);
   if (!lead) return null;
 
+  const insight = explainPick({
+    market: lead.market,
+    selection: lead.selection,
+    confidence: lead.confidence,
+    valueEdge: lead.valueEdge,
+    expectedHomeGoals: lead.expectedHomeGoals,
+    expectedAwayGoals: lead.expectedAwayGoals,
+    homeWinPct: lead.homeWinPct,
+    drawPct: lead.drawPct,
+    awayWinPct: lead.awayWinPct,
+    rationale: lead.rationale,
+    match: {
+      homeTeam: match.homeTeam,
+      awayTeam: match.awayTeam,
+      oddsHome: match.oddsHome,
+      oddsDraw: match.oddsDraw,
+      oddsAway: match.oddsAway,
+    },
+  });
+
   return (
-    <article className="group relative flex flex-col overflow-hidden rounded-2xl border border-surface-800/70 bg-gradient-to-b from-surface-900/70 to-surface-950/60 p-4 transition hover:border-emerald-500/40 hover:shadow-[0_0_0_1px_rgba(16,185,129,0.1)]">
+    <article className="group relative flex flex-col overflow-hidden rounded-2xl border border-surface-800/70 bg-gradient-to-b from-surface-900/70 to-surface-950/60 transition duration-300 hover:border-emerald-500/40 hover:shadow-[0_0_0_1px_rgba(16,185,129,0.1)] motion-safe:animate-rise">
       <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-emerald-500/60 via-brand-500/40 to-transparent" />
-      <div className="flex items-center justify-between gap-2">
+
+      <div className="flex items-center justify-between gap-2 border-b border-surface-800/60 px-4 py-2.5">
         <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-surface-500">
           {match.competition}
         </span>
-        <span
-          className={cn(
-            "inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold",
-            kickoff.live ? "bg-red-500/15 text-red-400" : "bg-surface-800 text-surface-400"
-          )}
-        >
+        <span className={kickoffPill(kickoff)} title={kickoff.live ? "Happening now" : "Kick-off"}>
           {kickoff.live ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" /> : <Clock className="h-3 w-3" />}
           {kickoff.text}
         </span>
       </div>
 
-      <h3 className="mt-2 truncate text-sm font-semibold text-surface-50">
-        {match.homeTeam} <span className="text-surface-500">vs</span> {match.awayTeam}
+      <h3 className="px-4 pt-3 text-sm font-semibold text-surface-50">
+        {match.homeTeam} <span className="font-normal text-surface-500">vs</span> {match.awayTeam}
       </h3>
 
-      <TipRow tip={lead} primary />
+      <div className="mt-3 px-4">
+        <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.07] p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-300/80">
+              {insight.marketPlain}
+            </span>
+            <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-bold", TIER_STYLES[insight.tier.tone])}>
+              {insight.tier.label}
+            </span>
+          </div>
+          <p className="mt-1 text-base font-bold leading-snug text-surface-50">{lead.selection}</p>
+          <div className="mt-2 flex items-center gap-2">
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-800">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-brand-400 transition-all duration-700"
+                style={{ width: `${insight.belief}%` }}
+              />
+            </div>
+            <span className="text-xs font-bold tabular-nums text-emerald-300">{insight.belief}%</span>
+          </div>
+          <p className="mt-1 text-[11px] text-surface-400">How confident the model is</p>
+        </div>
+      </div>
+
+      <PickReasons insight={insight} className="mt-3 px-4" />
 
       {rest.length > 0 ? (
-        <div className="mt-2 space-y-2">
-          {rest.map((tip) => (
-            <TipRow key={tip.id} tip={tip} />
+        <div className="mt-3 space-y-1.5 px-4">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-surface-500">Also on this match</p>
+          {/*
+            Two, not four. A card that explains every market the model priced
+            stops being a card and becomes a page a thumb has to fight through.
+          */}
+          {rest.slice(0, 2).map((tip) => (
+            <SecondaryTip key={tip.id} tip={tip} match={match} />
           ))}
         </div>
       ) : null}
 
-      <p className="mt-3 line-clamp-3 text-[11px] leading-relaxed text-surface-400">{lead.rationale}</p>
+      <div className="h-3" />
     </article>
   );
 }
 
-function TipRow({ tip, primary = false }: { tip: Tip; primary?: boolean }) {
-  const confidencePct = Math.round(tip.confidence * 100);
-  const strong = confidencePct >= 65;
+/**
+ * A second market on the same fixture, kept to one line.
+ *
+ * Three full explanation blocks on one card would bury the headline pick, so a
+ * secondary market shows its selection and confidence and keeps its reasons one
+ * tap away.
+ */
+function SecondaryTip({ tip, match }: { tip: Tip; match: TipMatch }) {
+  const insight = explainPick({
+    market: tip.market,
+    selection: tip.selection,
+    confidence: tip.confidence,
+    valueEdge: tip.valueEdge,
+    expectedHomeGoals: tip.expectedHomeGoals,
+    expectedAwayGoals: tip.expectedAwayGoals,
+    homeWinPct: tip.homeWinPct,
+    drawPct: tip.drawPct,
+    awayWinPct: tip.awayWinPct,
+    rationale: tip.rationale,
+    match: {
+      homeTeam: match.homeTeam,
+      awayTeam: match.awayTeam,
+      oddsHome: match.oddsHome,
+      oddsDraw: match.oddsDraw,
+      oddsAway: match.oddsAway,
+    },
+  });
 
   return (
-    <div className={cn("mt-3 rounded-xl border px-3 py-2", primary ? "border-emerald-500/20 bg-emerald-500/5" : "border-surface-800 bg-surface-900/40")}>
-      <div className="flex items-baseline justify-between gap-2">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-surface-500">
-          {tip.marketLabel ?? tip.market}
-        </p>
-        <span className={cn("text-[11px] font-bold tabular-nums", strong ? "text-emerald-400" : "text-surface-300")}>
-          {confidencePct}%
+    <details className="rounded-xl border border-surface-800 bg-surface-900/40">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2">
+        <span className="min-w-0 flex-1">
+          <span className="block text-[10px] font-semibold uppercase tracking-wide text-surface-500">
+            {insight.marketPlain}
+          </span>
+          <span className="block truncate text-sm font-semibold text-surface-200">{tip.selection}</span>
         </span>
+        <span className="shrink-0 text-[11px] font-bold tabular-nums text-surface-300">{insight.belief}%</span>
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-surface-500" />
+      </summary>
+      <div className="px-3 pb-3">
+        <PickReasons insight={insight} compact />
       </div>
-      <p className={cn("mt-0.5 truncate text-sm font-bold", primary ? "text-surface-50" : "text-surface-200")}>
-        {tip.selection}
-      </p>
-      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-800">
-        <div
-          className={cn("h-full rounded-full", strong ? "bg-emerald-500" : "bg-brand-500")}
-          style={{ width: `${confidencePct}%` }}
-        />
-      </div>
-      {tip.valueEdge != null || (tip.expectedHomeGoals != null && tip.expectedAwayGoals != null) ? (
-        <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] text-surface-500">
-          {tip.valueEdge != null ? (
-            <span
-              className={cn(
-                "inline-flex items-center gap-1 font-medium",
-                tip.valueEdge > 0 ? "text-emerald-400" : "text-amber-400"
-              )}
-              title="How much more likely our model thinks this is than the bookmaker's price implies. A positive number is the model's edge."
-            >
-              <TrendingUp className="h-3 w-3" />
-              {tip.valueEdge > 0 ? "+" : ""}
-              {tip.valueEdge.toFixed(1)}% edge
-            </span>
-          ) : null}
-          {tip.expectedHomeGoals != null && tip.expectedAwayGoals != null ? (
-            <span title="Goals our model expects each side to score.">
-              Expected goals {tip.expectedHomeGoals.toFixed(2)}–{tip.expectedAwayGoals.toFixed(2)}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
+    </details>
   );
 }

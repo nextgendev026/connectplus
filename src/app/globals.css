@@ -839,6 +839,30 @@ html:not(.dark) .connectplus-prose a { color: #15803d; }
   opacity: 0;
 }
 
+/* Rise — the sports desk's entrance.
+   Shorter travel and a snappier curve than fade-in-up, because these run on
+   lists: a card that takes 0.7s to arrive feels slow when there are twelve of
+   them, and a 10px lift is enough to read as motion without the layout
+   shimmering. Paired with a small per-item delay it makes a board feel like it
+   is ticking into place rather than appearing all at once. */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px) scale(0.995); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.animate-rise {
+  animation: rise 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* A live score changing: a quick tint that fades, so a goal is visible in the
+   corner of an eye without the row jumping. */
+@keyframes score-flash {
+  0% { background-color: color-mix(in srgb, var(--color-brand-500, #ea580c) 26%, transparent); }
+  100% { background-color: transparent; }
+}
+
+.animate-score-flash { animation: score-flash 1.6s ease-out both; }
+
 /* Hero viewport height. 100vh on a mobile browser includes the chrome that is
    actually off-screen, so a "full height" hero is taller than the viewport.
    svh pins it to the visible area and lets the next section peek in. */
@@ -856,11 +880,16 @@ html:not(.dark) .connectplus-prose a { color: #15803d; }
   .animate-word-in,
   .animate-fade-in-up,
   .animate-fade-in,
-  .animate-fade-in-soft {
+  .animate-fade-in-soft,
+  .animate-rise {
     animation: none !important;
     opacity: 1 !important;
     transform: none !important;
   }
+
+  /* A background flash is exactly the kind of motion this preference exists to
+     stop; the score itself still updates, it just does not strobe. */
+  .animate-score-flash { animation: none !important; background-color: transparent !important; }
 }
 
 /* Animation delays */

@@ -483,10 +483,15 @@ export default function ScoresBoard({
           </button>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+        {/*
+          One line, swiped sideways, not four wrapped rows of chips.
+          On a phone this used to stack into three or four rows above the first
+          fixture — controls the reader sees before they see a single score.
+        */}
+        <div className="mt-3 flex items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
           <span
             className={cn(
-              "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold",
+              "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold",
               (hub?.liveCount ?? 0) > 0 ? "bg-red-500/15 text-red-400" : "bg-surface-800 text-surface-400"
             )}
           >
@@ -496,8 +501,8 @@ export default function ScoresBoard({
 
           {(hub?.sources?.length ?? 0) > 0 ? (
             <span
-              className="inline-flex items-center gap-1.5 rounded-full border border-surface-800 px-2.5 py-1 text-[11px] font-medium text-surface-400"
-              title={`Merged from ${hub?.sources?.join(", ")}`}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-surface-800 px-2.5 py-1 text-[11px] font-medium text-surface-400"
+              title={`Live data merged from ${hub?.sources?.join(", ")}`}
             >
               <Signal className="h-3 w-3 text-emerald-400" />
               {hub?.sources?.length} source{(hub?.sources?.length ?? 0) === 1 ? "" : "s"}
@@ -505,13 +510,13 @@ export default function ScoresBoard({
           ) : null}
 
           {hub?.stale ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-1 text-[11px] font-semibold text-amber-300">
+            <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-1 text-[11px] font-semibold text-amber-300">
               <AlertTriangle className="h-3 w-3" />
-              Showing the last saved snapshot
+              Showing the last saved scores
             </span>
           ) : null}
 
-          <div className="flex items-center rounded-xl border border-surface-800 bg-surface-900/70 p-1">
+          <div className="flex shrink-0 items-center rounded-xl border border-surface-800 bg-surface-900/70 p-1">
             {SPORTS.map((s) => (
               <button
                 key={s}
@@ -530,21 +535,21 @@ export default function ScoresBoard({
             onClick={() => setLiveOnly((v) => !v)}
             aria-pressed={liveOnly}
             className={cn(
-              "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition",
+              "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition",
               liveOnly
                 ? "border-red-500 bg-red-500/15 text-red-300"
                 : "border-surface-800 text-surface-400 hover:text-surface-50"
             )}
           >
             <CircleDot className={cn("h-3.5 w-3.5", liveOnly && "animate-pulse")} />
-            Live only{(hub?.liveCount ?? 0) > 0 ? ` (${hub?.liveCount})` : ""}
+            Live now{(hub?.liveCount ?? 0) > 0 ? ` (${hub?.liveCount})` : ""}
           </button>
 
           {isAuthed && followed.length > 0 ? (
             <button
               onClick={() => setOnlyFollowed((v) => !v)}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition",
+                "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition",
                 onlyFollowed
                   ? "border-amber-500 bg-amber-500/15 text-amber-300"
                   : "border-surface-800 text-surface-400 hover:text-surface-50"
@@ -570,11 +575,11 @@ export default function ScoresBoard({
             aria-pressed={alertsOn}
             title={
               alertsOn
-                ? "Goal, card and kick-off tones are on for teams you follow and matches you star"
-                : "Play a distinct tone for goals, kick-offs and full time on your teams"
+                ? "Goal and kick-off sounds are on for your teams"
+                : "Play a sound when your teams score or kick off"
             }
             className={cn(
-              "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition",
+              "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition",
               alertsOn
                 ? "border-emerald-500 bg-emerald-500/15 text-emerald-300"
                 : "border-surface-800 text-surface-400 hover:text-surface-50"
@@ -587,7 +592,7 @@ export default function ScoresBoard({
           <button
             onClick={() => void load({ fresh: true })}
             disabled={refreshing}
-            className="ml-auto inline-flex items-center gap-1.5 rounded-xl border border-surface-800 bg-surface-900/70 px-3 py-2 text-xs font-medium text-surface-300 transition hover:text-surface-50 disabled:opacity-60"
+            className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-surface-800 bg-surface-900/70 px-3 py-2 text-xs font-medium text-surface-300 transition hover:text-surface-50 disabled:opacity-60"
           >
             <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
             Refresh
@@ -598,8 +603,7 @@ export default function ScoresBoard({
           <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
-              Demo feed — add <code className="rounded bg-surface-900 px-1">SPORTS_API_KEY</code> (football-data.org)
-              or set <code className="rounded bg-surface-900 px-1">SPORTS_PROVIDER=sportsdb</code> for real fixtures.
+              These are sample fixtures. Real scores appear here once the live feed is switched on.
             </span>
           </div>
         ) : null}
@@ -650,10 +654,11 @@ export default function ScoresBoard({
                   ) : null}
                 </div>
                 <div className="overflow-hidden rounded-2xl border border-surface-800/70 bg-surface-900/40">
-                  {group.matches.map((match) => (
+                  {group.matches.map((match, rowIndex) => (
                     <MatchRow
                       key={match.id ?? match.externalId}
                       match={match}
+                      rowIndex={rowIndex}
                       expanded={expanded === (match.id ?? match.externalId)}
                       onToggle={toggleMatch}
                       followed={followed}
@@ -732,6 +737,7 @@ function FollowButton({
 
 function MatchRow({
   match,
+  rowIndex = 0,
   expanded,
   onToggle,
   followed,
@@ -741,6 +747,8 @@ function MatchRow({
   onRemind,
 }: {
   match: LiveMatch;
+  /** Position in its competition, used to stagger the entrance. */
+  rowIndex?: number;
   expanded: boolean;
   onToggle: (m: LiveMatch) => void;
   followed: string[];
@@ -753,7 +761,12 @@ function MatchRow({
   const reminded = reminders.includes(matchKeyOf(match));
   const hasOdds = match.oddsHome != null || match.oddsDraw != null || match.oddsAway != null;
   return (
-    <div className="border-b border-surface-800/50 last:border-b-0">
+    // Rows tick in one after another rather than appearing all at once; capped
+    // so a twenty-fixture competition never takes a second to fill in.
+    <div
+      className="border-b border-surface-800/50 last:border-b-0 motion-safe:animate-rise"
+      style={{ animationDelay: `${Math.min(rowIndex, 8) * 35}ms` }}
+    >
       <div className="flex items-center gap-0.5 px-2 py-2.5 transition hover:bg-surface-800/40 sm:gap-1 sm:px-4">
         <button
           onClick={() => onToggle(match)}

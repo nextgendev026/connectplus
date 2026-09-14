@@ -3,44 +3,38 @@ import AdSlot from "@/components/ads/AdSlot";
 import SportsHub from "@/components/sports/SportsHub";
 
 export const metadata: Metadata = {
-  title: "Live Scores, Match Analysis & Betting Tips",
+  title: "Live Scores & Today's Predictions",
   description:
-    "Real-time football and basketball livescores for every league, with a full match centre — timeline, team stats, lineups, attack momentum and shot maps — plus model-generated betting analysis for each fixture and today's highest-conviction tips across four markets.",
+    "Live football and basketball scores, our model's prediction for every match and the reasons behind it — plus today's tips and a fixture calendar for the weeks ahead.",
   keywords: [
     "live scores",
     "livescore today",
     "football live scores",
-    "match analysis",
-    "attack momentum",
-    "team lineups ratings",
-    "shot map",
     "basketball live scores",
+    "football predictions today",
+    "why this prediction",
     "football betting tips",
-    "sports predictions today",
     "over under tips",
     "both teams to score",
     "correct score predictions",
+    "fixture calendar",
+    "Kenyan Premier League scores",
     "African football live",
   ],
   alternates: { canonical: "/sports" },
   openGraph: {
-  // The brand comes from the root title template — see about/page.tsx. The
-  // openGraph/Twitter titles below keep it explicitly, because share cards are
-  // not templated and would otherwise lose the name entirely.
-  title: "Live Scores & Betting Tips",
-  description:
-      "Live scores, in-app betting analysis and today's highest-conviction model tips — updated as the games move.",
+    // The brand comes from the root title template — see about/page.tsx. Share
+    // cards are not templated, so these keep it explicitly.
+    title: "Live Scores & Today's Predictions · connectPlus",
+    description:
+      "Every match, updating live, with our model's prediction and the reasons behind it.",
     type: "website",
     url: "/sports",
   },
   twitter: {
     card: "summary_large_image",
-  // The brand comes from the root title template — see about/page.tsx. The
-  // openGraph/Twitter titles below keep it explicitly, because share cards are
-  // not templated and would otherwise lose the name entirely.
-  title: "Live Scores & Betting Tips",
-  description:
-      "Real-time livescores and model-generated betting analysis for every fixture, across four markets.",
+    title: "Live Scores & Today's Predictions · connectPlus",
+    description: "Live scores, and predictions that explain themselves.",
   },
 };
 
@@ -56,9 +50,9 @@ export const metadata: Metadata = {
 const SPORTS_SCHEMA = JSON.stringify({
   "@context": "https://schema.org",
   "@type": "CollectionPage",
-  name: "Live Scores, Match Analysis & Betting Tips",
+  name: "Live Scores & Today's Predictions",
   description:
-    "Real-time football and basketball livescores with a full match centre (timeline, team stats, lineups, momentum, shot maps), model-generated betting analysis and tips for every fixture.",
+    "Live football and basketball scores, our model's prediction for every fixture with the reasons behind it, today's tips and the fixture calendar.",
   inLanguage: "en",
   isPartOf: { "@type": "WebSite", name: "connectPlus" },
   about: { "@type": "Thing", name: "Association football and basketball results and betting markets" },
