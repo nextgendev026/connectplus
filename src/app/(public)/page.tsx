@@ -246,7 +246,7 @@ function PostCard({
           </button>
           {featured && (
             <div className="absolute bottom-4 left-4 right-4">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-500/30 px-3 py-1 text-[10px] font-bold text-brand-300 border border-brand-400/30 backdrop-blur-sm uppercase tracking-wider">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-500/30 px-3 py-1 text-[10px] font-bold text-brand-ink border border-brand-400/30 backdrop-blur-sm uppercase tracking-wider">
                 <Sparkles className="w-3 h-3" />
                 Featured
               </span>
@@ -355,13 +355,15 @@ function CategoryCarousel({
                 )}
               >
                 <span className="text-sm">{emoji}</span>
-                {cat.name}
-                <span
-                  className={cn(
-                    "ml-0.5 text-[10px]",
-                    isActive ? "text-brand-200" : "text-surface-600"
-                  )}
-                >
+                {cat.name}                  <span
+                    className={cn(
+                      "ml-0.5 text-[10px]",
+                      // On a brand-filled chip only a near-white accent clears AA —
+                      // the pale brand step measured 1.4:1 there, and its light-mode
+                      // replacement is now deep (that is its paper role).
+                      isActive ? "text-white/95" : "text-surface-600"
+                    )}
+                  >
                   {cat._count.posts}
                 </span>
               </Link>

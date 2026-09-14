@@ -1,3 +1,5 @@
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -205,6 +207,93 @@ function pairsForTheme(theme: "light" | "dark"): Pair[] {
     { name: "studio: rail faint on panel", fg: S["400"], bg: S["900"] },
   ];
 }
+
+/* ------------------------------------------------------------------ */
+/* The light-mode brand foreground steps                              */
+/* ------------------------------------------------------------------ */
+
+/** Read the `html:not(.dark)` token block out of globals.css. */
+function readLightRamp(): Record<string, RGB> {
+  const css = readFileSync(join(process.cwd(), "src/app/globals.css"), "utf8");
+  const body = /html:not\(\.dark\) \{([\s\S]*?)\n\}/.exec(css)?.[1];
+  if (body === undefined) throw new Error("no light token block in globals.css");
+  const out: Record<string, RGB> = {};
+  const re = /--([a-z0-9-]+):\s*(\d{1,3})\s+(\d{1,3})\s+(\d{1,3})\s*;/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    out[String(m[1])] = [Number(m[2]), Number(m[3]), Number(m[4])];
+  }
+  return out;
+}
+
+/** Every .ts/.tsx under src. */
+function sourceFiles(dir = join(process.cwd(), "src")): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...sourceFiles(full));
+    else if (/\.(ts|tsx)$/.test(entry.name)) out.push(full);
+  }
+  return out;
+}
+
+/**
+ * brand-200 and brand-300 are the two brand steps the app only ever paints as
+ * FOREGROUND (text and icons) — never as a surface, border, ring or gradient
+ * stop. On dark backgrounds that makes them the "bright accent" pair; on paper
+ * the same pale tint was illegible, which is why light mode re-points them at
+ * the deep end of the ramp. The two assertions here are the pair that makes
+ * that safe: they must clear AA on every light surface they land on, and
+ * nothing may start using them as a surface (which is what would turn the
+ * deliberately inverted order against 400+ into a real bug).
+ */
+describe("light theme brand foreground steps", () => {
+  const light = readLightRamp();
+  const step = (n: number): RGB => {
+    const value = light[`brand-${n}`];
+    if (!value) throw new Error(`missing --brand-${n} in the light ramp`);
+    return value;
+  };
+
+  it("clears AA for text on every light surface they are placed on", () => {
+    const surfaces: Record<string, RGB> = {
+      canvas: light["surface-950"]!,
+      panel: light["surface-900"]!,
+      card: light["surface-850"]!,
+      inset: light["surface-800"]!,
+      "brand tint on panel": blend(step(500), 0.15, light["surface-900"]!),
+      "brand tint on card": blend(step(500), 0.15, light["surface-850"]!),
+      "brand tint on inset": blend(step(500), 0.15, light["surface-800"]!),
+    };
+
+    const failures: string[] = [];
+    for (const name of [200, 300]) {
+      for (const [surface, bg] of Object.entries(surfaces)) {
+        const ratio = contrast(step(name), bg);
+        if (ratio < 4.5) failures.push(`brand-${name} on ${surface}: ${ratio.toFixed(2)}:1`);
+      }
+    }
+    expect(failures, `pale brand steps on light surfaces:\n${failures.join("\n")}`).toEqual([]);
+  });
+
+  it("keeps them foreground-only, which is what the deepened values assume", () => {
+    const asSurface = /(?:^|[\s"'`:])(?:bg|border|ring|divide|from|to|via|fill|stroke|outline|shadow)-brand-(?:200|300)\b/;
+    const offenders = sourceFiles().filter((file) => asSurface.test(readFileSync(file, "utf8")));
+    expect(
+      offenders.map((f) => f.slice(process.cwd().length + 1)),
+      "brand-200/300 are deep in light mode and must never be a surface"
+    ).toEqual([]);
+  });
+
+  it("keeps a fixed bright accent for the ink surfaces the ramp can no longer tint", () => {
+    const css = readFileSync(join(process.cwd(), "src/app/globals.css"), "utf8");
+    // Photo overlays and brand-filled chips are dark in both themes, so they
+    // read their accent from this class rather than a themed step.
+    expect(css).toContain(".text-brand-ink");
+    const ink = sourceFiles().filter((f) => readFileSync(f, "utf8").includes("text-brand-ink"));
+    expect(ink.length).toBeGreaterThan(0);
+  });
+});
 
 /* ------------------------------------------------------------------ */
 

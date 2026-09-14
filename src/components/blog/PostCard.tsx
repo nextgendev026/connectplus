@@ -199,7 +199,7 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
               </span>
             )}
 
-            <h2 className="font-display text-3xl font-bold text-white leading-tight transition-colors group-hover:text-brand-300">
+            <h2 className="font-display text-3xl font-bold text-white leading-tight transition-colors group-hover:text-brand-ink">
               {post.title}
             </h2>
 
@@ -289,7 +289,7 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
           <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
 
           {post.category && (
-            <span className="absolute left-4 top-4 rounded-full bg-black/50 px-3 py-1 text-xs font-medium text-brand-300 backdrop-blur-sm ring-1 ring-white/15">
+            <span className="absolute left-4 top-4 rounded-full bg-black/50 px-3 py-1 text-xs font-medium text-brand-ink backdrop-blur-sm ring-1 ring-white/15">
               {post.category.name}
             </span>
           )}

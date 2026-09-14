@@ -151,8 +151,24 @@ html:not(.dark) {
      brightened for a background that is no longer there. */
   --brand-50: 255 247 237;
   --brand-100: 255 237 213;
-  --brand-200: 254 215 170;
-  --brand-300: 251 146 60;
+  /* 200/300 are FOREGROUND-ONLY steps.
+
+     Nothing in the app paints brand-200 or brand-300 as a surface, a border or
+     a gradient stop — every single use is `text-brand-*`, a `hover:text-brand-*`
+     or an icon. In the dark ramp they are the "bright accent on night" pair, and
+     copied onto paper they were the last pale steps still failing AA: the old
+     #FED7AA and #FB923C measured 1.4:1 and 2.3:1 on a light card (1.2:1 and
+     2.0:1 on the canvas), nowhere near 4.5:1.
+
+     So in light mode they become the "deep accent on paper" pair instead,
+     reusing the deep end of this same ramp. That deliberately inverts their
+     order against 400+ — which is harmless precisely because they are never a
+     background for anything, so nothing is stacked on them. The two roles
+     instead split by surface: `text-brand-ink` is the ink-surface (always-dark)
+     counterpart, so a photo overlay or a card on a black gradient keeps a
+     bright accent in both themes. */
+  --brand-200: 154 52 18;   /* #9A3412 — 4.9:1 on canvas, 7.3:1 on a card */
+  --brand-300: 124 45 18;   /* #7C2D12 — 6.2:1 on canvas, 9.3:1 on a card */
   --brand-400: 234 88 12;
   --brand-500: 194 65 12;
   --brand-600: 154 52 18;
@@ -384,6 +400,14 @@ html, body, div, span, nav, header, main, footer, aside, section, article {
   /* Theme-aware accent text — WCAG AA (4.5:1) in both themes.
      Light mode: use -700/-800 shades (dark enough on light canvas).
      Dark mode: use -300/-400 shades (bright enough on dark bg). */
+  /* Ink-surface accent — for text and icons that sit on a surface which is dark
+     in BOTH themes: photo overlays, the featured news card on its black
+     gradient, chips filled with brand-500. The themed brand-200/300 steps can
+     no longer carry that role (in light mode they are deep enough to read on
+     paper, which is what they are for), so ink surfaces get one fixed bright
+     step instead of borrowing a token that flips out from under them. */
+  .text-brand-ink { color: #ffb273; }
+
   .dark .text-accent-strong, html.dark .text-accent-strong { color: #ff8f3a; }
   .dark .text-warning-strong, html.dark .text-warning-strong { color: #fbbf24; }
   .dark .text-positive-strong, html.dark .text-positive-strong { color: #34d399; }
