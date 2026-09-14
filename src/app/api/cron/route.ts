@@ -4,6 +4,7 @@ import { inngest } from "@/lib/inngest";
 import { createLogger } from "@/lib/logger";
 import { recordHeartbeat } from "@/lib/job-heartbeat";
 import { CRON_JOBS, getCronStatus } from "@/lib/cron-schedule";
+import { hasSharedSecret } from "@/lib/shared-secret";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,15 +55,9 @@ function resolveTrigger(name: string | null): string | null {
 }
 
 async function authorize(request: NextRequest): Promise<boolean> {
-  const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const viaHeader = request.headers.get("authorization") === `Bearer ${secret}`;
-    const viaX = request.headers.get("x-cron-secret") === secret;
-    const viaQuery =
-      request.nextUrl.searchParams.get("secret") === secret ||
-      request.nextUrl.searchParams.get("key") === secret;
-    if (viaHeader || viaX || viaQuery) return true;
-  }
+  // Constant-time, and a missing CRON_SECRET refuses rather than falling
+  // through to "no comparison happened" (see lib/shared-secret).
+  if (hasSharedSecret(request)) return true;
 
   // Local dev convenience: an admin session may drive the scheduler manually.
   try {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { createLogger } from "@/lib/logger";
 import { requestDrainCancel } from "@/lib/rss-drain";
+import { hasSharedSecret } from "@/lib/shared-secret";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,10 +10,7 @@ export const dynamic = "force-dynamic";
 const log = createLogger("rss-drain-cancel");
 
 async function authorize(request: NextRequest): Promise<boolean> {
-  const secret = process.env.CRON_SECRET;
-  const header = request.headers.get("authorization") ?? "";
-  if (secret && header === `Bearer ${secret}`) return true;
-  if (secret && request.nextUrl.searchParams.get("key") === secret) return true;
+  if (hasSharedSecret(request)) return true;
   try {
     const session = await auth();
     const role = session?.user?.role;

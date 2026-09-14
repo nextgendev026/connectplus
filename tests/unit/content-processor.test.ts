@@ -34,6 +34,19 @@ describe("processContent", () => {
     expect(html).not.toContain("javascript:");
   });
 
+  it("never emits a frame, closed or not", () => {
+    // `iframe` was in the allow-list *and* in the skip set. The pre-strip only
+    // covers paired/self-closed forms, so a bare tag survived into the body —
+    // a stored-XSS and clickjacking vector for anything syndicated in.
+    const unclosed = processContent('<p>hi</p><iframe src="https://attacker.test/evil">');
+    expect(unclosed.html).not.toContain("iframe");
+    expect(unclosed.html).not.toContain("attacker.test");
+
+    const paired = processContent('<iframe src="https://attacker.test/evil"></iframe><p>after</p>');
+    expect(paired.html).not.toContain("iframe");
+    expect(paired.html).toContain("<p>after</p>");
+  });
+
   it("converts markdown headings and lists", () => {
     const { html } = processContent("# Title\n\n- one\n- two");
     expect(html).toContain("<h1>Title</h1>");

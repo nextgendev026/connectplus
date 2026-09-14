@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import { pollFeeds, recoverMissingThumbnails } from "@/lib/rss-poll";
+import { hasSharedSecret } from "@/lib/shared-secret";
 import { createLogger } from "@/lib/logger";
 
 export const runtime = "nodejs";
@@ -27,10 +28,7 @@ const log = createLogger("rss-stream");
  * headlessly.
  */
 async function authorize(request: NextRequest): Promise<boolean> {
-  const secret = process.env.CRON_SECRET;
-  const header = request.headers.get("authorization") ?? "";
-  if (secret && header === `Bearer ${secret}`) return true;
-  if (secret && request.nextUrl.searchParams.get("key") === secret) return true;
+  if (hasSharedSecret(request)) return true;
 
   try {
     const session = await auth();

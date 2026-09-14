@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { runStaleEssentialJobs } from "@/lib/cron-schedule";
+import { hasSharedSecret } from "@/lib/shared-secret";
 import { createLogger } from "@/lib/logger";
 
 /**
@@ -26,15 +27,7 @@ export const maxDuration = 300;
 const log = createLogger("cron-safety-net");
 
 async function authorize(request: NextRequest): Promise<boolean> {
-  const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const viaHeader = request.headers.get("authorization") === `Bearer ${secret}`;
-    const viaX = request.headers.get("x-cron-secret") === secret;
-    const viaQuery =
-      request.nextUrl.searchParams.get("secret") === secret ||
-      request.nextUrl.searchParams.get("key") === secret;
-    if (viaHeader || viaX || viaQuery) return true;
-  }
+  if (hasSharedSecret(request)) return true;
 
   try {
     const session = await auth();

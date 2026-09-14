@@ -440,6 +440,18 @@ than silently pinging an endpoint that 404s forever. Deploy with
 `CRON_SECRET=…` alongside the Cloudflare credentials; without it the pings are
 refused with a 401.
 
+**A tick is cache-first.** Before reaching Vercel the worker reads its own copy
+of what the job produces — the football and basketball livescore snapshots
+(fresh for 120s) and the status payload (300s) — and rebuilds only when that
+copy has actually gone stale, then re-warms it so the next tick has something to
+measure. A poll from a reader is stored under the very key the tick reads, so a
+board people are watching keeps its own copy current and the tick costs the
+origin nothing; `sports-notify`, `sports-intel` and `payments-lifecycle` have no
+snapshot and still ping every tick. `curl -s <worker>/__edge | jq .snapshots`
+reports each copy's age and freshness. `/api/status` is itself edge-cached
+(60s), so the most expensive read in the app runs once per window instead of
+once per visitor.
+
 - **Worker:** `workers/edge-cache` — deployed as `connectplus-edge` and served at
   `https://connectplus-edge.connectplusapp.workers.dev`
 - **Deploy:** `CLOUDFLARE_API_TOKEN=… CLOUDFLARE_ACCOUNT_ID=… CRON_SECRET=… node scripts/deploy-worker.mjs`
@@ -478,6 +490,49 @@ refused with a 401.
 > subscription on the Cloudflare account before even the first bucket can be
 > created, so uploads and covers still use Supabase Storage. `R2_*` vars are
 > declared in `.env.example` for the day it is switched on.
+
+## Security
+
+Response hardening is declared in **two** places that have to agree —
+`next.config.mjs` covers everything Next serves, `vercel.json` repeats the
+transport-level keys for whatever Vercel answers before Next runs (static build
+output, redirects, error pages). `tests/unit/security-headers.test.ts` fails the
+build if either loses a header or the CSP regains a weakening, and
+`tests/unit/contrast.test.ts` does the same for the colour tokens.
+
+| Header | Value | Why |
+| --- | --- | --- |
+| `Content-Security-Policy` | `next.config.mjs`, built per environment | `object-src 'none'`, `frame-ancestors 'none'`, `base-uri`/`form-action 'self'` |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | production only — never from a dev server |
+| `X-Content-Type-Options` | `nosniff` | cached JSON and image bytes must not be re-sniffed |
+| `X-Frame-Options` | `SAMEORIGIN` | the Cloudflare worker only defaults this when the origin sent none |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | |
+| `Cross-Origin-Opener-Policy` | `same-origin` | sign-in is a redirect, never a popup |
+| `Permissions-Policy` | sensors off, `browsing-topics=()`, `interest-cohort=()` | |
+| `X-XSS-Protection` | `0` | the legacy auditor is gone and its filter was itself a vector |
+
+Three choices here are deliberate and should not be "fixed" back:
+
+- **`'unsafe-eval'` is development-only.** The dev server's HMR runtime needs
+  it; the production bundle contains no `eval(` or `new Function(` at all
+  (verified against `.next/static`), so the production policy omits it.
+- **`'unsafe-inline'` on `script-src` stays.** Next inlines its own hydration
+  payload, and removing it means threading a nonce through every route. That
+  makes the sanitizer the real XSS boundary.
+- **No `upgrade-insecure-requests`.** It rewrites http subresources to https,
+  and a number of Kenyan radio streams are http-only — `media-src ... http:` is
+  allowed on purpose.
+
+Shared secrets: every scheduler and drain endpoint (`/api/cron`,
+`/api/cron/safety-net`, the RSS stream/drain routes) authorises through
+`src/lib/shared-secret.ts`. It compares in constant time, and an unset
+`CRON_SECRET` **refuses** rather than skipping the comparison, so a deployment
+that forgot the variable has a closed endpoint instead of an open one.
+
+Article bodies — RSS `content:encoded` and composer markdown alike — are
+sanitised against an allow-list in `src/lib/content-processor.ts` before they
+are injected. Frames are not on that allow-list, and event handlers, `class`,
+`style` and every non-`http(s)`/relative URL are dropped.
 
 ## Architecture
 

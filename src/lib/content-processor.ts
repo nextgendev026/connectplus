@@ -27,7 +27,12 @@ const ALLOWED_TAGS = new Set([
   "a", "img",
   "table", "thead", "tbody", "tr", "th", "td",
   "figure", "figcaption", "span", "div",
-  "iframe",
+  // NOTE: no `iframe`. It used to be listed here *and* in SKIP_TAGS, which read
+  // as "strip it" but did not: the pre-strip below only removes paired
+  // (`<iframe …></iframe>`) and self-closed (`<iframe …/>`) forms, so a bare
+  // `<iframe src="https://attacker">` fell through to this allow-list and was
+  // emitted into the article body. Post bodies are publisher-controlled (RSS
+  // `content:encoded`), so that was a stored-XSS and clickjacking vector.
 ]);
 
 const SKIP_TAGS = new Set([
@@ -35,7 +40,7 @@ const SKIP_TAGS = new Set([
 ]);
 
 /** Tags we render but with their inner content preserved (e.g. keep text of code). */
-const VOID_TAGS = new Set(["br", "hr", "img", "input", "meta", "link", "iframe"]);
+const VOID_TAGS = new Set(["br", "hr", "img", "input", "meta", "link"]);
 
 function escapeHtml(s: string): string {
   return s
