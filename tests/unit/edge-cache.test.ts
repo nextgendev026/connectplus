@@ -186,7 +186,7 @@ describe("livescore edge tier", () => {
   it("serves a stale entry immediately and refreshes behind the reader", async () => {
     // Past the 15s TTL but inside the 45s stale window.
     seedCached(
-      "https://edge.test/__livescore?sport=football&date=2026-09-13&__edge=live&v=3",
+      "https://edge.test/__livescore?sport=football&date=2026-09-13&__edge=live&v=4",
       30,
       '{"matches":["stale"]}'
     );
@@ -216,7 +216,7 @@ describe("livescore edge tier", () => {
   it("refetches synchronously once the stale window has passed", async () => {
     // Older than ttl + swr (15 + 45), so it is no longer worth serving.
     seedCached(
-      "https://edge.test/__livescore?sport=football&date=2026-09-13&__edge=live&v=3",
+      "https://edge.test/__livescore?sport=football&date=2026-09-13&__edge=live&v=4",
       120,
       '{"matches":["ancient"]}'
     );
@@ -238,5 +238,178 @@ describe("livescore edge tier", () => {
     const res = await request("/__edge");
     const body = (await res.json()) as { livescore: string };
     expect(body.livescore).toBe("https://edge.test/__livescore");
+  });
+
+  it("serves the status payload from the edge instead of probing upstream again", async () => {
+    originReturns('{"overall":"operational"}', "application/json");
+
+    const first = await request("/api/status");
+    expect(first.headers.get("x-edge-cache")).toBe("MISS");
+    // A minute of health, then the edge answers — the status route is the most
+    // expensive read in the app, so a repeat visitor must not re-run it.
+    expect(ttlOf(first)).toBe(60);
+    expect(originFetches).toHaveLength(1);
+
+    const second = await request("/api/status");
+    expect(second.headers.get("x-edge-cache")).toBe("HIT");
+    expect(originFetches).toHaveLength(1);
+    // Same-origin payload: the worker must not invite other sites to read it.
+    expect(second.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("never caches the uptime probe beside it", async () => {
+    originReturns('{"status":"operational"}', "application/json");
+    const res = await request("/api/status/ping");
+    expect(res.headers.get("x-edge-cache")).toBe("BYPASS");
+    expect(stored.size).toBe(0);
+  });
+
+  it("hardens what it hands back, including cache hits", async () => {
+    originReturns("<html>", "text/html");
+    const miss = await request("/");
+    expect(miss.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(miss.headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
+
+    const hit = await request("/");
+    expect(hit.headers.get("x-edge-cache")).toBe("HIT");
+    expect(hit.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("does not overrule the origin's own framing policy", async () => {
+    originReturns("<html>", "text/html", { headers: { "X-Frame-Options": "SAMEORIGIN" } });
+    const res = await request("/embed");
+    expect(res.headers.get("x-frame-options")).toBe("SAMEORIGIN");
+  });
+});
+
+describe("edge cron — cache-first snapshots", () => {
+  const TODAY = new Date().toISOString().slice(0, 10);
+  const SNAP = "https://snapshot.edge.internal";
+
+  /** Pre-seed a worker-owned snapshot the check considers `ageSeconds` old. */
+  function seedSnapshot(id: string, ageSeconds: number, body = '{"matches":[]}') {
+    stored.set(
+      // `v=4` mirrors CACHE_VERSION; the key *shape* is asserted in the policy
+      // suite above, so a bump fails loudly there rather than silently here.
+      `${SNAP}/${id}?v=4`,
+      new Response(body, {
+        status: 200,
+        headers: { "Content-Type": "application/json", Date: new Date(Date.now() - ageSeconds * 1000).toUTCString() },
+      })
+    );
+  }
+
+  const cronFetches = () => originFetches.filter((u) => u.includes("/api/cron"));
+
+  async function tick(cron: string): Promise<void> {
+    await worker.scheduled({ cron } as never, { ...ENV, CRON_SECRET: "s3cret" }, CTX);
+    await settleBackground();
+  }
+
+  it("skips the rebuild entirely while the cached snapshot is fresh", async () => {
+    seedSnapshot("livescore-football", 10);
+    seedSnapshot("livescore-basketball", 10);
+
+    await tick("*/2 * * * *");
+
+    // The whole point: a fresh copy means the origin is not pinged at all.
+    expect(cronFetches()).toEqual([]);
+    expect(originFetches).toEqual([]);
+  });
+
+  it("lets a reader's own poll keep the snapshot current", async () => {
+    originReturns('{"matches":[]}', "application/json");
+    // The board's real poll: today's fixtures, canonical sport. Both sports the
+    // board can show — a trigger is only silent when *every* snapshot it guards
+    // is current, which is the conservative reading of "nothing to rebuild".
+    await request(`/__livescore?sport=football&date=${TODAY}`);
+    await request(`/__livescore?sport=basketball&date=${TODAY}`);
+
+    // The readers' responses are mirrored into the snapshot namespace, so the
+    // tick reads the same documents instead of rebuilding them.
+    expect([...stored.keys()]).toContain(`${SNAP}/livescore-football?v=4`);
+    expect([...stored.keys()]).toContain(`${SNAP}/livescore-basketball?v=4`);
+    await tick("*/2 * * * *");
+    expect(cronFetches()).toEqual([]);
+  });
+
+  it("still rebuilds when only one guarded snapshot is stale", async () => {
+    seedSnapshot("livescore-football", 5);
+    // Basketball has never been read: no copy, so the tick cannot call it fresh.
+    originReturns('{"matches":[]}', "application/json");
+    await tick("*/2 * * * *");
+    expect(cronFetches()).toHaveLength(1);
+  });
+
+  it("does not let a historical day refresh the live snapshot", async () => {
+    originReturns('{"matches":[]}', "application/json");
+    await request("/__livescore?sport=football&date=2020-01-01");
+    expect([...stored.keys()]).not.toContain(`${SNAP}/livescore-football?v=4`);
+  });
+
+  it("rebuilds and re-warms once a snapshot has actually gone stale", async () => {
+    seedSnapshot("livescore-football", 300); // older than the 120s ttl
+    seedSnapshot("livescore-basketball", 300);
+    originReturns('{"matches":[]}', "application/json");
+
+    await tick("*/2 * * * *");
+
+    // One ping for the job, plus one read each to take back a fresh copy.
+    expect(cronFetches()).toEqual(["https://origin.test/api/cron?trigger=sports-live&source=cloudflare-cron"]);
+    expect(originFetches).toContain("https://origin.test/api/sports/live?sport=football");
+    expect(originFetches).toContain("https://origin.test/api/sports/live?sport=basketball");
+    const warmed = stored.get(`${SNAP}/livescore-football?v=4`);
+    const stamped = warmed?.headers.get("Date");
+    expect(stamped, "a warmed copy must be date-stamped or it never looks fresh").toBeTruthy();
+    expect(Date.now() - Date.parse(stamped!)).toBeLessThan(5_000);
+
+    // Re-warmed means the next tick has nothing left to do.
+    await tick("*/2 * * * *");
+    expect(cronFetches()).toHaveLength(1);
+  });
+
+  it("leaves the jobs it does not hold a snapshot for alone", async () => {
+    originReturns("{\"success\":true}", "application/json");
+    await tick("*/5 * * * *");
+    expect(cronFetches()).toEqual(["https://origin.test/api/cron?trigger=sports-notify&source=cloudflare-cron"]);
+  });
+
+  it("guards the status snapshot on the radio sweep", async () => {
+    originReturns('{"overall":"operational"}', "application/json");
+    seedSnapshot("status", 30, '{"overall":"operational"}');
+    await tick("*/15 * * * *");
+    expect(cronFetches()).toEqual([]);
+
+    // …and refreshes it once the copy is past its five-minute window.
+    seedSnapshot("status", 600, '{"overall":"operational"}');
+    await tick("*/15 * * * *");
+    expect(cronFetches()).toEqual([
+      "https://origin.test/api/cron?trigger=radio-status-sweep&source=cloudflare-cron",
+    ]);
+    expect(originFetches).toContain("https://origin.test/api/status");
+  });
+
+  it("still rebuilds when the snapshot entry has no usable date", async () => {
+    stored.set(`${SNAP}/livescore-football?v=4`, new Response('{"matches":[]}', { status: 200 }));
+    stored.set(`${SNAP}/livescore-basketball?v=4`, new Response('{"matches":[]}', { status: 200 }));
+    originReturns('{"matches":[]}', "application/json");
+    await tick("*/2 * * * *");
+    expect(cronFetches()).toHaveLength(1);
+  });
+
+  it("reports snapshot ages on the liveness probe", async () => {
+    seedSnapshot("livescore-football", 600);
+    const res = await request("/__edge");
+    const body = (await res.json()) as {
+      snapshots: { id: string; ageSeconds: number | null; fresh: boolean }[];
+    };
+    const football = body.snapshots.find((s) => s.id === "livescore-football");
+    expect(football?.fresh).toBe(false);
+    expect(football?.ageSeconds).toBeGreaterThanOrEqual(600);
+    expect(body.snapshots.map((s) => s.id)).toEqual([
+      "livescore-football",
+      "livescore-basketball",
+      "status",
+    ]);
   });
 });

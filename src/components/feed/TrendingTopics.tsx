@@ -43,6 +43,11 @@ export function TrendingTopics({ limit = 6 }: { limit?: number }) {
       try {
         const res = await fetch(`/api/trending/topics?limit=${limit}`, {
           signal: AbortSignal.timeout(10_000),
+          // Anonymous and identical for every reader. `omit` keeps the session
+          // cookie off the request so the edge worker in front of the origin
+          // can answer it from cache instead of bypassing on a Cookie header —
+          // and this endpoint never reads a session anyway.
+          credentials: "omit",
           headers: { "Cache-Control": "no-cache" },
         });
         if (!res.ok) throw new Error("bad response");

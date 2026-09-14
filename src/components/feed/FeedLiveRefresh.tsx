@@ -28,6 +28,9 @@ export function FeedLiveRefresh({ intervalMs = 300_000 }: FeedLiveRefreshProps) 
         const res = await fetch("/api/posts/check", {
           method: "GET",
           signal: AbortSignal.timeout(5000),
+          // Anonymous read: dropping the cookie keeps the request cacheable by
+          // the edge worker (a credentialed request is always bypassed).
+          credentials: "omit",
           // Bypass SW cache so we always get a fresh version check
           headers: { "Cache-Control": "no-cache" },
         });

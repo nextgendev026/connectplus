@@ -56,8 +56,10 @@ const ROOT_TTL = 60 * 60;
  *        created before root files were carved out of the immutable rule.
  *   v3 — adds the livescore edge tier, which stores short-TTL JSON under a
  *        `__edge=live` key shape the older entries never used.
+ *   v4 — adds the worker-owned snapshots (the cron's cache-first check) and the
+ *        cached status payload, both under key shapes v3 never wrote.
  */
-const CACHE_VERSION = "3";
+const CACHE_VERSION = "4";
 
 /** Anonymous HTML: short TTL so breaking news still lands fast. */
 const HTML_TTL = 60;
@@ -93,7 +95,97 @@ const POLLABLE = [
   // upstream (a league sweep per date range), which is exactly the shape that
   // should never be recomputed per viewer.
   { test: /^\/api\/sports\/calendar/, ttl: 900, swr: 1800 },
+  // The status payload. This is the single most expensive read in the app — it
+  // probes the database, Redis, sampled radio streams, forex, weather, the
+  // payment rails and this worker — and every reader landing on /status used to
+  // pay for the whole round. It is anonymous and identical for every caller, so
+  // the edge answers it and the origin probes once per window. `cors: false`
+  // because the status page reads it same-origin: the worker should not
+  // advertise this JSON to arbitrary sites the way it does the live board.
+  { test: /^\/api\/status$/, ttl: 60, swr: 300, cors: false },
 ];
+
+/**
+ * Snapshots the worker keeps its own copy of.
+ *
+ * These are the payloads a cron tick used to rebuild blindly: every two minutes
+ * the worker pinged `/api/cron?trigger=sports-live` and the origin re-ran the
+ * whole snapshot + settle pass, whether or not anyone was watching and whether
+ * or not the data had moved. The copy below is the fix — the worker holds these
+ * payloads itself, answers readers from them, and a tick only reaches the
+ * origin when a copy is genuinely old.
+ *
+ * Two properties make that filter honest:
+ *
+ *  1. The copy is *shared with reader traffic*. A poll of the canonical form of
+ *     one of these paths stores its response under the same snapshot key the
+ *     cron reads, so a board a hundred people are watching is already current
+ *     and the tick does nothing at all. The cron is a watchdog for the quiet
+ *     hours, not a second scheduler racing the readers.
+ *  2. When a copy *is* stale the tick rebuilds and then re-warms it, so the
+ *     next tick reads a fresh entry rather than pinging again. Without that the
+ *     check would collapse back into "ping every tick" the moment traffic
+ *     stopped.
+ *
+ * The work itself stays the app's: the worker decides *whether* a job is worth
+ * running, never what it does (see src/lib/cron-schedule.ts).
+ */
+const SNAPSHOTS = [
+  {
+    id: "livescore-football",
+    path: "/api/sports/live?sport=football",
+    // The board refreshes every 15s and a goal can land in any of them, so a
+    // copy older than a couple of cron ticks is worth the rebuild.
+    ttl: 120,
+    trigger: "sports-live",
+  },
+  {
+    id: "livescore-basketball",
+    path: "/api/sports/live?sport=basketball",
+    ttl: 120,
+    trigger: "sports-live",
+  },
+  {
+    id: "status",
+    path: "/api/status",
+    // Service health moves in minutes, not seconds, and probing it costs the
+    // origin eight upstream round trips — so a five-minute copy still answers
+    // the status page from the edge.
+    ttl: 300,
+    trigger: "radio-status-sweep",
+  },
+];
+
+/**
+ * Snapshot keys are host-independent on purpose: a Cron Trigger carries no
+ * request URL, so the scheduled handler has no origin of its own to key off.
+ * The request path writes under the same synthetic host.
+ */
+const snapshotKey = (id) =>
+  new Request(`https://snapshot.edge.internal/${id}?v=${CACHE_VERSION}`, { method: "GET" });
+
+/** The snapshot a canonical path warms, or null when this request is not it. */
+function snapshotIdFor(pathname, params) {
+  if (pathname === "/api/status") return "status";
+  if (pathname !== "/api/sports/live") return null;
+  // Only the live board is shared with the cron's copy. The board's poll sends
+  // today's date (that is what makes it *today's* fixture list), so today counts
+  // as the live read; a specific past day is a historical view and must not
+  // refresh the "now" snapshot. Junk in `date` is snapped away by the alias and
+  // lands here as the live read, which is where the origin would route it too.
+  const date = params.get("date") ?? "";
+  if (date && date !== new Date().toISOString().slice(0, 10)) return null;
+  return params.get("sport") === "basketball" ? "livescore-basketball" : "livescore-football";
+}
+
+/** Age of a worker-owned snapshot in seconds, or null when missing/unusable. */
+async function snapshotAge(snapshot) {
+  const cached = await caches.default.match(snapshotKey(snapshot.id));
+  if (!cached) return null;
+  // No Date header means we cannot tell how old the copy is: rebuild rather
+  // than let a mystery entry look brand new forever.
+  return cached.headers.has("Date") ? ageSeconds(cached) : null;
+}
 
 /** Read-only JSON that is identical for every anonymous caller. */
 const API_ALLOWLIST = [
@@ -176,7 +268,30 @@ function withCors(response) {
   const res = new Response(response.body, response);
   res.headers.set("Access-Control-Allow-Origin", "*");
   res.headers.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  // The public tier is read by the app's origin, so say that explicitly rather
+  // than leaving every browser's default for a cross-origin response to decide.
+  res.headers.set("Cross-Origin-Resource-Policy", "cross-origin");
   return res;
+}
+
+/** True when a path in the JSON tier may be read cross-origin (the public ones). */
+const corsFor = (rule) => Boolean(rule) && rule.cors !== false;
+
+/**
+ * Baseline hardening for every response the worker hands back.
+ *
+ * The origin's headers are copied through, so this only fills gaps and covers
+ * the edge hop. `nosniff` is the one that matters most: this worker caches JSON
+ * and image bytes, and a browser left to re-sniff a cached payload for its
+ * content type is how a stored response becomes a script. `X-Frame-Options` is
+ * only defaulted, never overwritten — the origin decides whether its own HTML
+ * may be framed, and overruling it here would be the worker inventing a policy.
+ */
+function harden(headers) {
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  if (!headers.has("X-Frame-Options")) headers.set("X-Frame-Options", "DENY");
+  return headers;
 }
 
 const isNever = (pathname) => NEVER_CACHE.some((re) => re.test(pathname));
@@ -275,23 +390,64 @@ function resolveOriginPath(url) {
 
 const tagged = (response, state) => {
   const res = new Response(response.body, response);
+  harden(res.headers);
   res.headers.set("X-Edge-Cache", state);
   res.headers.set("X-Edge-Origin", "vercel");
   return res;
 };
+
+/**
+ * Store a response, and mirror it into the snapshot namespace when this request
+ * is the canonical form of a worker-owned snapshot. The mirror is what keeps a
+ * busy board's cache and the cron's freshness check talking about one document:
+ * reader traffic refreshes the very entry the tick reads.
+ */
+async function store(cacheKey, snapshotId, response) {
+  await caches.default.put(cacheKey, response.clone());
+  if (snapshotId) await caches.default.put(snapshotKey(snapshotId), response.clone());
+}
+
+/**
+ * Stamp a `Date` when the origin sent none.
+ *
+ * The Cache API hands back exactly the headers we stored, and every freshness
+ * decision here — a reader's TTL, the snapshot check — is read from that header.
+ * An unstamped entry therefore looks brand new to one and unusable to the other,
+ * so the moment we know the response exists is the moment to record it.
+ */
+function stamped(headers) {
+  if (!headers.has("Date")) headers.set("Date", new Date().toUTCString());
+  return headers;
+}
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const origin = (env.ORIGIN || DEFAULT_ORIGIN).replace(/\/+$/, "");
 
-    // Cheap liveness probe for the status page / uptime monitor.
+    // Cheap liveness probe for the status page / uptime monitor. It also
+    // reports the snapshot ages, which is the number to watch when asking why
+    // the edge cron did or did not rebuild this hour.
     if (url.pathname === "/__edge") {
+      const snapshots = await Promise.all(
+        SNAPSHOTS.map(async (s) => {
+          const age = await snapshotAge(s);
+          return {
+            id: s.id,
+            ttl: s.ttl,
+            trigger: s.trigger,
+            ageSeconds: age === null ? null : Math.round(age),
+            fresh: age !== null && age <= s.ttl,
+          };
+        })
+      );
       return Response.json({
         ok: true,
         origin,
         now: new Date().toISOString(),
         livescore: `${url.origin}/__livescore`,
+        status: `${url.origin}/api/status`,
+        snapshots,
         schedules: SCHEDULES.map((s) => `${s.cron} → ${s.trigger}`),
         cronSecret: Boolean(env.CRON_SECRET),
       });
@@ -302,8 +458,9 @@ export default {
     const pathname = isLiveAlias ? "/api/sports/live" : url.pathname;
 
     // A preflight for the cross-origin livescore poll. No cookies, no
-    // credentials — just permission to read a public JSON document.
-    if (request.method === "OPTIONS" && (isLiveAlias || pollableFor(pathname))) {
+    // credentials — just permission to read a public JSON document. The status
+    // payload shares this tier but is read same-origin, so it is not announced.
+    if (request.method === "OPTIONS" && (isLiveAlias || corsFor(pollableFor(pathname)))) {
       return withCors(new Response(null, { status: 204 }));
     }
 
@@ -316,6 +473,9 @@ export default {
     const varies = pathname.startsWith("/_next/image") || pathname.startsWith("/api/thumb");
     const poll = pollableFor(pathname);
     const variant = poll ? "live" : varies ? variantKey(request) : "std";
+    // The worker-owned snapshot this request refreshes, if it is the canonical
+    // form of one — reader traffic and the edge cron then share one copy.
+    const snapshotId = snapshotIdFor(pathname, url.searchParams);
     // The alias is its own key space so a `/api/sports/live` entry and a
     // `/__livescore` entry never collide despite the shared origin path. The
     // origin is prefixed explicitly because `new Request` needs an absolute
@@ -333,9 +493,10 @@ export default {
       // Fresh: answer immediately, no origin involvement at all.
       if (!poll || age <= poll.ttl) {
         const hit = new Response(cached.body, cached);
+        harden(hit.headers);
         hit.headers.set("X-Edge-Cache", "HIT");
         hit.headers.set("X-Edge-Age", Math.round(age).toString());
-        return poll ? withCors(hit) : hit;
+        return corsFor(poll) ? withCors(hit) : hit;
       }
 
       // Stale but still within the window: hand the reader the stale copy NOW
@@ -352,23 +513,25 @@ export default {
             .then(async (res) => {
               if (!cacheableResponse(res)) return;
               const body = await res.arrayBuffer();
-              const headers = new Headers(res.headers);
+              const headers = stamped(new Headers(res.headers));
               headers.delete("Set-Cookie");
               headers.set(
                 "Cache-Control",
                 `public, max-age=${poll.ttl}, s-maxage=${poll.ttl}, stale-while-revalidate=${poll.swr}`
               );
-              await caches.default.put(
+              await store(
                 cacheKey,
+                snapshotId,
                 new Response(body, { status: res.status, statusText: res.statusText, headers })
               );
             })
             .catch(() => {})
         );
         const stale = new Response(cached.body, cached);
+        harden(stale.headers);
         stale.headers.set("X-Edge-Cache", "HIT-STALE");
         stale.headers.set("X-Edge-Age", Math.round(age).toString());
-        return withCors(stale);
+        return corsFor(poll) ? withCors(stale) : stale;
       }
       // Past the stale window — fall through and refetch synchronously.
     }
@@ -385,7 +548,7 @@ export default {
     }
 
     const body = await res.arrayBuffer();
-    const headers = new Headers(res.headers);
+    const headers = stamped(new Headers(res.headers));
     headers.delete("Set-Cookie");
     headers.set(
       "Cache-Control",
@@ -396,18 +559,24 @@ export default {
     const storable = new Response(body, { status: res.status, statusText: res.statusText, headers });
 
     // Store a copy, then answer this caller from the buffered body.
-    await caches.default.put(cacheKey, storable.clone());
+    await store(cacheKey, snapshotId, storable);
     const answered = tagged(new Response(storable.body, storable), "MISS");
-    return poll ? withCors(answered) : answered;
+    return corsFor(poll) ? withCors(answered) : answered;
   },
 
   /**
-   * Cron Trigger handler.
+   * Cron Trigger handler — cache-first.
    *
-   * Fires the app's own scheduler endpoint for the jobs this worker owns. The
+   * Fires the app's own scheduler endpoint for the jobs this worker owns, but
+   * only after checking the worker's own copy of what the job produces. The
    * shared secret is sent as both `x-cron-secret` and a bearer token, matching
    * what `/api/cron` accepts, so the same secret works whichever scheduler
    * calls it.
+   *
+   * The check is the change that matters: a snapshot that is still fresh is a
+   * rebuild the origin does not need, and under reader traffic the board keeps
+   * that copy current by itself. When a copy is stale the worker pings, then
+   * re-warms its own copy so the next tick has something to measure.
    *
    * Failures are swallowed after being logged: the app heartbeats every run, so
    * a job that stops being reachable shows up in the admin console as stale
@@ -430,7 +599,57 @@ export default {
       headers.authorization = `Bearer ${secret}`;
     }
 
+    /**
+     * Take the worker's own copy of a snapshot, straight from the public route.
+     * Runs after the rebuild ping so the copy reflects it, but deliberately not
+     * *conditioned* on that ping succeeding: a missing CRON_SECRET must not also
+     * cost readers a warm board.
+     */
+    const warm = async (snapshot) => {
+      try {
+        const res = await fetch(`${origin}${snapshot.path}`, {
+          method: "GET",
+          headers: { accept: "application/json" },
+          redirect: "manual",
+        });
+        if (!cacheableResponse(res)) {
+          console.log(`edge-cron: ${snapshot.id} not storable (${res.status})`);
+          return;
+        }
+        const body = await res.arrayBuffer();
+        const snapshotHeaders = stamped(new Headers(res.headers));
+        snapshotHeaders.delete("Set-Cookie");
+        snapshotHeaders.set(
+          "Cache-Control",
+          `public, max-age=${snapshot.ttl}, s-maxage=${snapshot.ttl}`
+        );
+        await caches.default.put(
+          snapshotKey(snapshot.id),
+          new Response(body, { status: res.status, statusText: res.statusText, headers: snapshotHeaders })
+        );
+        console.log(`edge-cron: ${snapshot.id} snapshot warmed`);
+      } catch (err) {
+        console.log(
+          `edge-cron: ${snapshot.id} warm failed — ${err && err.message ? err.message : err}`
+        );
+      }
+    };
+
     const run = async (trigger) => {
+      // Which of the worker's own copies does this job refresh? A snapshot that
+      // is still fresh means there is nothing here worth a Vercel invocation.
+      const guarded = SNAPSHOTS.filter((s) => s.trigger === trigger);
+      const ages = await Promise.all(guarded.map(snapshotAge));
+      const stale = guarded.filter((s, i) => ages[i] === null || ages[i] > s.ttl);
+
+      if (guarded.length > 0 && stale.length === 0) {
+        const detail = guarded
+          .map((s, i) => `${s.id} ${Math.round(ages[i])}s/${s.ttl}s`)
+          .join(", ");
+        console.log(`edge-cron: ${trigger} skipped — cached snapshot still fresh (${detail})`);
+        return;
+      }
+
       const url = `${origin}/api/cron?trigger=${encodeURIComponent(trigger)}&source=cloudflare-cron`;
       try {
         const res = await fetch(url, { method: "GET", headers });
@@ -439,6 +658,10 @@ export default {
       } catch (err) {
         console.log(`edge-cron: ${trigger} failed — ${err && err.message ? err.message : err}`);
       }
+
+      // Re-warm only what was stale — the tight copy needs no help, and this is
+      // the one origin read the tick still makes.
+      await Promise.all(stale.map(warm));
     };
 
     // `ctx.waitUntil` lets one trigger drive several jobs without holding the

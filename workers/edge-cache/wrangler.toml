@@ -31,6 +31,10 @@ ORIGIN = "https://connectplusapp.vercel.app"
 # radio metadata sweep (the "radio degraded" warning) and the livescore /
 # prediction cadence. They map one-to-one onto SCHEDULES in src/index.mjs, and
 # each entry there names the job id in src/lib/cron-schedule.ts.
+#
+# A trigger only reaches the origin when the worker's own cached snapshot for
+# that job has actually gone stale (SNAPSHOTS in src/index.mjs) — under reader
+# traffic the board keeps that copy current and the tick costs Vercel nothing.
 crons = [
   "*/2 * * * *",    # sports-live      — snapshot + settle picks
   "*/5 * * * *",    # sports-notify    — favourite match alerts

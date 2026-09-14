@@ -39,12 +39,14 @@ cover requests are answered at the edge, not re-fetched and re-resized.
 | **`/__livescore`** (→ `/api/sports/live`) | **15s / 45s SWR** | the live board |
 | **`/api/sports/predictions`** | **30s / 90s SWR** | the tips board |
 | **`/api/sports/referrals`** | **300s / 900s SWR** | partner offers |
+| **`/api/status`** | **60s / 300s SWR** | the status page's health payload |
 
 Never cached: `/api/auth*`, `/api/upload`, `/api/track`, `/api/payments/*`
 (except the public `/api/payments/providers` allowlist), `/api/cron*`,
-`/api/status/*`, `/api/rss*`, the reader-scoped sports routes
-(`/api/sports/follows`, `/api/sports/reminders`, `/api/sports/track`), every
-non-GET method.
+`/api/status/*` (the uptime probe and the status sub-routes — `/api/status`
+itself is the allowlisted read above), `/api/rss*`, the reader-scoped sports
+routes (`/api/sports/follows`, `/api/sports/reminders`, `/api/sports/track`),
+every non-GET method.
 
 ## The edge cron
 
@@ -61,12 +63,50 @@ is not the thing being watched.
 | every 30 min | `sports-intel` — model training + pick regeneration |
 | every 6 h | `payments-lifecycle` — reconcile PayPal, expire lapsed plans |
 
-The worker does **no work itself**. It pings
+### The tick is cache-first
+
+The worker still does **no work itself** — it pings
 `/api/cron?trigger=<job id>&source=cloudflare-cron` with the shared secret, so the
 job definitions, their cadence and their heartbeats stay owned by
 `src/lib/cron-schedule.ts`. `SCHEDULES` in `src/index.mjs` maps a cron expression
 to a job *id*, and a unit test asserts every id it names still exists in the
 registry — a rename fails the build instead of pinging a 404 forever.
+
+What it no longer does is ping *blindly*. Before a tick reaches Vercel it reads
+its own copy of what the job produces (`SNAPSHOTS` in `src/index.mjs`) and only
+rebuilds when that copy is genuinely old:
+
+| Snapshot | Path | Fresh for | Guards |
+| --- | --- | --- | --- |
+| `livescore-football` | `/api/sports/live?sport=football` | 120s | `sports-live` |
+| `livescore-basketball` | `/api/sports/live?sport=basketball` | 120s | `sports-live` |
+| `status` | `/api/status` | 300s | `radio-status-sweep` |
+
+Three properties make that check honest rather than optimistic:
+
+1. **The copy is shared with reader traffic.** A poll of the canonical form of a
+   snapshot path (today's date counts as canonical — that is what makes it
+   *today's* board) is stored under the very key the tick reads, so a board a
+   hundred people are watching is already current and the tick does nothing at
+   all. The cron is a watchdog for the quiet hours, not a second scheduler
+   racing the readers.
+2. **A trigger with several snapshots is only skipped when every one of them is
+   fresh.** `sports-live` refreshes both sports in a single run, so skipping
+   while basketball's copy has gone cold would silently stop grading football.
+3. **Stale means ping *and* re-warm.** The tick pings the app, then takes a
+   fresh copy of exactly what was stale, so the next tick has something to
+   measure instead of collapsing back into "ping every tick".
+
+Jobs with no snapshot entry (`sports-notify`, `sports-intel`,
+`payments-lifecycle`) are untouched and ping on every tick: their output is a
+notification or a reconciliation, not a payload the edge can hold.
+
+`/__edge` reports the age and freshness of every snapshot, which is the number
+to look at when asking why the edge did or did not rebuild this hour:
+
+```bash
+curl -s https://connectplus-edge.connectplusapp.workers.dev/__edge | jq .snapshots
+```
 
 Requires `CRON_SECRET` (the same value the app verifies). Without it the pings
 are sent but the app answers 401, which the admin console reports as stale jobs
@@ -118,9 +158,21 @@ The worker **only** caches anonymous traffic:
 - a request with `Cookie` or `Authorization` → straight through, never cached
 - a response with `Set-Cookie` → never stored
 - non-2xx responses, redirects and non-renderable content types → never stored
+- a `/api/status` snapshot is same-origin: it shares the JSON tier's staleness
+  policy but not its CORS header, so the health payload is not published to
+  arbitrary sites the way the live board deliberately is
 
 This is what makes edge-caching a server-rendered app with sessions safe: a
 signed-in reader can never be handed another visitor's HTML.
+
+Every response the worker hands back is also hardened on the way out:
+`X-Content-Type-Options: nosniff` (it caches JSON and image bytes, and a browser
+left to re-sniff a cached payload is how a stored response becomes a script),
+`Referrer-Policy: strict-origin-when-cross-origin`, and `X-Frame-Options: DENY`
+**only when the origin sent none** — the origin owns its own framing policy and
+the edge must not overrule it. The public tier additionally carries
+`Cross-Origin-Resource-Policy: cross-origin` for the callers it explicitly
+allows.
 
 Two details worth keeping:
 

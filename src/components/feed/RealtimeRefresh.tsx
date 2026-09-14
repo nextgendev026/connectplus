@@ -27,6 +27,10 @@ export function RealtimeRefresh({ intervalMs = 60_000, minRefreshGapMs = 30_000 
       try {
         const res = await fetch("/api/posts/check", {
           signal: AbortSignal.timeout(5000),
+          // No session is read here, and a credentialed request is never served
+          // from the edge cache — so leaving the cookie off is what lets this
+          // poll collapse into one origin read per TTL window for everybody.
+          credentials: "omit",
           headers: { "Cache-Control": "no-cache" },
         });
         if (!res.ok) return;

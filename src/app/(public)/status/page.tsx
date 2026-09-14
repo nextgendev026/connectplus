@@ -176,7 +176,15 @@ export default function StatusPage() {
     else setRefreshing(true);
     setError(null);
     try {
-      const res = await fetch("/api/status", { signal: AbortSignal.timeout(25_000) });
+      // `/api/status` takes no request and reads no session — it probes eight
+      // upstreams and returns the same payload for everyone. `omit` is what lets
+      // the Cloudflare worker answer this poll from its own cache instead of
+      // bypassing on a Cookie header, and it stops shipping the session cookie
+      // to an endpoint that has no use for it.
+      const res = await fetch("/api/status", {
+        signal: AbortSignal.timeout(25_000),
+        credentials: "omit",
+      });
       if (!res.ok) throw new Error(`Status check failed (${res.status})`);
       setData((await res.json()) as StatusResponse);
     } catch (e) {
