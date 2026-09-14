@@ -157,6 +157,30 @@ const SNAPSHOTS = [
 ];
 
 /**
+ * When an entry was written, recorded by us, in epoch milliseconds.
+ *
+ * This cannot be derived from the `Date` header. Cloudflare's Cache API rewrites
+ * `Date` to the moment of the *hit*, so a live board entry eight seconds old
+ * comes back claiming to be one second old, and a snapshot two minutes old
+ * reports as brand new. Every freshness decision here — a reader's TTL, the
+ * stale-while-revalidate window, and the cron's "is this snapshot worth a
+ * rebuild?" — is read from this stamp instead.
+ *
+ * The failure it prevents is silent in the worst direction: an age that always
+ * reads zero makes the cron conclude it never has anything to rebuild, so the
+ * jobs it drives stop running while `/__edge` cheerfully reports everything
+ * fresh. Entries written before this stamp existed read as undateable, which
+ * the callers treat as stale — one rebuild, then accurate again.
+ */
+const STAMP_HEADER = "x-edge-stored-at";
+
+/** Epoch milliseconds an entry was stored at, or null when it carries no stamp. */
+function storedAtMs(response) {
+  const raw = Number(response.headers.get(STAMP_HEADER));
+  return Number.isFinite(raw) && raw > 0 ? raw : null;
+}
+
+/**
  * Snapshot keys are host-independent on purpose: a Cron Trigger carries no
  * request URL, so the scheduled handler has no origin of its own to key off.
  * The request path writes under the same synthetic host.
@@ -205,9 +229,10 @@ function snapshotFor(pathname, params) {
 async function snapshotAge(snapshot) {
   const cached = await caches.default.match(snapshotKey(snapshot.id));
   if (!cached) return null;
-  // No Date header means we cannot tell how old the copy is: rebuild rather
-  // than let a mystery entry look brand new forever.
-  return cached.headers.has("Date") ? ageSeconds(cached) : null;
+  // An undateable copy is not a fresh copy. The tick rebuilds it instead of
+  // trusting a header we did not write.
+  if (storedAtMs(cached) === null) return null;
+  return ageSeconds(cached);
 }
 
 /** Read-only JSON that is identical for every anonymous caller. */
@@ -311,6 +336,9 @@ const corsFor = (rule) => Boolean(rule) && rule.cors !== false;
  * may be framed, and overruling it here would be the worker inventing a policy.
  */
 function harden(headers) {
+  // Our own bookkeeping, not the reader's business: `X-Edge-Age` is the
+  // diagnostic derived from it.
+  headers.delete(STAMP_HEADER);
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   if (!headers.has("X-Frame-Options")) headers.set("X-Frame-Options", "DENY");
@@ -376,14 +404,16 @@ function cacheableResponse(response) {
 }
 
 /**
- * How long ago the origin produced this response, in seconds.
+ * How long ago this response was stored, in seconds.
  *
- * The Cache API hands back the headers it stored, and Cloudflare's own `Age`
- * header is not reliable for entries we wrote ourselves — so age is derived
- * from the origin's `Date` header, falling back to "brand new" when the origin
- * sent none (better to over-fetch than to serve something ancient forever).
+ * The stamp we write at store time is authoritative. `Date` is only a fallback
+ * for entries stored before the stamp existed, and it is a poor clock even
+ * then: the platform rewrites it on every hit, so such an entry reads as
+ * "brand new" and is simply served until the cache evicts it.
  */
 function ageSeconds(response) {
+  const storedAt = storedAtMs(response);
+  if (storedAt !== null) return Math.max(0, (Date.now() - storedAt) / 1000);
   const date = response.headers.get("Date");
   if (!date) return 0;
   const parsed = Date.parse(date);
@@ -436,6 +466,9 @@ async function store(cacheKey, snapshot, response) {
   await caches.default.put(cacheKey, response.clone());
   if (!snapshot) return;
   const headers = new Headers(response.headers);
+  // The mirror is written now, so it is stamped now — independent of whatever
+  // the response we are copying happened to carry.
+  headers.set(STAMP_HEADER, String(Date.now()));
   headers.set("Cache-Control", `public, max-age=${snapshot.ttl}, s-maxage=${snapshot.ttl}`);
   await caches.default.put(
     snapshotKey(snapshot.id),
@@ -450,12 +483,12 @@ async function store(cacheKey, snapshot, response) {
 /**
  * Stamp a `Date` when the origin sent none.
  *
- * The Cache API hands back exactly the headers we stored, and every freshness
- * decision here — a reader's TTL, the snapshot check — is read from that header.
- * An unstamped entry therefore looks brand new to one and unusable to the other,
- * so the moment we know the response exists is the moment to record it.
+ * The moment we know the response exists is the moment to record it, in a stamp
+ * of our own: the platform's `Date` is rewritten on retrieval and cannot carry
+ * a write time forward (see STAMP_HEADER).
  */
 function stamped(headers) {
+  headers.set(STAMP_HEADER, String(Date.now()));
   if (!headers.has("Date")) headers.set("Date", new Date().toUTCString());
   return headers;
 }

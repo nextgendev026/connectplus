@@ -29,12 +29,50 @@ async function settleBackground(): Promise<void> {
 
 const cacheStorage = {
   default: {
-    match: async (request: Request) => stored.get(request.url),
+    /**
+     * Cloudflare rewrites `Date` to the moment of the *hit*.
+     *
+     * Handing the stored headers back verbatim is more forgiving than
+     * production and hides a whole bug class: freshness derived from `Date`
+     * never ages anything, so every entry reports "fresh" until the cache
+     * evicts it — and the cron, seeing a fresh copy forever, stops rebuilding.
+     */
+    match: async (request: Request) => {
+      const hit = stored.get(request.url);
+      if (!hit) return undefined;
+      const headers = new Headers(hit.headers);
+      headers.set("Date", new Date().toUTCString());
+      return new Response(hit.body, { status: hit.status, statusText: hit.statusText, headers });
+    },
     put: async (request: Request, response: Response) => {
       stored.set(request.url, response);
     },
   },
 };
+
+/**
+ * A stored response the worker should consider `ageSeconds` old.
+ *
+ * Both headers matter. `x-edge-stored-at` is the worker's own write time and
+ * the only honest clock; `Date` is present because every real response carries
+ * one, and `match` above rewrites it on retrieval the way the platform does.
+ */
+function agedResponse(
+  body: string,
+  ageSeconds: number,
+  headers: Record<string, string> = {}
+): Response {
+  const at = Date.now() - ageSeconds * 1000;
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json",
+      "x-edge-stored-at": String(at),
+      Date: new Date(at).toUTCString(),
+      ...headers,
+    },
+  });
+}
 
 function originReturns(body: string, contentType: string, init: ResponseInit = {}) {
   vi.stubGlobal("fetch", async (url: string) => {
@@ -127,14 +165,7 @@ describe("livescore edge tier", () => {
 
   /** Pre-seed the cache with an entry the worker considers `ageSeconds` old. */
   function seedCached(key: string, ageSeconds: number, body = '{"matches":[]}') {
-    const date = new Date(Date.now() - ageSeconds * 1000).toUTCString();
-    stored.set(
-      key,
-      new Response(body, {
-        status: 200,
-        headers: { "Content-Type": "application/json", Date: date },
-      })
-    );
+    stored.set(key, agedResponse(body, ageSeconds));
   }
 
   it("rewrites the alias to the live API and caches it as the live variant", async () => {
@@ -197,8 +228,8 @@ describe("livescore edge tier", () => {
     // The reader gets the stale copy at once, and the origin is hit in the
     // background rather than making them wait for it.
     expect(res.headers.get("x-edge-cache")).toBe("HIT-STALE");
-    // A range, not an exact 30: `Date` headers only carry whole seconds, so the
-    // age can round either side depending on where the clock was mid-test.
+    // A range rather than an exact 30: the entry is seeded a hair before the
+    // request, so the age can round either side of the seeded value.
     const age = Number(res.headers.get("x-edge-age"));
     expect(age).toBeGreaterThanOrEqual(30);
     expect(age).toBeLessThanOrEqual(31);
@@ -288,21 +319,18 @@ describe("edge cron — cache-first snapshots", () => {
 
   /** Pre-seed a worker-owned snapshot the check considers `ageSeconds` old. */
   function seedSnapshot(id: string, ageSeconds: number, body = '{"matches":[]}') {
-    stored.set(
-      // `v=4` mirrors CACHE_VERSION; the key *shape* is asserted in the policy
-      // suite above, so a bump fails loudly there rather than silently here.
-      `${SNAP}/${id}?v=4`,
-      new Response(body, {
-        status: 200,
-        headers: { "Content-Type": "application/json", Date: new Date(Date.now() - ageSeconds * 1000).toUTCString() },
-      })
-    );
+    // `v=4` mirrors CACHE_VERSION; the key *shape* is asserted in the policy
+    // suite above, so a bump fails loudly there rather than silently here.
+    stored.set(`${SNAP}/${id}?v=4`, agedResponse(body, ageSeconds));
   }
 
   const cronFetches = () => originFetches.filter((u) => u.includes("/api/cron"));
 
   async function tick(cron: string): Promise<void> {
-    await worker.scheduled({ cron } as never, { ...ENV, CRON_SECRET: "s3cret" }, CTX);
+    // No execution context: a Cron Trigger has no response to return early
+    // from, so the tick awaits everything itself rather than handing work to
+    // `waitUntil` and losing it if the invocation ends first.
+    await worker.scheduled({ cron } as never, { ...ENV, CRON_SECRET: "s3cret" });
     await settleBackground();
   }
 
@@ -366,9 +394,9 @@ describe("edge cron — cache-first snapshots", () => {
     expect(originFetches).toContain("https://origin.test/api/sports/live?sport=football");
     expect(originFetches).toContain("https://origin.test/api/sports/live?sport=basketball");
     const warmed = stored.get(`${SNAP}/livescore-football?v=4`);
-    const stamped = warmed?.headers.get("Date");
-    expect(stamped, "a warmed copy must be date-stamped or it never looks fresh").toBeTruthy();
-    expect(Date.now() - Date.parse(stamped!)).toBeLessThan(5_000);
+    const stamped = Number(warmed?.headers.get("x-edge-stored-at"));
+    expect(stamped, "a warmed copy must carry our write time or it can never age").toBeTruthy();
+    expect(Date.now() - stamped).toBeLessThan(5_000);
 
     // Re-warmed means the next tick has nothing left to do.
     await tick("*/2 * * * *");
@@ -445,6 +473,40 @@ describe("edge cron — cache-first snapshots", () => {
     originReturns('{"matches":[]}', "application/json");
     await tick("*/2 * * * *");
     expect(cronFetches()).toHaveLength(1);
+  });
+
+  it("ages a snapshot from our own stamp, not the Date the platform rewrites", async () => {
+    // The production shape that made this worker useless: Cloudflare returns a
+    // cache hit with `Date` set to *now*, so a ten-minute-old copy reported as
+    // brand new, the tick concluded there was nothing to rebuild, and the jobs
+    // it drives stopped running. Age has to come from the stamp we wrote.
+    const oldCopy = new Response('{"matches":[]}', {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "x-edge-stored-at": String(Date.now() - 600_000),
+        Date: new Date().toUTCString(),
+      },
+    });
+    stored.set(`${SNAP}/livescore-football?v=4`, oldCopy);
+    stored.set(`${SNAP}/livescore-basketball?v=4`, oldCopy.clone());
+    originReturns('{"matches":[]}', "application/json");
+
+    const probe = (await (await request("/__edge")).json()) as {
+      snapshots: { id: string; ageSeconds: number | null; fresh: boolean }[];
+    };
+    const football = probe.snapshots.find((s) => s.id === "livescore-football");
+    expect(football?.ageSeconds).toBeGreaterThanOrEqual(600);
+    expect(football?.fresh).toBe(false);
+
+    await tick("*/2 * * * *");
+    expect(cronFetches()).toHaveLength(1);
+  });
+
+  it("keeps the write stamp out of what a reader receives", async () => {
+    originReturns('{"matches":[]}', "application/json");
+    const res = await request(`/__livescore?sport=football&date=${TODAY}`);
+    expect(res.headers.get("x-edge-stored-at")).toBeNull();
   });
 
   it("reports snapshot ages on the liveness probe", async () => {
