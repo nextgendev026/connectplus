@@ -31,7 +31,7 @@ const OPENAI_COMPATIBLE: Record<
       "X-Title": "connectPlus",
     },
   },
-  opencode: { baseUrl: "https://opencode.ai/zen/v1", defaultModel: "grok-code" },
+  opencode: { baseUrl: "https://opencode.ai/zen/v1", defaultModel: "deepseek-v4-flash" },
 };
 
 /** Free-tier OpenRouter models — these cost $0 with no credit card. */
@@ -46,7 +46,12 @@ export const OPENROUTER_FREE_MODELS = [
   "nvidia/llama-3.1-nemotron-ultra-253b-v1:free",
 ] as const;
 
-/** OpenCode Zen models — free ones have "-free" suffix and require session context; paid models work via API with credits. */
+/** OpenCode Zen models — refreshed roster. The API is the source of truth;
+ *  these static fallbacks only apply when the endpoint is unreachable or
+ *  unconfigured. Keep the list in sync by polling `opencode.ai/zen/v1/models`
+ *  and wiring whatever the API returns as the clickable model list rather than
+ *  a hard-coded roster.
+ */
 export const OPENCODE_MODELS = [
   "deepseek-v4-flash",
   "glm-5.3-flash",
@@ -54,6 +59,10 @@ export const OPENCODE_MODELS = [
   "qwen3.5-plus",
   "minimax-m2.5",
   "gemini-3.5-flash",
+  "claude-sonnet-4",
+  "claude-haiku-4-5",
+  "gpt-5",
+  "gpt-5.4-mini",
 ] as const;
 
 /** Models confirmed working via OpenCode Zen API (paid tier). */
