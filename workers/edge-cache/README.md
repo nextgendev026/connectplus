@@ -97,7 +97,15 @@ Three properties make that check honest rather than optimistic:
 2. **A trigger with several snapshots is only skipped when every one of them is
    fresh.** `sports-live` refreshes both sports in a single run, so skipping
    while basketball's copy has gone cold would silently stop grading football.
-3. **Stale means ping *and* re-warm.** The tick pings the app, then takes a
+3. **The durable copy outlives its own freshness window.** Each snapshot is
+   mirrored into the `SNAPSHOTS` KV namespace as well as the per-colo cache, and
+   that record is kept for eight times its TTL. Expiring it at exactly the TTL
+   would delete the copy and its staleness in the same instant, so "forty
+   seconds past due" and "never stored at all" would both report as `null` —
+   the ambiguity that made the cron question unanswerable. A cold board now
+   reports its real age instead. Readers are unaffected: they are served from
+   the Cache API copy, whose lifetime still comes from its own `Cache-Control`.
+4. **Stale means ping *and* re-warm.** The tick pings the app, then takes a
    fresh copy of exactly what was stale, so the next tick has something to
    measure instead of collapsing back into "ping every tick".
 
@@ -270,5 +278,8 @@ is set.
 
 Workers free plan: **100,000 requests/day**, 10 ms CPU per request. This worker
 does no parsing, no crypto and no loops over payloads — a cache lookup and a
-fetch — so it stays well inside that ceiling. It uses only the Cache API: no KV,
-no Durable Objects, no R2 bindings, so there are no billable line items.
+fetch — so it stays well inside that ceiling. One KV namespace backs the
+`SNAPSHOTS` binding, and KV has its own free tier (100k reads/day, 1k writes/day)
+that three snapshots refreshed on a two-minute cadence sit far inside; there are
+no Durable Objects and no R2. The worker is written to work with the binding
+absent, so a deploy that cannot create it loses global visibility, not function.

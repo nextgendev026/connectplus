@@ -61,6 +61,9 @@ const ROOT_TTL = 60 * 60;
  */
 const CACHE_VERSION = "4";
 
+/** How long the last tick's record is kept — a day is plenty to answer "is it alive?". */
+const TICK_TTL_SECONDS = 86_400;
+
 /** Anonymous HTML: short TTL so breaking news still lands fast. */
 const HTML_TTL = 60;
 
@@ -201,11 +204,127 @@ const snapshotKey = (id) =>
 const tickKey = () =>
   new Request(`https://snapshot.edge.internal/tick?v=${CACHE_VERSION}`, { method: "GET" });
 
+/**
+ * The worker's durable copy of its own bookkeeping.
+ *
+ * The Cache API is per-colo. A copy warmed by a reader in Nairobi is invisible
+ * to the tick running in a different data centre, and it disappears when that
+ * colo evicts it — so snapshots were rebuilt far more often than they needed to
+ * be, and `lastTick` could read as "the cron never ran" purely because whoever
+ * asked was served from a different colo than the one that ran the tick.
+ *
+ * The KV namespace binding (SNAPSHOTS) fixes both: one globally readable copy,
+ * with the TTL carried by the store. It is optional by construction — an
+ * unbound or failing namespace falls back to exactly the previous behaviour, so
+ * a deploy that cannot create the binding still works.
+ */
+const kvSnapshotKey = (id) => `snapshot:${id}:v${CACHE_VERSION}`;
+const kvTickKey = () => `tick:v${CACHE_VERSION}`;
+
+/**
+ * How long a durable snapshot record outlives its own freshness window.
+ *
+ * The record is deliberately kept well past the point it stops being usable.
+ * If KV expired it at exactly `ttl`, the entry and its staleness would vanish in
+ * the same instant, and "this board is 40 seconds past due" and "there has never
+ * been a copy" would both report as `null` — the ambiguity that made the cron
+ * question unanswerable in the first place. It also means a snapshot that is
+ * merely cold reports its true age, so the tick's decision is legible rather
+ * than inferred from an absence. Readers are unaffected: they are served from
+ * the Cache API copy, whose lifetime still comes from its own Cache-Control.
+ */
+const RECORD_KEEP_FACTOR = 8;
+
+/** A KV handle, or null when this deployment has no binding. */
+function kvStore(env) {
+  const kv = env && env.SNAPSHOTS;
+  return kv && typeof kv.get === "function" && typeof kv.put === "function" ? kv : null;
+}
+
+async function kvGetJson(env, key) {
+  const kv = kvStore(env);
+  if (!kv) return null;
+  try {
+    const value = await kv.get(key, "json");
+    return value && typeof value === "object" ? value : null;
+  } catch (err) {
+    console.log(`edge-kv: read ${key} failed — ${shortError(err)}`);
+    return null;
+  }
+}
+
+async function kvPutJson(env, key, value, ttlSeconds) {
+  const kv = kvStore(env);
+  if (!kv) return false;
+  try {
+    // KV's floor is 60s; every snapshot TTL is above it.
+    await kv.put(key, JSON.stringify(value), {
+      expirationTtl: Math.max(60, Math.round(ttlSeconds)),
+    });
+    return true;
+  } catch (err) {
+    console.log(`edge-kv: write ${key} failed — ${shortError(err)}`);
+    return false;
+  }
+}
+
+/** Persist a snapshot body into KV alongside the per-colo cache copy. */
+async function kvWriteSnapshot(env, snapshot, response) {
+  let body;
+  try {
+    body = await response.clone().text();
+  } catch {
+    return false;
+  }
+  return kvPutJson(
+    env,
+    kvSnapshotKey(snapshot.id),
+    {
+      storedAt: Date.now(),
+      status: response.status,
+      contentType: response.headers.get("Content-Type") ?? "application/json",
+      body,
+    },
+    snapshot.ttl * RECORD_KEEP_FACTOR
+  );
+}
+
+/**
+ * The freshest copy of a snapshot, from whichever store has it newer.
+ *
+ * Both stores are written together but evict independently, so taking the newer
+ * of the two is what makes the age honest after a colo eviction.
+ */
+async function snapshotState(env, snapshot) {
+  const [cached, record] = await Promise.all([
+    caches.default.match(snapshotKey(snapshot.id)).catch(() => null),
+    kvGetJson(env, kvSnapshotKey(snapshot.id)),
+  ]);
+
+  const fromCache =
+    cached && storedAtMs(cached) !== null ? { storedAt: storedAtMs(cached), response: cached } : null;
+  const fromKv =
+    record && typeof record.storedAt === "number" && typeof record.body === "string"
+      ? { storedAt: record.storedAt, record }
+      : null;
+
+  if (fromCache && fromKv) return fromKv.storedAt > fromCache.storedAt ? fromKv : fromCache;
+  return fromCache ?? fromKv ?? null;
+}
+
 /** Read back the last tick's record, or null when there has never been one. */
-async function lastTick() {
-  const cached = await caches.default.match(tickKey());
-  if (!cached) return null;
-  return cached.json().catch(() => null);
+async function lastTick(env) {
+  const cached = await caches.default.match(tickKey()).catch(() => null);
+  const local = cached ? await cached.json().catch(() => null) : null;
+  // KV carries the tick across colos, so a fresh deployment cannot look silent
+  // from one edge location and alive from another.
+  const remote = await kvGetJson(env, kvTickKey());
+  if (local && remote) {
+    const localAt = Date.parse(local.at ?? "") || 0;
+    const remoteAt = Date.parse(remote.at ?? "") || 0;
+    return remoteAt > localAt ? remote : local;
+  }
+  return local ?? remote ?? null;
 }
 
 /** Look a snapshot up by id. */
@@ -225,14 +344,16 @@ function snapshotFor(pathname, params) {
   return snapshotById(params.get("sport") === "basketball" ? "livescore-basketball" : "livescore-football");
 }
 
-/** Age of a worker-owned snapshot in seconds, or null when missing/unusable. */
-async function snapshotAge(snapshot) {
-  const cached = await caches.default.match(snapshotKey(snapshot.id));
-  if (!cached) return null;
-  // An undateable copy is not a fresh copy. The tick rebuilds it instead of
-  // trusting a header we did not write.
-  if (storedAtMs(cached) === null) return null;
-  return ageSeconds(cached);
+/**
+ * Age of a worker-owned snapshot in seconds, or null when missing/undateable.
+ *
+ * An undateable copy is not a fresh copy — the tick rebuilds it rather than
+ * trusting a write time we did not record ourselves.
+ */
+async function snapshotAge(env, snapshot) {
+  const state = await snapshotState(env, snapshot);
+  if (!state) return null;
+  return Math.max(0, (Date.now() - state.storedAt) / 1000);
 }
 
 /** Read-only JSON that is identical for every anonymous caller. */
@@ -462,9 +583,11 @@ const tagged = (response, state) => {
  * this whole mechanism exists to avoid. (A unit test that stores responses in a
  * plain Map cannot catch that: only a real cache expires anything.)
  */
-async function store(cacheKey, snapshot, response) {
+async function store(env, cacheKey, snapshot, response) {
   await caches.default.put(cacheKey, response.clone());
   if (!snapshot) return;
+  // The durable copy, so the tick and readers in other colos see the same one.
+  await kvWriteSnapshot(env, snapshot, response);
   const headers = new Headers(response.headers);
   // The mirror is written now, so it is stamped now — independent of whatever
   // the response we are copying happened to carry.
@@ -496,13 +619,16 @@ function stamped(headers) {
 const shortError = (err) => (err && err.message ? err.message : String(err));
 
 /** Record a tick outcome for `/__edge`. Best-effort: never fails the invocation. */
-async function recordTick(record) {
+async function recordTick(env, record) {
+  // Recorded in KV first: the Cache API copy is only visible to the colo that
+  // ran the tick, which is precisely the ambiguity this ledger exists to remove.
+  await kvPutJson(env, kvTickKey(), record, TICK_TTL_SECONDS);
   try {
     await caches.default.put(
       tickKey(),
       new Response(JSON.stringify(record), {
         status: 200,
-        headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=86400" },
+        headers: { "Content-Type": "application/json", "Cache-Control": `public, max-age=${TICK_TTL_SECONDS}` },
       })
     );
   } catch (err) {
@@ -521,7 +647,7 @@ export default {
     if (url.pathname === "/__edge") {
       const snapshots = await Promise.all(
         SNAPSHOTS.map(async (s) => {
-          const age = await snapshotAge(s);
+          const age = await snapshotAge(env, s);
           return {
             id: s.id,
             ttl: s.ttl,
@@ -540,7 +666,11 @@ export default {
         snapshots,
         // The last tick's decisions. Without this, "the edge cron is silent"
         // and "the edge cron decided there was nothing to do" look identical.
-        lastTick: await lastTick(),
+        lastTick: await lastTick(env),
+        // Which stores are actually in play. A deployment without the KV
+        // binding is a supported configuration, not a silent failure — this is
+        // how an operator can tell the two apart from outside the dashboard.
+        storage: { cache: true, kv: kvStore(env) !== null },
         schedules: SCHEDULES.map((s) => `${s.cron} → ${s.trigger}`),
         cronSecret: Boolean(env.CRON_SECRET),
       });
@@ -613,6 +743,7 @@ export default {
                 `public, max-age=${poll.ttl}, s-maxage=${poll.ttl}, stale-while-revalidate=${poll.swr}`
               );
               await store(
+                env,
                 cacheKey,
                 snapshot,
                 new Response(body, { status: res.status, statusText: res.statusText, headers })
@@ -652,7 +783,7 @@ export default {
     const storable = new Response(body, { status: res.status, statusText: res.statusText, headers });
 
     // Store a copy, then answer this caller from the buffered body.
-    await store(cacheKey, snapshot, storable);
+    await store(env, cacheKey, snapshot, storable);
     const answered = tagged(new Response(storable.body, storable), "MISS");
     return corsFor(poll) ? withCors(answered) : answered;
   },
@@ -688,7 +819,7 @@ export default {
       // that never fired. It is now logged *and* reported on /__edge.
       console.log(`edge-cron: no trigger mapped to "${event.cron}" — add it to SCHEDULES`);
       tick.triggers.push({ trigger: null, action: "unmapped-cron" });
-      await recordTick(tick);
+      await recordTick(env, tick);
       return;
     }
 
@@ -723,10 +854,11 @@ export default {
           "Cache-Control",
           `public, max-age=${snapshot.ttl}, s-maxage=${snapshot.ttl}`
         );
-        await caches.default.put(
-          snapshotKey(snapshot.id),
-          new Response(body, { status: res.status, statusText: res.statusText, headers: snapshotHeaders })
-        );
+        const stored = new Response(body, { status: res.status, statusText: res.statusText, headers: snapshotHeaders });
+        await caches.default.put(snapshotKey(snapshot.id), stored.clone());
+        // The durable half of the same write: without it the tick's warm copy is
+        // only visible to the colo that ran the tick.
+        await kvWriteSnapshot(env, snapshot, stored);
         console.log(`edge-cron: ${snapshot.id} snapshot warmed`);
       } catch (err) {
         console.log(
@@ -745,7 +877,7 @@ export default {
       // old, which is precisely what this worker exists to prevent.
       let ages;
       try {
-        ages = await Promise.all(guarded.map((s) => snapshotAge(s)));
+        ages = await Promise.all(guarded.map((s) => snapshotAge(env, s)));
       } catch (err) {
         console.log(`edge-cron: ${trigger} snapshot read failed — ${shortError(err)}`);
         ages = guarded.map(() => null);
@@ -797,6 +929,6 @@ export default {
           : { trigger: triggers[i], action: "error", detail: shortError(outcome.reason) }
       );
     }
-    await recordTick(tick);
+    await recordTick(env, tick);
   },
 };

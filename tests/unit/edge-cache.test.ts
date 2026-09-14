@@ -525,3 +525,153 @@ describe("edge cron — cache-first snapshots", () => {
     ]);
   });
 });
+
+/**
+ * The KV binding.
+ *
+ * Every behaviour asserted here has to hold with the binding absent too (the
+ * suite above runs unbound), because a deployment that cannot create the
+ * namespace is a supported configuration rather than a broken one.
+ */
+describe("edge cache — durable snapshots in KV", () => {
+  const TODAY = new Date().toISOString().slice(0, 10);
+
+  const kvData = new Map<string, string>();
+  /** What each key was asked to live for, so expiry can be exercised. */
+  const kvTtl = new Map<string, number>();
+  const KV = {
+    get: async (key: string, type?: string) => {
+      const raw = kvData.get(key);
+      if (raw === undefined) return null;
+      return type === "json" ? JSON.parse(raw) : raw;
+    },
+    put: async (
+      key: string,
+      value: string | unknown,
+      options?: { expirationTtl?: number }
+    ) => {
+      // KV itself drops a key when its TTL elapses, so the fake has to as well:
+      // a stub that never expires cannot tell a record that survives its own
+      // freshness window from one that dies with it.
+      if (options?.expirationTtl) kvTtl.set(key, options.expirationTtl);
+      kvData.set(key, typeof value === "string" ? value : JSON.stringify(value));
+    },
+  };
+  const kvTtlOf = (id: string) => kvTtl.get(`snapshot:${id}:v4`) ?? 0;
+
+  const ENV_WITH_KV = { ...ENV, CRON_SECRET: "s3cret", SNAPSHOTS: KV };
+  const snapshotKeyOf = (id: string) => `snapshot:${id}:v4`;
+
+  async function edge(path: string, env: Record<string, unknown>): Promise<Response> {
+    return (await worker.fetch(new Request(`https://edge.test${path}`), env, CTX)) as Response;
+  }
+
+  beforeEach(() => {
+    kvData.clear();
+    kvTtl.clear();
+  });
+
+  it("mirrors a reader's poll into the durable store", async () => {
+    originReturns('{"matches":[]}', "application/json");
+    await edge(`/__livescore?sport=football&date=${TODAY}`, ENV_WITH_KV);
+
+    const record = JSON.parse(kvData.get(snapshotKeyOf("livescore-football")) ?? "null") as {
+      storedAt: number;
+      body: string;
+    } | null;
+    expect(record, "the snapshot should exist in KV").not.toBeNull();
+    expect(record!.body).toContain("matches");
+    expect(Date.now() - record!.storedAt).toBeLessThan(5_000);
+  });
+
+  it("ages a snapshot from the durable copy after another colo's cache is lost", async () => {
+    // Exactly the production shape: the copy exists globally, the local colo
+    // has never seen it. Reading it as "missing" made the tick rebuild every
+    // pass; reading it as "fresh" is what makes the check work across colos.
+    kvData.set(
+      snapshotKeyOf("livescore-football"),
+      JSON.stringify({
+        storedAt: Date.now() - 300_000,
+        status: 200,
+        contentType: "application/json",
+        body: '{"matches":[]}',
+      })
+    );
+
+    const body = (await (await edge("/__edge", ENV_WITH_KV)).json()) as {
+      snapshots: { id: string; ageSeconds: number | null; fresh: boolean }[];
+      storage: { cache: boolean; kv: boolean };
+    };
+    const football = body.snapshots.find((s) => s.id === "livescore-football");
+    expect(football?.ageSeconds).toBeGreaterThanOrEqual(300);
+    expect(football?.fresh).toBe(false);
+    expect(body.storage.kv).toBe(true);
+  });
+
+  it("skips the rebuild when the only copy is the durable one and still fresh", async () => {
+    kvData.set(
+      snapshotKeyOf("livescore-football"),
+      JSON.stringify({ storedAt: Date.now() - 5_000, status: 200, contentType: "application/json", body: "{}" })
+    );
+    kvData.set(
+      snapshotKeyOf("livescore-basketball"),
+      JSON.stringify({ storedAt: Date.now() - 5_000, status: 200, contentType: "application/json", body: "{}" })
+    );
+    originReturns('{"matches":[]}', "application/json");
+
+    await worker.scheduled({ cron: "*/2 * * * *" } as never, ENV_WITH_KV);
+    await settleBackground();
+
+    expect(originFetches).toEqual([]);
+  });
+
+  it("keeps a durable record past its freshness window, so a cold board reports its age", async () => {
+    // Expiring the record at exactly the snapshot's TTL would make "40 seconds
+    // past due" and "never stored at all" both read as null — the ambiguity that
+    // left the cron question unanswerable. The record has to outlive its window.
+    originReturns('{"matches":[]}', "application/json");
+    await edge(`/__livescore?sport=football&date=${TODAY}`, ENV_WITH_KV);
+
+    expect(kvTtlOf("livescore-football")).toBeGreaterThan(120);
+
+    // Age the record past its 120s window but inside its retention, with this
+    // colo's copy evicted (the shape that used to read as "never stored"). The
+    // probe must report a stale copy, not a missing one.
+    stored.clear();
+    kvData.set(
+      snapshotKeyOf("livescore-football"),
+      JSON.stringify({
+        storedAt: Date.now() - 200_000,
+        status: 200,
+        contentType: "application/json",
+        body: '{"matches":[]}',
+      })
+    );
+
+    const body = (await (await edge("/__edge", ENV_WITH_KV)).json()) as {
+      snapshots: { id: string; ageSeconds: number | null; fresh: boolean }[];
+    };
+    const football = body.snapshots.find((s) => s.id === "livescore-football");
+    expect(football?.ageSeconds, "a cold copy still reports an age").not.toBeNull();
+    expect(football?.fresh).toBe(false);
+  });
+
+  it("reports the binding on the liveness probe, and its absence too", async () => {    const withKv = (await (await edge("/__edge", ENV_WITH_KV)).json()) as { storage: { kv: boolean } };
+    const withoutKv = (await (await edge("/__edge", { ...ENV })).json()) as { storage: { kv: boolean } };
+    expect(withKv.storage.kv).toBe(true);
+    expect(withoutKv.storage.kv).toBe(false);
+  });
+
+  it("records a tick where the next reader can see it, not only where it ran", async () => {
+    originReturns('{"matches":[]}', "application/json");
+    await worker.scheduled({ cron: "*/5 * * * *" } as never, ENV_WITH_KV);
+    await settleBackground();
+
+    // A different colo: the local cache knows nothing about the tick.
+    stored.clear();
+    const body = (await (await edge("/__edge", ENV_WITH_KV)).json()) as {
+      lastTick: { cron: string } | null;
+    };
+    expect(body.lastTick?.cron).toBe("*/5 * * * *");
+  });
+});

@@ -14,6 +14,10 @@
  *   CRON_SECRET=<same as the app>     lets the worker's Cron Triggers drive
  *                                     /api/cron (uploaded as a secret binding)
  *   CRON_TRIGGERS=off                 skip the Cron Trigger registration
+ *   CLOUDFLARE_KV_NAMESPACE_ID=...    bind an existing KV namespace instead of
+ *                                     resolving one (see the SNAPSHOTS binding)
+ *   KV_NAMESPACE_TITLE=...            the namespace to reuse or create
+ *   KV_BINDING=off                    deploy without the KV binding
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -56,6 +60,63 @@ const api = (path, init = {}) =>
 
 const code = readFileSync(join(WORKER_DIR, "src", MODULE), "utf8");
 
+/**
+ * The worker's durable snapshot store, as a KV binding.
+ *
+ * The Cache API is per-colo, so a snapshot warmed by a reader in one data
+ * centre was invisible to the cron tick running in another. KV gives the worker
+ * one globally readable copy (and one place to record what the last tick did),
+ * which is what lets the tick skip a rebuild it does not need.
+ *
+ * The namespace is reused if it already exists, so repeat deploys do not pile up
+ * empty namespaces — and if the token cannot manage KV at all, the deploy
+ * continues without the binding. The worker is written to fall back to the Cache
+ * API when SNAPSHOTS is absent, so this is a capability question, not a hard
+ * dependency.
+ */
+const KV_TITLE = process.env.KV_NAMESPACE_TITLE ?? `${NAME}-snapshots`;
+const KV_OFF = process.env.KV_BINDING === "off";
+
+async function resolveKvNamespace() {
+  if (KV_OFF) return "";
+  const provided = (process.env.CLOUDFLARE_KV_NAMESPACE_ID ?? "").trim();
+  if (provided) {
+    console.log("kv:", `using the namespace id from the environment (${provided})`);
+    return provided;
+  }
+
+  const listed = await api(`/accounts/${ACCOUNT}/storage/kv/namespaces?per_page=100`);
+  const listBody = await listed.json();
+  if (listBody.success) {
+    const existing = (listBody.result ?? []).find((ns) => ns.title === KV_TITLE);
+    if (existing) {
+      console.log("kv:", `reusing "${KV_TITLE}" (${existing.id})`);
+      return existing.id;
+    }
+  }
+
+  const created = await api(`/accounts/${ACCOUNT}/storage/kv/namespaces`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: KV_TITLE }),
+  });
+  const createdBody = await created.json();
+  if (createdBody.success && createdBody.result?.id) {
+    console.log("kv:", `created "${KV_TITLE}" (${createdBody.result.id})`);
+    return createdBody.result.id;
+  }
+
+  console.log(
+    "kv:",
+    created.status,
+    "could not resolve the namespace — deploying without the binding (the worker falls back to the Cache API):",
+    JSON.stringify(createdBody.errors ?? createdBody)
+  );
+  return "";
+}
+
+const kvNamespaceId = await resolveKvNamespace();
+
 const metadata = {
   main_module: MODULE,
   compatibility_date: "2026-09-01",
@@ -65,6 +126,9 @@ const metadata = {
     // the credential that authorises a cron run against the origin.
     ...(CRON_SECRET
       ? [{ type: "secret_text", name: "CRON_SECRET", text: CRON_SECRET }]
+      : []),
+    ...(kvNamespaceId
+      ? [{ type: "kv_namespace", name: "SNAPSHOTS", namespace_id: kvNamespaceId }]
       : []),
   ],
 };

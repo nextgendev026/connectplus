@@ -1,8 +1,9 @@
 # Cloudflare Worker: edge cache proxy in front of the Vercel deployment.
 #
 # Sized for the Workers *free* plan: 100k requests/day, 10ms CPU per request.
-# No KV, no Durable Objects, no R2 bindings — the Cache API is free and is all
-# this worker uses, so it adds no line items to the bill.
+# One KV namespace (the SNAPSHOTS binding below), no Durable Objects, no R2.
+# Reads and writes stay inside KV's own free tier, and the worker works without
+# the binding at all — see the fallback note next to it.
 #
 # Deploy without wrangler installed:
 #   CLOUDFLARE_API_TOKEN=... node scripts/deploy-worker.mjs
@@ -13,6 +14,26 @@
 name = "connectplus-edge"
 main = "src/index.mjs"
 compatibility_date = "2026-09-01"
+
+# ── Durable snapshots ─────────────────────────────────────────────────────────
+# The worker keeps its own copy of the livescore and status payloads so a cron
+# tick can tell whether it has anything to rebuild. The Cache API is per-colo:
+# a copy warmed by a reader in Nairobi is invisible to the tick running in
+# another data centre, and the record of the last tick was equally local — which
+# is how "the cron never ran" and "you asked a different colo" looked identical.
+#
+# KV is the binding that makes that copy global. `scripts/deploy-worker.mjs`
+# resolves (or creates) the namespace and injects the binding, so deploying that
+# way needs no id here. To deploy with wrangler instead, create a namespace and
+# fill in its id:
+#   npx wrangler kv namespace create connectplus-edge-snapshots
+#
+# Without the binding the worker falls back to the Cache API and everything
+# still works — it simply rebuilds more often and reports tick state per colo.
+#
+# [[kv_namespaces]]
+# binding = "SNAPSHOTS"
+# id = "<namespace id>"
 
 # Served at https://connectplus-edge.<your-subdomain>.workers.dev
 workers_dev = true
