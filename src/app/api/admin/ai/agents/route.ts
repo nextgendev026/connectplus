@@ -5,16 +5,25 @@ import {
   OPENROUTER_FREE_MODELS,
   OPENCODE_PAID_MODELS,
   OPENCODE_MODELS,
-  fetchOpenRouterFreeModels,
-  fetchOpenCodeModels,
+  OPENAI_FALLBACK_MODELS,
+  ANTHROPIC_FALLBACK_MODELS,
+  fetchProviderModels,
   type AiProviderName,
 } from "@/lib/ai-provider";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Build provider list with dynamically-fetched models. */
-async function buildProviders(): Promise<{
+/**
+ * Build the provider list with dynamically-fetched models.
+ *
+ * The stored settings are passed in because a key saved through this console
+ * lives in the settings store rather than the environment: without it, every
+ * provider that only read `process.env` would keep rendering its static
+ * fallback even on a fully configured install. All four platforms now answer
+ * from their live API when they can and from a real fallback when they cannot.
+ */
+async function buildProviders(settings: Record<string, string>): Promise<{
   name: Exclude<AiProviderName, "builtin">;
   label: string;
   keySetting: string;
@@ -23,9 +32,11 @@ async function buildProviders(): Promise<{
   models: string[];
   note: string;
 }[]> {
-  const [orModels, ocModels] = await Promise.all([
-    fetchOpenRouterFreeModels(),
-    fetchOpenCodeModels(),
+  const [orModels, ocModels, oaModels, anModels] = await Promise.all([
+    fetchProviderModels("openrouter"),
+    fetchProviderModels("opencode", settings.opencodeApiKey),
+    fetchProviderModels("openai", settings.openaiApiKey),
+    fetchProviderModels("anthropic", settings.anthropicApiKey),
   ]);
   return [
     {
@@ -51,18 +62,18 @@ async function buildProviders(): Promise<{
       label: "OpenAI",
       keySetting: "openaiApiKey",
       modelSetting: "openaiModel",
-      defaultModel: "gpt-4o-mini",
-      models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
-      note: "Paid — requires OpenAI credits.",
+      defaultModel: oaModels[0] || OPENAI_FALLBACK_MODELS[0],
+      models: oaModels,
+      note: `Paid — requires OpenAI credits. ${oaModels.length} models reported by your account.`,
     },
     {
       name: "anthropic",
       label: "Anthropic",
       keySetting: "anthropicApiKey",
       modelSetting: "anthropicModel",
-      defaultModel: "claude-3-5-haiku-latest",
-      models: ["claude-3-5-haiku-latest", "claude-3-5-sonnet-latest"],
-      note: "Paid — requires Anthropic credits.",
+      defaultModel: anModels[0] || ANTHROPIC_FALLBACK_MODELS[0],
+      models: anModels,
+      note: `Paid — requires Anthropic credits. ${anModels.length} models reported by your account.`,
     },
   ];
 }
@@ -83,7 +94,7 @@ export async function GET() {
 
   const settings = await getSettings().catch(() => ({} as Record<string, string>));
   const active = (settings.aiProvider || "builtin").toLowerCase();
-  const providers = await buildProviders();
+  const providers = await buildProviders(settings);
 
   return NextResponse.json({
     active: active === "builtin" ? "builtin" : active,
@@ -114,11 +125,11 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
   const action = body?.action === "save" ? "save" : "test";
   const provider = typeof body?.provider === "string" ? body.provider : "";
-  const providers = await buildProviders();
+  const settings = await getSettings().catch(() => ({} as Record<string, string>));
+  const providers = await buildProviders(settings);
   const def = providers.find((p) => p.name === provider);
   if (!def) return NextResponse.json({ error: "Unknown provider" }, { status: 400 });
 
-  const settings = await getSettings().catch(() => ({} as Record<string, string>));
   const providedKey = typeof body?.apiKey === "string" ? body.apiKey.trim() : "";
   const key = providedKey || settings[def.keySetting] || "";
   const model = (typeof body?.model === "string" && body.model.trim()) || settings[def.modelSetting] || def.defaultModel;

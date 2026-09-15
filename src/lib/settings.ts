@@ -378,10 +378,10 @@ export const SETTINGS_CATALOG: SettingDef[] = [
   },
   {
     key: "openrouterModel",
-    defaultValue: "meta-llama/llama-3.3-70b-instruct:free",
+    defaultValue: "z-ai/glm-5.2:free",
     group: "api",
     label: "OpenRouter model",
-    hint: "Free options: meta-llama/llama-3.3-70b-instruct:free, deepseek/deepseek-chat-v3-0324:free, google/gemini-2.0-flash-exp:free.",
+    hint: "Leave blank to use the live free model the console reports. Free ids all end in :free and cost nothing.",
     type: "text",
   },
   {
@@ -395,10 +395,10 @@ export const SETTINGS_CATALOG: SettingDef[] = [
   },
   {
     key: "opencodeModel",
-    defaultValue: "grok-code",
+    defaultValue: "deepseek-v4-flash",
     group: "api",
     label: "OpenCode Zen model",
-    hint: "e.g. grok-code (free), qwen3-coder, claude-sonnet-4.",
+    hint: "Leave blank to use the first model the Zen API reports. e.g. deepseek-v4-flash, glm-5.3, claude-sonnet-4.",
     type: "text",
   },
   {

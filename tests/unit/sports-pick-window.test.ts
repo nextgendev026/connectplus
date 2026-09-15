@@ -8,6 +8,30 @@ import {
 import { SPORTS_EVENTS, baseEvent } from "@/lib/sports-notifications";
 
 /**
+ * The database is mocked shut.
+ *
+ * This file is a unit test, but it used to let `refreshApproachingKickoff`
+ * reach the REAL database. Whenever the production pooler happened to answer,
+ * the sweep found a due fixture and ran the entire intelligence pipeline —
+ * roughly 19 seconds of work sitting inside a 20 second timeout, so the test
+ * passed or failed on production latency, and it wrote live picks while doing
+ * it. With the pooler unreachable instead, the read hung past the timeout. Both
+ * outcomes came from the same missing stub.
+ *
+ * Closing the read here makes "every upstream is closed" actually true and the
+ * contract deterministic, which is what this test claims to pin.
+ */
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    sportsMatch: {
+      findMany: vi.fn(async () => {
+        throw new Error("offline in unit tests");
+      }),
+    },
+  },
+}));
+
+/**
  * The tips stake window.
  *
  * The bug these pin down: the board ranked purely on confidence, so a
@@ -62,10 +86,10 @@ describe("the kick-off refresh", () => {
   it(
     "reports an empty, well-formed result without a database to sweep",
     async () => {
-      // Every upstream is closed: this is a unit test, and the sweep fans out to
-      // five providers (including the fixture archive) the moment it needs a
-      // snapshot. What is being pinned is the CONTRACT — a caller always gets a
-      // readable shape, never a throw — not the sweep's data.
+      // Every upstream is closed: the database is mocked shut at the top of
+      // this file and every fetch throws. What is being pinned is the CONTRACT —
+      // a caller always gets a readable shape, never a throw — not the sweep's
+      // data.
       vi.stubGlobal("fetch", async () => {
         throw new Error("offline in unit tests");
       });

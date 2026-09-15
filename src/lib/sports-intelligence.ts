@@ -1631,6 +1631,18 @@ export interface KickoffRefreshResult {
 const bounded = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
 /**
+ * How long the sweep waits on its own database read before giving up.
+ *
+ * The contract `refreshApproachingKickoff` advertises is "a caller always gets a
+ * readable shape, never a throw" — but `.catch()` only covers a rejection, not a
+ * hang. With the pooler unreachable the read blocks until Prisma's connect
+ * timeout, which outlives the caller and made that promise false (and timed this
+ * module's own unit test out at 20 seconds). `settings.ts` fast-fails its read
+ * against a deadline for exactly this reason; this is that rule applied here.
+ */
+const KICKOFF_REFRESH_DB_DEADLINE_MS = 3_000;
+
+/**
  * Regenerate picks for fixtures approaching kick-off.
  *
  * Team news, lineups and the market's own prices all land in the last hour, so a
@@ -1652,8 +1664,9 @@ export async function refreshApproachingKickoff(
   const maxAgeMinutes = bounded(opts.maxAgeMinutes ?? KICKOFF_PICK_MAX_AGE_MINUTES, 5, 720);
   const limit = bounded(opts.limit ?? 20, 1, 100);
 
-  const rows = await prisma.sportsMatch
-    .findMany({
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  const rows = await Promise.race([
+    prisma.sportsMatch.findMany({
       where: {
         status: "SCHEDULED",
         kickoff: { gte: now, lte: new Date(now.getTime() + windowMinutes * 60_000) },
@@ -1666,8 +1679,24 @@ export async function refreshApproachingKickoff(
       },
       orderBy: { kickoff: "asc" },
       take: limit * 2,
-    })
-    .catch(() => [] as { provider: string; externalId: string; predictions: { status: string; updatedAt: Date }[] }[]);
+    }),
+    new Promise<never>((_, reject) => {
+      deadlineTimer = setTimeout(
+        () => reject(new Error("kickoff-refresh-db-deadline")),
+        KICKOFF_REFRESH_DB_DEADLINE_MS
+      );
+    }),
+  ]).catch(
+    () =>
+      [] as {
+        provider: string;
+        externalId: string;
+        predictions: { status: string; updatedAt: Date }[];
+      }[]
+  );
+  // Clear the loser of the race so a healthy read does not leave a live timer
+  // behind (which would keep a serverless invocation warm for no reason).
+  clearTimeout(deadlineTimer);
 
   const staleBefore = now.getTime() - maxAgeMinutes * 60_000;
   const due = rows

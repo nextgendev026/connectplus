@@ -24,7 +24,7 @@ const OPENAI_COMPATIBLE: Record<
   openai: { baseUrl: "https://api.openai.com/v1", defaultModel: "gpt-4o-mini" },
   openrouter: {
     baseUrl: "https://openrouter.ai/api/v1",
-    defaultModel: "meta-llama/llama-3.3-70b-instruct:free",
+    defaultModel: "z-ai/glm-5.2:free",
     extraHeaders: {
       // OpenRouter asks for an identifying referer/title on free traffic.
       "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL ?? "https://connectplusapp.vercel.app",
@@ -34,16 +34,42 @@ const OPENAI_COMPATIBLE: Record<
   opencode: { baseUrl: "https://opencode.ai/zen/v1", defaultModel: "deepseek-v4-flash" },
 };
 
-/** Free-tier OpenRouter models — these cost $0 with no credit card. */
+/**
+ * Free-tier OpenRouter models — these cost $0 and need no credit card.
+ *
+ * Captured from `openrouter.ai/api/v1/models` on 2026-09-15 and filtered to
+ * chat-capable models only, so this list is a real fallback rather than a
+ * guess. It replaced a roster whose entries had almost all been withdrawn —
+ * including its own default (`meta-llama/llama-3.3-70b-instruct:free`), which
+ * meant a configured OpenRouter key pointed at a model that no longer existed
+ * and every completion quietly returned null.
+ *
+ * Non-chat free models are deliberately absent: `google/lyria-*` is music
+ * generation and `nvidia/nemotron-3.5-content-safety` is a classifier, so
+ * neither can answer a chat completion. `fetchOpenRouterFreeModels` applies the
+ * same rule to the live list, because offering them in the admin picker would
+ * be offering an agent that cannot ever reply.
+ */
 export const OPENROUTER_FREE_MODELS = [
-  "meta-llama/llama-3.3-70b-instruct:free",
-  "deepseek/deepseek-chat-v3-0324:free",
-  "google/gemma-3-27b-it:free",
-  "google/gemini-2.0-flash-exp:free",
-  "qwen/qwen-2.5-72b-instruct:free",
-  "mistralai/mistral-small-3.1-24b-instruct:free",
-  "microsoft/phi-4-reasoning-plus:free",
-  "nvidia/llama-3.1-nemotron-ultra-253b-v1:free",
+  "z-ai/glm-5.2:free",
+  "nvidia/nemotron-3-super-120b-a12b:free",
+  "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "nex-agi/nex-n2.5-pro:free",
+  "nex-agi/nex-n2.5-mini:free",
+  "google/gemma-4-31b-it:free",
+  "google/gemma-4-26b-a4b-it:free",
+  "cohere/north-mini-code:free",
+  "thinkingmachines/inkling:free",
+  "thinkingmachines/inkling-small:free",
+  "poolside/laguna-s-2.1:free",
+  "poolside/laguna-xs-2.1:free",
+  "nvidia/nemotron-3.5-lightning:free",
+  "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+  "liquid/lfm-2.5-2.6b:free",
+  "inclusionai/ling-3.0-flash-vl:free",
+  "inclusionai/ling-3.0-flash-sante:free",
+  "inclusionai/ling-3.0-flash-fin:free",
+  "dots-studio/dots-3-note-preview:free",
 ] as const;
 
 /** OpenCode Zen models — refreshed roster. The API is the source of truth;
@@ -86,8 +112,25 @@ export const OPENCODE_PAID_MODELS = [
 ] as const;
 
 /**
+ * Free does not mean chattable.
+ *
+ * A provider's $0 tier is not a list of assistants: OpenRouter's free shelf
+ * currently carries a music generator (`google/lyria-3-pro-preview`), a safety
+ * classifier (`nvidia/nemotron-3.5-content-safety`) and embedding-only models.
+ * A chat completion against any of them fails every time, so filtering by price
+ * alone put models in the admin picker that can never reply. Modality is the
+ * real filter, and it is applied to the live list and to the OpenAI list too.
+ */
+const NON_CHAT_MODEL =
+  /(lyria|musicgen|stable-audio|whisper|tts|embed|rerank|moderation|content-safety|guard|dall-e|flux|upscal|image-gen|audio)/i;
+
+function isChatCapableModel(id: string): boolean {
+  return !NON_CHAT_MODEL.test(id);
+}
+
+/**
  * Fetch available models from OpenRouter (free ones end with :free).
- * Falls back to static list when the API is unreachable.
+ * Falls back to the static list when the API is unreachable.
  */
 export async function fetchOpenRouterFreeModels(): Promise<string[]> {
   try {
@@ -102,8 +145,8 @@ export async function fetchOpenRouterFreeModels(): Promise<string[]> {
     const data = await res.json();
     const models: string[] = data?.data
       ?.filter((m: { id: string; pricing?: { prompt: string; completion: string } }) => {
-        const isFree = m.id.endsWith(":free") || (m.pricing && parseFloat(m.pricing.prompt) === 0 && parseFloat(m.pricing.completion) === 0);
-        return isFree;
+        const priced = m.pricing ? parseFloat(m.pricing.prompt) === 0 && parseFloat(m.pricing.completion) === 0 : false;
+        return (m.id.endsWith(":free") || priced) && isChatCapableModel(m.id);
       })
       .map((m: { id: string }) => m.id)
       .slice(0, 30) ?? [];
@@ -117,9 +160,9 @@ export async function fetchOpenRouterFreeModels(): Promise<string[]> {
  * Fetch available models from OpenCode Zen API.
  * Falls back to static list when the API is unreachable.
  */
-export async function fetchOpenCodeModels(): Promise<string[]> {
+export async function fetchOpenCodeModels(keyOverride?: string): Promise<string[]> {
   try {
-    const key = process.env.OPENCODE_API_KEY || "";
+    const key = keyOverride || process.env.OPENCODE_API_KEY || "";
     if (!key) return [...OPENCODE_MODELS];
     const res = await fetch("https://opencode.ai/zen/v1/models", {
       signal: AbortSignal.timeout(10_000),
@@ -134,6 +177,95 @@ export async function fetchOpenCodeModels(): Promise<string[]> {
     return models.length > 0 ? models : [...OPENCODE_MODELS];
   } catch {
     return [...OPENCODE_MODELS];
+  }
+}
+
+/**
+ * Anthropic fallback when no key is available to ask the live list.
+ *
+ * Deliberately a `-latest` alias rather than a dated id: Anthropic ships
+ * dated snapshots and retires them, and the alias is the one identifier that
+ * keeps resolving without a code change. A keyed install overrides it with
+ * whatever `/v1/models` reports.
+ */
+export const ANTHROPIC_FALLBACK_MODEL = "claude-3-5-haiku-latest";
+
+/** OpenAI chat models used when the live `/v1/models` list cannot be read. */
+export const OPENAI_FALLBACK_MODELS = ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"] as const;
+
+/** Anthropic models used when the live `/v1/models` list cannot be read. */
+export const ANTHROPIC_FALLBACK_MODELS = [
+  ANTHROPIC_FALLBACK_MODEL,
+  "claude-3-5-sonnet-latest",
+] as const;
+
+/**
+ * Live model list for OpenAI, so the admin console shows what the account can
+ * actually call rather than a hand-written list that ages out silently.
+ *
+ * `keyOverride` exists because a key saved through the admin console lives in
+ * the settings store, not in the environment — without it a keyed install would
+ * still see only the static fallback and the console would look unrefreshed.
+ */
+export async function fetchOpenAiModels(keyOverride?: string): Promise<string[]> {
+  try {
+    const key = keyOverride || process.env.OPENAI_API_KEY || "";
+    if (!key) return [...OPENAI_FALLBACK_MODELS];
+    const res = await fetch("https://api.openai.com/v1/models", {
+      signal: AbortSignal.timeout(10_000),
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    if (!res.ok) return [...OPENAI_FALLBACK_MODELS];
+    const data = await res.json();
+    const models: string[] = (data?.data ?? []) 
+      .map((m: { id: string }) => m.id)
+      .filter((id: string) => isChatCapableModel(id))
+      .sort();
+    return models.length > 0 ? models : [...OPENAI_FALLBACK_MODELS];
+  } catch {
+    return [...OPENAI_FALLBACK_MODELS];
+  }
+}
+
+/**
+ * Live model list for Anthropic. Same contract as the other fetchers: it never
+ * throws, and it always answers with something the console can render.
+ */
+export async function fetchAnthropicModels(keyOverride?: string): Promise<string[]> {
+  try {
+    const key = keyOverride || process.env.ANTHROPIC_API_KEY || "";
+    if (!key) return [...ANTHROPIC_FALLBACK_MODELS];
+    const res = await fetch("https://api.anthropic.com/v1/models", {
+      signal: AbortSignal.timeout(10_000),
+      headers: { "x-api-key": key, "anthropic-version": "2023-06-01" },
+    });
+    if (!res.ok) return [...ANTHROPIC_FALLBACK_MODELS];
+    const data = await res.json();
+    const models: string[] = (data?.data ?? []).map((m: { id: string }) => m.id);
+    return models.length > 0 ? models : [...ANTHROPIC_FALLBACK_MODELS];
+  } catch {
+    return [...ANTHROPIC_FALLBACK_MODELS];
+  }
+}
+
+/**
+ * One entry point for "the models this provider currently serves", so a caller
+ * does not need to know which platforms are OpenAI-shaped and which are not —
+ * the distinction only matters inside this module.
+ */
+export async function fetchProviderModels(
+  provider: Exclude<AiProviderName, "builtin">,
+  keyOverride?: string
+): Promise<string[]> {
+  switch (provider) {
+    case "openrouter":
+      return fetchOpenRouterFreeModels();
+    case "opencode":
+      return fetchOpenCodeModels(keyOverride);
+    case "openai":
+      return fetchOpenAiModels(keyOverride);
+    case "anthropic":
+      return fetchAnthropicModels(keyOverride);
   }
 }
 
@@ -167,7 +299,7 @@ export async function getAiConfig(): Promise<AiConfig> {
     },
     anthropic: {
       key: settings.anthropicApiKey || process.env.ANTHROPIC_API_KEY || "",
-      model: settings.anthropicModel || process.env.ANTHROPIC_MODEL || "claude-3-5-haiku-latest",
+      model: settings.anthropicModel || process.env.ANTHROPIC_MODEL || ANTHROPIC_FALLBACK_MODEL,
     },
     openrouter: {
       key: settings.openrouterApiKey || process.env.OPENROUTER_API_KEY || "",
