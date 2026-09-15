@@ -249,7 +249,7 @@ export async function runSportsLive(minutesAhead = 180): Promise<{
     settled,
     generated: refreshed.generated,
     kickoffDue: kickoff.due,
-    sources: hub.sources.map((s) => s.source),
+    sources: hub.sources,
     minutesAhead,
   });
 
@@ -259,7 +259,7 @@ export async function runSportsLive(minutesAhead = 180): Promise<{
     settled,
     refreshed: refreshed.refreshed + refreshed.generated,
     kickoffRefreshed: kickoff.refreshed + kickoff.generated,
-    sources: hub.sources.map((s) => s.source),
+    sources: hub.sources,
   };
 }
 
