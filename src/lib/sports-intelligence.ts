@@ -5,6 +5,18 @@ import {
   type CompetitionTrend,
 } from "@/lib/sports-trends";
 import { getFixtureContext, type H2HMeeting, type TeamForm } from "@/lib/sports-h2h";
+import {
+  applyDixonColes,
+  DEFAULT_MARKET_WEIGHT,
+  estimateRho,
+  fitMatrixToMarket,
+  outcomeRates,
+  poissonDrawRate,
+  decideMatch,
+  describeDecision,
+  isModeledSport,
+  MODELED_SPORT,
+} from "@/lib/sports-forecast";
 import { applyDirectives, extractDirectives, type StoredDirective } from "@/lib/mind-directives";
 import { WEB_KNOWLEDGE_CATEGORY } from "@/lib/mind-knowledge";
 import { createLogger } from "@/lib/logger";
@@ -135,6 +147,10 @@ interface PoissonGrid {
   implied: { home: number; draw: number; away: number } | null;
   /** Set when the competition's observed scoring moved the goal expectations. */
   trendNote?: string | null;
+  /** The Dixon–Coles low-score parameter actually used, after any fitting. */
+  rho?: number;
+  /** Plain-language explanation of the low-score correction, when applied. */
+  rhoNote?: string | null;
 }
 
 function exactScoreProb(matrix: number[][], h: number, a: number): number {
@@ -157,6 +173,13 @@ const DIRECTIVE_HEAT_FLOOR = 0.85;
 const MIN_FORM_SAMPLE = 3;
 /** Sample size at which real form fully replaces the base estimate. */
 const FULL_FORM_SAMPLE = 5;
+/**
+ * Finished matches at which a competition's draw rate is trusted outright when
+ * fitting the low-score correction. Below it the fitted value is shrunk toward
+ * the published default, so a handful of 1-1s cannot redefine how a whole league
+ * behaves.
+ */
+const RHO_FULL_TRUST_MATCHES = 40;
 
 export interface FormSignal {
   home: TeamForm | null;
@@ -271,27 +294,48 @@ function buildGrid(
   lambdaHome = Math.min(Math.max(lambdaHome, 0.3), 3.6);
   lambdaAway = Math.min(Math.max(lambdaAway, 0.25), 3.6);
 
-  const matrix: number[][] = [];
-  let pHome = 0;
-  let pDraw = 0;
-  let pAway = 0;
-  let pOver25 = 0;
-  let pBtts = 0;
+  const raw: number[][] = [];
   for (let h = 0; h <= MAX_GOALS; h++) {
-    matrix[h] = [];
-    for (let a = 0; a <= MAX_GOALS; a++) {
-      const p = poisson(h, lambdaHome) * poisson(a, lambdaAway);
-      matrix[h]![a] = p;
-      if (h > a) pHome += p;
-      else if (h === a) pDraw += p;
-      else pAway += p;
-      if (h + a >= 3) pOver25 += p;
-      if (h >= 1 && a >= 1) pBtts += p;
-    }
+    raw[h] = [];
+    for (let a = 0; a <= MAX_GOALS; a++) raw[h]![a] = poisson(h, lambdaHome) * poisson(a, lambdaAway);
   }
 
-  // Market blend. Bookmaker odds carry information our name-hash cannot, but
-  // they also carry margin, so we de-vig before mixing.
+  /*
+   * ── Dixon–Coles low-score correction ─────────────────────────────────────
+   *
+   * Plain Poisson treats the two sides' goals as independent, which is known to
+   * understate 0-0 and 1-1 and overstate 1-0 and 0-1. Draws are exactly the
+   * outcome a coarse grid gets wrong, so the parameter is FITTED to the draw rate
+   * this competition is actually producing rather than hard-coded, weighted by
+   * how many finished matches back that rate. With no trend to learn from it
+   * falls back to the published default instead of pretending to a fit.
+   */
+  const rhoFit = estimateRho(
+    lambdaHome,
+    lambdaAway,
+    trend?.drawRate ?? NaN,
+    trend ? Math.min(trend.matches, RHO_FULL_TRUST_MATCHES) / RHO_FULL_TRUST_MATCHES : 0
+  );
+  let matrix = applyDixonColes(raw, lambdaHome, lambdaAway, rhoFit.rho);
+  let rates = outcomeRates(matrix);
+  const independentDraw = poissonDrawRate(lambdaHome, lambdaAway);
+  const rhoNote =
+    rhoFit.usedDefault || rhoFit.rho === 0 || !trend
+      ? null
+      : `Low-score correction applied (rho ${rhoFit.rho.toFixed(3)}): ${match.competition} draws ${(
+          trend.drawRate * 100
+        ).toFixed(0)}% of matches against ${(independentDraw * 100).toFixed(0)}% if scoring were independent.`;
+
+  /*
+   * ── Market fit ───────────────────────────────────────────────────────────
+   *
+   * Odds carry information a name-hash cannot, but they also carry margin, so we
+   * de-vig before using them. The WHOLE matrix is moved to meet them instead of
+   * rescaling `pHome`/`pDraw`/`pAway` after the fact: rescaling left the 1X2 pick
+   * carrying the market's information while the correct-score, over/under and
+   * BTTS picks still came from a distribution that had never seen it, which is
+   * precisely the inconsistency the shared grid exists to prevent.
+   */
   let implied: PoissonGrid["implied"] = null;
   if (match.oddsHome && match.oddsDraw && match.oddsAway) {
     const rawHome = 1 / match.oddsHome;
@@ -300,23 +344,25 @@ function buildGrid(
     const overround = rawHome + rawDraw + rawAway;
     if (overround > 0) {
       implied = { home: rawHome / overround, draw: rawDraw / overround, away: rawAway / overround };
-      pHome = 0.6 * pHome + 0.4 * implied.home;
-      pDraw = 0.6 * pDraw + 0.4 * implied.draw;
-      pAway = 0.6 * pAway + 0.4 * implied.away;
+      const fitted = fitMatrixToMarket(matrix, implied, DEFAULT_MARKET_WEIGHT);
+      matrix = fitted.matrix;
+      rates = outcomeRates(matrix);
     }
   }
 
-  const total = pHome + pDraw + pAway || 1;
+  const total = rates.home + rates.draw + rates.away || 1;
   return {
     matrix,
     lambdaHome,
     lambdaAway,
-    pHome: pHome / total,
-    pDraw: pDraw / total,
-    pAway: pAway / total,
-    pOver25,
-    pBtts,
+    pHome: rates.home / total,
+    pDraw: rates.draw / total,
+    pAway: rates.away / total,
+    pOver25: rates.over25,
+    pBtts: rates.btts,
     implied,
+    rho: rhoFit.rho,
+    rhoNote,
     trendNote,
   };
 }
@@ -594,9 +640,14 @@ function applyMarketPrior(confidence: number, market: MarketKey, prior: Predicti
 
 /**
  * Pure multi-market prediction core — exported so it can be unit-tested without
- * a database. Every market is derived from one Poisson grid, so the picks are
+ * a database.
+ *
+ * Every market is derived from ONE scoreline distribution, so the picks are
  * mutually consistent (an "Over 2.5" lean and a "0-0" correct score can never
- * both be the headline).
+ * both be the headline). That distribution carries the Dixon–Coles low-score
+ * correction and, when prices exist, is moved as a whole to meet the de-vigged
+ * market — see sports-forecast.ts. Returns an empty list for any sport this
+ * goal-based model does not describe.
  */
 export function predictMarkets(
   match: NormalizedMatch,
@@ -604,6 +655,20 @@ export function predictMarkets(
   mind?: MindSignal | null,
   form?: FormSignal | null
 ): MarketPrediction[] {
+  /*
+   * Hard gate on the sport.
+   *
+   * The four markets below are football's, and the feed already labels other
+   * sports (the ESPN mapper explicitly marks basketball rather than coercing it
+   * to football), so this is not a defensive guess — it is the engine finally
+   * reading a label it was handed. Returning nothing is the honest outcome: a
+   * fixture the model does not describe should have no model pick, not a
+   * plausible-looking one. A live read of the database found basketball fixtures
+   * carrying football 1X2 picks and a "Both teams to score" headline, which is
+   * precisely the failure this prevents.
+   */
+  if (!isModeledSport(match.sport)) return [];
+
   const grid = buildGrid(match, mind, form, prior.trend ?? null);
   const base = {
     homeWinPct: Math.round(grid.pHome * 1000) / 10,
@@ -616,8 +681,8 @@ export function predictMarkets(
   // reader is entitled to know that the model moved because of what the league
   // has been doing, and by how much.
   const xgLine = `Poisson model: xG ${grid.lambdaHome.toFixed(2)}–${grid.lambdaAway.toFixed(2)}.${
-    grid.trendNote ? ` ${grid.trendNote}` : ""
-  }`;
+    grid.rhoNote ? ` ${grid.rhoNote}` : ""
+  }${grid.trendNote ? ` ${grid.trendNote}` : ""}`;
   const priorLine = priorBlurb(prior, match.competition);
   const mindLine = mind && mind.notes.length > 0 ? ` ${mind.notes.join(" ")}` : "";
   const formLine = describeForm(form);
@@ -709,6 +774,35 @@ export function predictMarkets(
     valueEdge: null,
     rationale: `${xgLine} Most likely exact scoreline is ${topH}-${topA} (${(topP * 100).toFixed(1)}%) — a low-conviction market by nature.`,
   });
+
+  /*
+   * ── Decisive headline call ─────────────────────────────────────────────────
+   *
+   * The verdict is attached to the 1X2 pick because that is the market a reader
+   * acts on, and it is allowed to be a refusal. A model that always names a
+   * headline is not forecasting, it is decorating — when the fixture is genuinely
+   * open, the edge is thinner than the margin, or the competition has too little
+   * settled history to trust, the honest output is which of those is true. The
+   * confidence numbers are untouched either way: this adds a judgement, never a
+   * number the model did not earn.
+   */
+  const call = decideMatch({
+    candidates: picks.map((p) => ({
+      market: p.market,
+      selection: p.selection,
+      confidence: p.confidence,
+      valueEdge: p.valueEdge,
+    })),
+    settledSample: prior.settledSample,
+    competitionAccuracy: prior.competitionAccuracy,
+  });
+  const headline = picks.find((p) => p.market === "1X2");
+  if (headline) {
+    const support = call.reasons.filter((r) => r !== call.reasons[0]);
+    headline.rationale = `${headline.rationale} ${describeDecision(call)}${
+      support.length > 0 ? ` ${support.join(" ")}` : ""
+    }`;
+  }
 
   return picks;
 }
@@ -1113,6 +1207,10 @@ export async function runSportsIntelligence(opts: {
       where: {
         ...(providers.length > 0 ? { provider: { in: providers } } : {}),
         ...(snapshotIds.length > 0 ? { externalId: { in: snapshotIds } } : {}),
+        // Football only — see MODELED_SPORT. Picking a 1X2 or a "both teams to
+        // score" lean for a basketball fixture is not a rough estimate, it is a
+        // category error, and it was happening before this filter existed.
+        sport: MODELED_SPORT,
         status: { in: ["SCHEDULED", "LIVE", "HT"] },
         // Inside the horizon. A null kickoff stays eligible (an unknown start
         // time is not a reason to leave a fixture without a pick), which is why
@@ -1213,6 +1311,13 @@ export async function runSportsIntelligence(opts: {
   async function processMatch(row: (typeof stored)[number]): Promise<void> {
     const predicate = byKey.get(`${row.provider}:${row.externalId}`);
     if (!predicate) {
+      counts.skipped++;
+      return;
+    }
+    // Defence in depth: the query already filters on sport, but the grid inputs
+    // are built here, so the guard sits where the model is actually pointed at a
+    // fixture rather than trusting the read path to have been the only route in.
+    if (!isModeledSport(predicate.sport)) {
       counts.skipped++;
       return;
     }
@@ -1669,6 +1774,9 @@ export async function refreshApproachingKickoff(
     prisma.sportsMatch.findMany({
       where: {
         status: "SCHEDULED",
+        // Same reason as the main sweep: never regenerate a football pick for a
+        // fixture the football model does not describe.
+        sport: MODELED_SPORT,
         kickoff: { gte: now, lte: new Date(now.getTime() + windowMinutes * 60_000) },
       },
       include: {

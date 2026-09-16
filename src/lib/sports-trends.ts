@@ -25,6 +25,7 @@
 import { cacheGet, cacheSet } from "@/lib/redis";
 import { prisma } from "@/lib/prisma";
 import { createLogger } from "@/lib/logger";
+import { MODELED_SPORT } from "@/lib/sports-forecast";
 
 const log = createLogger("sports-trends");
 
@@ -159,6 +160,11 @@ export async function learnCompetitionTrends(
     .findMany({
       where: {
         status: "FT",
+        // Football only. A goal-based trend is meaningless for any other sport,
+        // and the live data proved the cost of not saying so: a basketball cup
+        // produced a "149.73 goals per game" trend that would have been applied
+        // to every fixture in that competition.
+        sport: MODELED_SPORT,
         kickoff: { gte: since },
         homeScore: { not: null },
         awayScore: { not: null },
