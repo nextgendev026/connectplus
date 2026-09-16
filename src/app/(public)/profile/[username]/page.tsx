@@ -6,6 +6,13 @@ import { cacheGet, cacheSet } from "@/lib/redis";
 import { ProfileHeader } from "@/components/profile/ProfileHeader";
 import { ProfileTabs } from "@/components/profile/ProfileTabs";
 
+/**
+ * Rendered per request, never prerendered — a profile shows live follower and
+ * post counts plus the visitor's own follow state, and the usernames are not
+ * knowable without the database that a build environment does not have.
+ */
+export const dynamic = "force-dynamic";
+
 export async function generateMetadata({
   params,
 }: {
@@ -31,6 +38,14 @@ export async function generateMetadata({
   return {
     title: `${displayName} (@${user.username}) — connectPlus`,
     description,
+    /*
+     * Without this the route inherited the root layout's `canonical: "/"`, which
+     * is worse than a cosmetic slip: these profiles are advertised in the sitemap
+     * (up to 500 of them, priority 0.5), so the sitemap was asking a crawler to
+     * index a set of pages that each declared themselves duplicates of the
+     * homepage. The canonical wins, and the entries were worth nothing.
+     */
+    alternates: { canonical: `/profile/${user.username}` },
     openGraph: {
       title: `${displayName} on connectPlus`,
       description,

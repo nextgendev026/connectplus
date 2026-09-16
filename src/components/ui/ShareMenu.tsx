@@ -45,6 +45,14 @@ interface ShareMenuProps {
   image?: string | null;
   hashtags?: string[];
   align?: "left" | "right";
+  /**
+   * The button's accessible name. The default assumes a story, which is wrong on
+   * a sports pick or a board: a screen reader announcing "Share this story" on a
+   * fixture card tells the reader nothing about what they are sharing.
+   */
+  ariaLabel?: string;
+  /** Tighter button for dense rows — card headers and toolbars. */
+  compact?: boolean;
 }
 
 interface ShareTarget {
@@ -88,6 +96,8 @@ export function ShareMenu({
   image,
   hashtags = [],
   align = "right",
+  ariaLabel = "Share this story",
+  compact = false,
 }: ShareMenuProps) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -312,12 +322,15 @@ export function ShareMenu({
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-800 text-surface-400 transition-all hover:bg-surface-700 hover:text-brand-400 hover:shadow-glow"
-        aria-label="Share this story"
+        className={cn(
+          "flex shrink-0 items-center justify-center rounded-full bg-surface-800 text-surface-400 transition-all hover:bg-surface-700 hover:text-brand-400 hover:shadow-glow",
+          compact ? "h-7 w-7" : "h-9 w-9"
+        )}
+        aria-label={ariaLabel}
         title="Share"
         aria-expanded={open}
       >
-        <Share2 className="h-4 w-4" />
+        <Share2 className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
       </button>
 
       {open && !isMobile ? (
@@ -342,13 +355,13 @@ export function ShareMenu({
               <div
                 role="dialog"
                 aria-modal="true"
-                aria-label="Share this story"
+                aria-label={ariaLabel}
                 className="absolute inset-x-0 bottom-0 max-h-[88vh] overflow-y-auto overscroll-contain rounded-t-3xl border-t border-surface-700 bg-surface-900 pb-[max(env(safe-area-inset-bottom),0.5rem)] shadow-2xl animate-slide-up"
               >
                 <div className="sticky top-0 z-10 flex items-center justify-between border-b border-surface-800 bg-surface-900/95 px-4 py-3 backdrop-blur">
                   <div className="flex items-center gap-2">
                     <span className="mx-auto absolute left-1/2 top-1.5 h-1 w-10 -translate-x-1/2 rounded-full bg-surface-700" />
-                    <p className="text-sm font-semibold text-surface-100">Share this story</p>
+                    <p className="text-sm font-semibold text-surface-100">{ariaLabel}</p>
                   </div>
                   <button
                     onClick={() => setOpen(false)}

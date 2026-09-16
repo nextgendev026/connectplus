@@ -5,6 +5,13 @@ import { prisma } from "@/lib/prisma";
 import { cn } from "@/lib/utils";
 import { RealtimeRefresh } from "@/components/feed/RealtimeRefresh";
 
+/**
+ * Rendered per request, never prerendered — the counts come from live posts, and
+ * prerendering also ran a database query in a build environment with no
+ * DATABASE_URL (see the same marker on the home feed).
+ */
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   // The brand comes from the root title template — see about/page.tsx.
   title: "Categories",

@@ -435,6 +435,11 @@ export function publicSettingKeys(): string[] {
 
 /** Ensure every catalog key exists in the DB (idempotent upsert). */
 export async function ensureSettings(): Promise<void> {
+  // Nothing to seed without a database, and this is the ONE settings path that
+  // does not fail soft — so it has to refuse when DATABASE_URL is absent rather
+  // than dragging a build down with it.
+  if (!process.env.DATABASE_URL) return;
+
   const existing = await prisma.platformSetting.findMany({
     select: { key: true },
   });
@@ -461,12 +466,36 @@ export async function ensureSettings(): Promise<void> {
 }
 
 /**
+ * The catalog's own defaults, which are a complete answer on their own: every key
+ * has one, so "no database" is a degraded configuration rather than a failure.
+ * Shared by the no-database short-circuit and the read-failure fallback so the two
+ * can never disagree about what an unconfigured platform looks like.
+ */
+function catalogDefaults(publicOnly: boolean): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const def of SETTINGS_CATALOG) {
+    if (publicOnly && !def.isPublic) continue;
+    out[def.key] = def.defaultValue;
+  }
+  return out;
+}
+
+/**
  * Read settings as a flat map (catalog defaults fill any row missing from DB).
  * Returns the public-safe subset only when `publicOnly` is true.
  */
 export async function getSettings(
   publicOnly = false
 ): Promise<Record<string, string>> {
+  /*
+   * Answered from the catalog when no database is configured — a `next build`
+   * with no DATABASE_URL, for instance. Prisma rejects every query in that state,
+   * so reading "through" it logged one validation error per prerendered page and
+   * made the build depend on a database it must not need. The defaults are the
+   * correct answer here, not a placeholder for one.
+   */
+  if (!process.env.DATABASE_URL) return catalogDefaults(publicOnly);
+
   const cacheKey = publicOnly ? "public" : "all";
   const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
@@ -496,12 +525,7 @@ export async function getSettings(
   if (rows === null) {
     const stale = lastKnown.get(cacheKey);
     if (stale) return stale;
-    const out: Record<string, string> = {};
-    for (const def of SETTINGS_CATALOG) {
-      if (publicOnly && !def.isPublic) continue;
-      out[def.key] = def.defaultValue;
-    }
-    return out;
+    return catalogDefaults(publicOnly);
   }
 
   const out: Record<string, string> = {};

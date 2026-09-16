@@ -24,6 +24,16 @@ import {
   PenLine,
 } from "lucide-react";
 
+/**
+ * Rendered per request, never prerendered.
+ *
+ * The feed reads live posts, and a build-time snapshot of it is stale the day it
+ * ships. It is also what broke the Cloudflare build: prerendering runs this page
+ * in an environment with no DATABASE_URL, so `next build` died on "Environment
+ * variable not found" instead of shipping.
+ */
+export const dynamic = "force-dynamic";
+
 // NOTE: no `ssr: false` — that option is illegal in Server Components.
 // Plain next/dynamic still code-splits each chunk so the first paint ships
 // less JavaScript; the components hydrate on the client as before.

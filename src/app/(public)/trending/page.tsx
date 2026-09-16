@@ -17,6 +17,13 @@ import { BentoGrid } from "@/components/blog/BentoGrid";
 import { RealtimeRefresh } from "@/components/feed/RealtimeRefresh";
 import type { PostWithAuthor } from "@/types";
 
+/**
+ * Rendered per request, never prerendered. A trending list frozen at build time
+ * is the one page guaranteed to be wrong, and prerendering it also required a
+ * database in the build environment — which the Cloudflare builder does not have.
+ */
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   // The brand comes from the root title template — see about/page.tsx.
   title: "Trending",

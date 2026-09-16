@@ -20,6 +20,13 @@ import { StyledContent } from "@/components/ui/StyledContent";
 import AdSlot from "@/components/ads/AdSlot";
 import { convexRecordView, convexViewCount } from "@/lib/convex";
 
+/**
+ * Rendered per request, never prerendered — an article carries live view counts
+ * and a reader's own bookmark state, and enumerating slugs at build time would
+ * require the database to be reachable from the build environment.
+ */
+export const dynamic = "force-dynamic";
+
 interface ArticleParams {
   params: Promise<{ slug: string }>;
 }

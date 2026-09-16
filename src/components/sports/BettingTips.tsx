@@ -19,6 +19,7 @@ import { tipsEndpoint } from "@/lib/sports-endpoint";
 import { explainPick } from "@/lib/pick-insights";
 import { PickReasons, REASON_ICONS } from "./PickReasons";
 import ReferralCards from "./ReferralCards";
+import { ShareMenu } from "@/components/ui/ShareMenu";
 
 interface TipMatch {
   id: string;
@@ -268,6 +269,23 @@ export default function BettingTips({
               Updated {freshness}
             </button>
           ) : null}
+          {/*
+            Sharing the board leads with the record, not with an invite: a model
+            that publishes how often it has been right is the reason to send this
+            on, and the recipient gets something to judge before they tap through.
+          */}
+          <ShareMenu
+            url="/sports?tab=tips"
+            title="Today's tips from the connectPlus model"
+            description={
+              record && record.settled > 0
+                ? `${data?.picks.length ?? 0} picks today, from a model running at ${record.accuracy}% across ${record.settled} settled tips.`
+                : `${data?.picks.length ?? 0} picks today from the connectPlus model, each with the reasoning behind it.`
+            }
+            hashtags={["connectPlus", "Sports", "BettingTips"]}
+            ariaLabel="Share today's tips"
+            align="left"
+          />
         </div>
 
         {/*
@@ -478,10 +496,26 @@ function FixtureTipsCard({ group }: { group: FixtureGroup }) {
         <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-surface-500">
           {match.competition}
         </span>
-        <span className={kickoffPill(kickoff)} title={kickoff.live ? "Happening now" : "Kick-off"}>
-          {kickoff.live ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" /> : <Clock className="h-3 w-3" />}
-          {kickoff.text}
-        </span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span className={kickoffPill(kickoff)} title={kickoff.live ? "Happening now" : "Kick-off"}>
+            {kickoff.live ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" /> : <Clock className="h-3 w-3" />}
+            {kickoff.text}
+          </span>
+          {/*
+            The pick and the model's own confidence travel in the message. A bare
+            link gives whoever receives it nothing to weigh, and this card's whole
+            argument is that the reasoning is the product.
+          */}
+          <ShareMenu
+            url="/sports?tab=tips"
+            title={`${match.homeTeam} vs ${match.awayTeam}: ${lead.selection} (${insight.belief}%)`}
+            description={`${insight.marketPlain} — the connectPlus model's pick for ${match.competition}.`}
+            hashtags={["connectPlus", "Sports"]}
+            ariaLabel={`Share the ${match.homeTeam} vs ${match.awayTeam} pick`}
+            compact
+            align="right"
+          />
+        </div>
       </div>
 
       <h3 className="px-4 pt-3 text-sm font-semibold text-surface-50">

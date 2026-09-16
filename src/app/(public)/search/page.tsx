@@ -4,6 +4,12 @@ import { SearchX, Search, ArrowRight } from "lucide-react";
 import { PostCard } from "@/components/blog/PostCard";
 import type { PostWithAuthor } from "@/types";
 
+/**
+ * Rendered per request, never prerendered — results depend on the query string,
+ * and the database it searches is not available in a build environment.
+ */
+export const dynamic = "force-dynamic";
+
 export const metadata = {
   // The brand comes from the root title template — see about/page.tsx.
   title: "Search",
