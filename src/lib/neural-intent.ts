@@ -22,6 +22,11 @@ export type Intent =
   | "outline_suggest"
   | "expand_content"
   | "curate_content"
+  | "creator_intelligence"
+  | "monetization_report"
+  | "traffic_depth"
+  | "external_signals"
+  | "mind_action"
   | "general_chat"
   | "general_platform"
   | "unknown";
@@ -279,6 +284,70 @@ const INTENT_PATTERNS: IntentPattern[] = [
     boostKeywords: ["next", "paragraph", "section", "more", "detail", "elaborate"],
   },
 
+  // ── Business, audience and action intents ──
+  // These sit before `general_chat` because that pattern scores on bare words
+  // like "help" (phrase match = 3), so a request such as "help me understand
+  // payouts" would otherwise be swallowed as small talk. Everything else is
+  // ordered before these, so no existing classification changes on a tie.
+  {
+    intent: "creator_intelligence",
+    keywords: ["creator", "creators", "influencer", "influencers", "directory", "niche", "niches", "followers", "follower", "talent", "creators"],
+    phrases: [
+      "creator directory", "top creators", "who are our creators", "creator analytics",
+      "follower growth", "creator report", "creator profiles", "niche tags",
+      "who writes for us", "creator leaderboard", "best creators", "top writers",
+      "creator economy", "who is verified",
+    ],
+    boostKeywords: ["growing", "growth", "audience", "demographics", "active", "dormant", "reach", "writes"],
+  },
+  {
+    intent: "monetization_report",
+    keywords: [
+      "revenue", "monetization", "monetize", "earnings", "payout", "payouts", "mpesa",
+      "billing", "subscription", "subscriptions", "advertising", "impressions", "clicks", "mrr", "sales", "daraja", "paypal",
+    ],
+    phrases: [
+      "monetization report", "how much revenue", "revenue report", "payout status",
+      "mpesa payouts", "airtel money", "subscription revenue", "ad revenue",
+      "how much are we making", "billing status", "paid subscriptions", "earnings report",
+      "are payouts working", "who is paying",
+    ],
+    boostKeywords: ["money", "paid", "settled", "failed", "refund", "price", "plan", "ads"],
+  },
+  {
+    intent: "traffic_depth",
+    keywords: ["traffic", "bounce", "bounces", "session", "sessions", "duration", "visitor", "visitors", "returning", "unique", "dwell"],
+    phrases: [
+      "bounce rate", "time on app", "time spent", "session duration",
+      "returning visitors", "unique visitors", "how long do people stay",
+      "traffic report", "traffic depth", "user traffic", "where do people leave",
+      "engagement time", "stickiness",
+    ],
+    boostKeywords: ["app", "minutes", "seconds", "leaving", "drop", "off", "stay", "loyal"],
+  },
+  {
+    intent: "external_signals",
+    keywords: ["weather", "competitor", "competitors", "competitive", "conference", "festival", "policy", "events", "market", "industry"],
+    phrases: [
+      "regional news", "east african news", "what is happening in the region",
+      "competitor analysis", "competitor awareness", "what are competitors doing",
+      "local events", "weather in", "news roundup", "market signals", "external signals",
+      "what is happening outside",
+    ],
+    boostKeywords: ["outside", "today", "kenya", "uganda", "tanzania", "rwanda", "region", "trending outside"],
+  },
+  {
+    intent: "mind_action",
+    keywords: ["publish", "unpublish", "schedule", "reschedule", "repost", "thumbnail", "visual", "image", "video"],
+    phrases: [
+      "publish this post", "schedule this post", "schedule a post", "publish it now",
+      "flag this comment", "flag the comment", "remove this comment", "delete this comment",
+      "draft a reply", "reply to this comment", "top replies", "surface replies",
+      "generate an image", "generate a video", "create a thumbnail", "make a visual",
+      "visual brief", "create a feature image",
+    ],
+    boostKeywords: ["now", "live", "confirm", "comment", "post", "cover", "story"],
+  },
   {
     intent: "general_chat",
     keywords: [],

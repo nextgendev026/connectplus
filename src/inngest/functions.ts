@@ -337,6 +337,31 @@ export const paymentsLifecycle = inngest.createFunction(
 );
 
 /**
+ * Platform pulse.
+ *
+ * Six-hourly monitoring pass that records traffic depth, the creator roster
+ * shape and revenue into the hive, diffed against the previous reading. The
+ * point is that the mind can report a *trend* — bounce rate rising, returning
+ * share falling — instead of a single number with nothing to compare it to.
+ */
+export const platformPulse = inngest.createFunction(
+  {
+    id: "platform-pulse",
+    name: "Platform pulse & monitoring",
+    triggers: [{ event: "platform-pulse" }, { cron: "45 */6 * * *" }],
+    concurrency: 1,
+    retries: 2,
+  },
+  async ({ step }) => {
+    await step.run("heartbeat", () => recordHeartbeat("platform-pulse"));
+    return step.run("pulse", async () => {
+      const { runPlatformPulse } = await import("@/lib/cron-jobs");
+      return runPlatformPulse();
+    });
+  }
+);
+
+/**
  * Status watchdog: runs the health checks every 5 minutes and alerts when a
  * service degrades or goes down. Uses `status:alert:<service>` cooldown keys
  * in Redis (6h) so a flapping service doesn't spam — one alert per episode.
@@ -669,4 +694,5 @@ export const functions = [
   statusWatchdog,
   statusDailySnapshot,
   paymentsLifecycle,
+  platformPulse,
 ];

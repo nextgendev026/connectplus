@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
           confidence: Math.max(classified.confidence, 0.7),
           sources: [] as string[],
         }
-      : await neuralMind.processQuery(message.trim(), history);
+      : await neuralMind.processQuery(message.trim(), history, { actorId: userId });
 
     // The confirmation leads the reply so the operator sees immediately that the
     // instruction was understood and is now live, rather than hoping it was.

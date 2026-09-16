@@ -6,6 +6,16 @@ import { createLogger } from "@/lib/logger";
 import { generateText, getAiConfig } from "@/lib/ai-provider";
 import { research, findingsToContext, type ResearchFinding } from "@/lib/web-research";
 import {
+  platformIntelligence,
+  type CreatorAnalytics,
+  type CreatorDirectory,
+  type ExternalSignals,
+  type LivePlatformBrief,
+  type Monetization,
+  type TrafficDepth,
+} from "@/lib/platform-intelligence";
+import { mindActions, type ActionResult } from "@/lib/mind-actions";
+import {
   composeDraft,
   continueText,
   buildOutline,
@@ -571,6 +581,11 @@ class NeuralMindEngine {
     const recall = await hiveBrain.recall(input, 8).catch(() => []);
     const hive = await hiveBrain.status().catch(() => null);
     const visits = await hiveBrain.getVisitAnalytics("7d").catch(() => null);
+    // The live business snapshot: creators, traffic depth, economy, trends,
+    // region. Cached inside platformIntelligence, and a failure here costs the
+    // brief, never the reply.
+    const liveBrief = await platformIntelligence.getLiveBrief().catch(() => null);
+    const liveBlock = liveBrief ? this.formatLiveBrief(liveBrief) : "";
 
     // Decide whether the question needs the open web: either the caller asked
     // for it, or the hive is thin on the subject.
@@ -604,10 +619,13 @@ class NeuralMindEngine {
       "Never invent statistics, quotes, or citations. Cite web sources inline as [1], [2] matching the order given.",
       "Prefer concrete numbers, named entities and next actions over vague advice.",
       "Use short markdown: bold labels, tight bullets. East African context (Kenya, Uganda, Tanzania, Rwanda) is the default frame; use Kiswahili naturally when it fits.",
+      "LIVE PLATFORM DATA is queried from the platform's own database and keyless public APIs moments before this reply. Treat it as current truth: use those figures for anything about creators, revenue, traffic, trends or the region, and say plainly when a number the admin asked for is not in it rather than estimating one.",
+      "You can also act: publishing, scheduling, comment triage and visual briefs are available, but every mutating change requires the admin to confirm it explicitly.",
     ].join(" ");
 
     const user = [
       `PLATFORM STATE: ${statsBlock}`,
+      liveBlock ? `\n${liveBlock}` : "",
       "",
       `HIVE MEMORY (learned from our posts, comments, RSS and past chats):\n${knowledgeBlock}`,
       findings.length
@@ -1075,6 +1093,170 @@ class NeuralMindEngine {
         return lines.join("\n");
       }
 
+      case "creator_intelligence": {
+        const { directory, analytics } = data as { directory: CreatorDirectory; analytics: CreatorAnalytics };
+        const lines = [
+          "**Creator Intelligence Report**",
+          "",
+          `• Creators on the platform: ${directory.total}`,
+          `• Active (published in 30 days): ${directory.active} · dormant: ${directory.dormant} · verified: ${directory.verified}`,
+          `• New creators in 30 days: ${directory.joined30d}`,
+          `• Total followers across the roster: ${analytics.totalFollowers.toLocaleString()} (+${analytics.followerGrowth30d} in 30 days)`,
+          `• Total reach: ${analytics.totalReach.toLocaleString()} views · avg engagement rate: ${analytics.avgEngagementRate}%`,
+        ];
+
+        if (directory.creators.length > 0) {
+          lines.push("", "**Directory**");
+          for (const c of directory.creators.slice(0, 12)) {
+            const badge = c.isVerified ? " ✓" : "";
+            lines.push(
+              `• **@${c.username}**${badge} — ${c.city ?? "no node"} · ${c.followers} followers (+${c.newFollowers30d}) · ` +
+                `${c.posts} posts · ${c.views.toLocaleString()} views · ${c.engagementRate}% engagement · ${c.active ? "active" : "dormant"}` +
+                (c.niches.length > 0 ? ` · niches: ${c.niches.join(", ")}` : "")
+            );
+          }
+        }
+
+        if (analytics.topByGrowth.length > 0) {
+          lines.push("", "**Fastest growing (30 days)**");
+          analytics.topByGrowth.slice(0, 5).forEach((c, i) => lines.push(`${i + 1}. @${c.username} — +${c.newFollowers} (${c.followers} total)`));
+        }
+        if (analytics.topByReach.length > 0) {
+          lines.push("", "**Biggest reach**");
+          analytics.topByReach.slice(0, 5).forEach((c, i) => lines.push(`${i + 1}. @${c.username} — ${c.views.toLocaleString()} views (${c.engagementRate}% engagement)`));
+        }
+        if (analytics.dormantCreators.length > 0) {
+          lines.push("", "**Dormant — worth a nudge**");
+          for (const c of analytics.dormantCreators.slice(0, 5)) {
+            lines.push(`• @${c.username} — last published ${c.lastPublishedAt ? c.lastPublishedAt.toISOString().slice(0, 10) : "never"}`);
+          }
+        }
+        return lines.join("\n");
+      }
+
+      case "monetization_report": {
+        const { money } = data as { money: Monetization };
+        const lines = [
+          "**Monetization Report**",
+          "",
+          `**Subscriptions:** ${money.subscriptions.active} active · ${money.subscriptions.trialing} trialing · ${money.subscriptions.cancelled} cancelled · ${money.subscriptions.pastDue} past due`,
+          `**MRR:** ${money.subscriptions.mrr.toLocaleString()} ${money.settlement.currency}`,
+          `**Settled revenue:** ${money.settlement.collected.toLocaleString()} ${money.settlement.currency} across ${money.settlement.succeeded} settled payments (${money.settlement.failed} failed, ${money.settlement.pending} pending)`,
+          "",
+          `**Ads:** ${money.ads.active}/${money.ads.total} active · ${money.ads.impressions.toLocaleString()} impressions · ${money.ads.clicks.toLocaleString()} clicks · ${money.ads.ctr}% CTR`,
+        ];
+        if (money.subscriptions.byPlan.length > 0) {
+          lines.push("", "**Active plans**");
+          for (const p of money.subscriptions.byPlan) {
+            lines.push(`• ${p.plan} (${p.tier}/${p.audience}) — ${p.active} subscribers at ${p.priceMonthly}/mo`);
+          }
+        }
+        if (money.rails.length > 0) {
+          lines.push("", "**Payout rails**");
+          for (const r of money.rails) {
+            const label = r.provider === "daraja" ? "M-Pesa (Daraja)" : r.provider === "paypal" ? "PayPal" : r.provider;
+            lines.push(`• ${label}: ${r.subscriptions} subscriptions${r.mpesaNumbers > 0 ? ` · ${r.mpesaNumbers} with a payer MSISDN on file` : ""}`);
+          }
+          const settled = money.settlement.byRail;
+          if (settled.length > 0) {
+            lines.push("", "**Collected by rail**");
+            for (const s of settled) lines.push(`• ${s.provider}: ${s.collected.toLocaleString()} ${money.settlement.currency} over ${s.settled} settlements`);
+          }
+        }
+        if (money.ads.topSpots.length > 0) {
+          lines.push("", "**Top ad placements**");
+          money.ads.topSpots.forEach((a, i) => lines.push(`${i + 1}. ${a.name} (${a.slot}) — ${a.impressions.toLocaleString()} impressions, ${a.clicks.toLocaleString()} clicks, ${a.ctr}% CTR`));
+        }
+        if (money.notes.length > 0) {
+          lines.push("", "**Caveats**");
+          for (const note of money.notes) lines.push(`• ${note}`);
+        }
+        return lines.join("\n");
+      }
+
+      case "traffic_depth": {
+        const { traffic } = data as { traffic: TrafficDepth };
+        const clock = (s: number) => (s >= 3600 ? `${(s / 3600).toFixed(1)}h` : s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`);
+        const audience = traffic.newVisitors + traffic.returningVisitors;
+        const returningShare = audience > 0 ? Math.round((traffic.returningVisitors / audience) * 1000) / 10 : 0;
+        const lines = [
+          `**Traffic Depth — ${traffic.window}**`,
+          "",
+          `• Views: ${traffic.views.toLocaleString()}`,
+          `• Unique visitors: ${traffic.uniqueVisitors.toLocaleString()}`,
+          `• Sessions: ${traffic.sessions.toLocaleString()}`,
+          `• New / returning: ${traffic.newVisitors.toLocaleString()} / ${traffic.returningVisitors.toLocaleString()} — ${returningShare}% returning`,
+          `• Bounce rate: ${traffic.bounceRate}% (sessions that left after a single page)`,
+          `• Pages per session: ${traffic.pagesPerSession}`,
+          `• Avg session: ${clock(traffic.avgSessionSeconds)} · total time on app: ${clock(traffic.totalTimeOnAppSeconds)}`,
+        ];
+        if (traffic.categories.length > 0) {
+          lines.push("", "**Traffic by category**");
+          for (const c of traffic.categories.slice(0, 8)) {
+            lines.push(`• ${c.category} — ${c.views.toLocaleString()} views, ${c.visitors.toLocaleString()} unique visitors`);
+          }
+        }
+        if (traffic.trafficSources.length > 0) {
+          lines.push("", "**Where they arrive from**");
+          for (const s of traffic.trafficSources.slice(0, 8)) lines.push(`• ${s.source} — ${s.views.toLocaleString()} views`);
+        }
+        if (traffic.countries.length > 0) {
+          lines.push("", "**Visitor countries**");
+          traffic.countries.slice(0, 6).forEach((c, i) => lines.push(`${i + 1}. ${c.country} — ${c.views.toLocaleString()} views`));
+        }
+        lines.push("", "_Session length is a lower bound: a session is a visitor+hour bucket, so a visit that crosses the hour boundary is counted as two shorter sessions._");
+        return lines.join("\n");
+      }
+
+      case "external_signals": {
+        const { signals } = data as { signals: ExternalSignals };
+        const lines = ["**External Signals**", ""];
+        if (signals.weather.length > 0) {
+          lines.push("**Weather right now**");
+          for (const w of signals.weather) lines.push(`• ${w.city}: ${w.temperatureC === null ? "unavailable" : `${Math.round(w.temperatureC)}°C`}${w.precipitationMm ? `, ${w.precipitationMm}mm rain` : ""} — ${w.summary}`);
+          lines.push("");
+        }
+        if (signals.regionalNews.length > 0) {
+          lines.push("**Regional news (7 days, matching East African terms)**");
+          for (const n of signals.regionalNews.slice(0, 10)) {
+            lines.push(`• **${n.title}** — ${n.source}${n.publishedAt ? `, ${n.publishedAt.toISOString().slice(0, 10)}` : ""}${n.topics.length > 0 ? ` · ${n.topics.join(", ")}` : ""}`);
+          }
+          lines.push("");
+        }
+        if (signals.competitors.length > 0) {
+          lines.push("**Competitor awareness (live web)**");
+          for (const c of signals.competitors) lines.push(`• **${c.title}** — ${c.snippet} (${c.url})`);
+          lines.push("");
+        }
+        if (signals.regionalNews.length === 0 && signals.competitors.length === 0) {
+          lines.push("No regional or competitor signals matched in the last week.");
+        }
+        if (signals.notes.length > 0) {
+          lines.push("**Notes**");
+          for (const note of signals.notes) lines.push(`• ${note}`);
+        }
+        return lines.join("\n");
+      }
+
+      case "mind_action": {
+        const { result } = data as { result: ActionResult };
+        const mark = result.ok ? (result.needsConfirmation ? "⏸" : "✓") : "⚠";
+        const lines = [`**${mark} ${result.action.replace(/_/g, " ")}**`, "", result.summary];
+        if (result.detail && !result.needsConfirmation) {
+          const entries = Object.entries(result.detail).filter(
+            ([k, v]) => k !== "svg" && k !== "prompt" && typeof v !== "object"
+          );
+          if (entries.length > 0) {
+            lines.push("", "**Detail**");
+            for (const [k, v] of entries) lines.push(`• ${k}: ${String(v)}`);
+          }
+        }
+        if (result.detail && typeof result.detail.prompt === "string") {
+          lines.push("", "**Generation prompt**", "", result.detail.prompt as string);
+        }
+        return lines.join("\n");
+      }
+
       case "run_sweep": {
         const { sweep, hive } = data;
         const activity = sweep.memoriesCreated > 30 ? "high activity" : sweep.memoriesCreated > 0 ? "normal" : "quiet";
@@ -1425,7 +1607,13 @@ class NeuralMindEngine {
    * the response is persisted back into the hive so the brains compound over
    * time (one more value than just answering).
    */
-  async processQuery(input: string, history: { role: string; content: string }[] = []): Promise<NeuralResponse> {
+  async processQuery(
+    input: string,
+    history: { role: string; content: string }[] = [],
+    /** Who is asking. Required before the mind will mutate anything, so an
+     *  action always has a named moderator on the audit row. */
+    opts: { actorId?: string } = {}
+  ): Promise<NeuralResponse> {
     const startedAt = Date.now();
     const { intent, confidence } = await this.classifyIntentWithMemory(input);
     this.log.info("processing query", { intent, confidence });
@@ -1493,6 +1681,35 @@ class NeuralMindEngine {
         enginesUsed.push("internal", "hive");
         const [analysis, engagement] = await Promise.all([this.analyzeContent(), hiveBrain.computeEngagement()]);
         data = { analysis, engagement };
+        break;
+      }
+      case "creator_intelligence": {
+        enginesUsed.push("internal");
+        const [directory, analytics] = await Promise.all([
+          platformIntelligence.getCreatorDirectory(40),
+          platformIntelligence.getCreatorAnalytics(40),
+        ]);
+        data = { directory, analytics };
+        break;
+      }
+      case "monetization_report": {
+        enginesUsed.push("internal");
+        data = { money: await platformIntelligence.getMonetization() };
+        break;
+      }
+      case "traffic_depth": {
+        enginesUsed.push("internal");
+        data = { traffic: await platformIntelligence.getTrafficDepth("7d") };
+        break;
+      }
+      case "external_signals": {
+        enginesUsed.push("external");
+        data = { signals: await platformIntelligence.getExternalSignals({ includeCompetitors: true }) };
+        break;
+      }
+      case "mind_action": {
+        enginesUsed.push("internal");
+        data = { result: await this.runAction(input, opts.actorId) };
         break;
       }
       case "system_health": {
@@ -1644,6 +1861,133 @@ class NeuralMindEngine {
   /** Traffic intelligence, never fatal when Analytics is empty or slow. */
   private async getVisitAnalyticsSafe(): Promise<Awaited<ReturnType<typeof hiveBrain.getVisitAnalytics>> | null> {
     return hiveBrain.getVisitAnalytics("7d").catch(() => null);
+  }
+
+  /**
+   * Render the live platform brief for the model prompt.
+   *
+   * Every line is a fact from the database or a keyless public API, so the model
+   * can answer business questions — who is growing, what the platform earns,
+   * where traffic leaks, what the region is doing — without a second round trip.
+   * A block that failed to load is simply absent rather than reported as zero,
+   * because a "0 returning visitors" that is really an outage misleads the model
+   * into inventing a story about it.
+   */
+  private formatLiveBrief(brief: LivePlatformBrief): string {
+    const parts: string[] = [];
+
+    if (brief.creators) {
+      parts.push(
+        `Creators: ${brief.creators.total} on the roster, ${brief.creators.active} active in the last 30 days, ` +
+          `${brief.creators.dormant} dormant, ${brief.creators.verified} verified, +${brief.creators.growth30d} followers in 30 days.`
+      );
+    }
+    if (brief.traffic) {
+      parts.push(
+        `Traffic (7d): ${brief.traffic.views} views, ${brief.traffic.uniqueVisitors} unique visitors, ` +
+          `${brief.traffic.bounceRate}% bounce rate, ${brief.traffic.returningShare}% returning, average session ${brief.traffic.avgSessionMinutes} minutes.`
+      );
+    }
+    if (brief.economy) {
+      parts.push(
+        `Economy: MRR ${brief.economy.mrr}, ${brief.economy.activeSubscriptions} active subscriptions, ` +
+          `${brief.economy.settledRevenue} settled to date, rails ${brief.economy.rails.join(", ") || "none"}.`
+      );
+    }
+    if (brief.trends && brief.trends.length > 0) {
+      parts.push(`Trending topics: ${brief.trends.map((t) => `${t.topic} (${t.posts} posts, ${t.views} views)`).join("; ")}.`);
+    }
+    if (brief.region && brief.region.length > 0) {
+      parts.push(`Regional headlines: ${brief.region.map((r) => `${r.headline} [${r.source}]`).join("; ")}.`);
+    }
+    if (brief.weather && brief.weather.length > 0) {
+      parts.push(`Weather now: ${brief.weather.map((w) => `${w.city} ${w.summary}`).join("; ")}.`);
+    }
+
+    if (parts.length === 0) return "";
+    return `LIVE PLATFORM DATA (queried just now — prefer these over any assumption):\n${parts.map((p) => `• ${p}`).join("\n")}`;
+  }
+
+  /**
+   * Route a natural-language action request to one of the mind's tools.
+   *
+   * The classifier only says *that* an action was asked for; it cannot say which
+   * post, which comment, or when. Those are pulled out here, and when something
+   * essential is missing the reply asks for it rather than guessing — acting on
+   * the wrong post is measurably worse than asking which one.
+   *
+   * Nothing destructive happens without `confirm` and, for anything that lands on
+   * the moderation ledger, a named acting admin.
+   */
+  private async runAction(input: string, actorId?: string): Promise<ActionResult> {
+    const lower = input.toLowerCase();
+    // Prisma cuids are the only ids in this schema; posts and comments both use them.
+    const id = /\b(c[a-z0-9]{20,30})\b/.exec(input)?.[1] ?? null;
+    const confirm = /\b(confirm|confirmed|yes|go ahead|do it|approved|publish it|make it live|delete it)\b/.test(lower);
+    const quoted = /["“”']([^"“”']{8,140})["“”']/.exec(input)?.[1] ?? null;
+    const need = (action: string, what: string): ActionResult => ({
+      ok: false,
+      action,
+      error: "missing_parameter",
+      summary: `I need ${what} before I can do that.`,
+    });
+
+    // Visuals need no record — only a subject.
+    if (
+      /\b(image|video|thumbnail|visual|cover|feature image|reel|clip)\b/.test(lower) &&
+      /\b(generate|make|create|design|build|draft|brief)\b/.test(lower)
+    ) {
+      const format: "cover" | "feature" | "short-form" = /vertical|short.?form|reel|tiktok|clip/.test(lower)
+        ? "short-form"
+        : /\bfeature\b/.test(lower)
+          ? "feature"
+          : "cover";
+      return mindActions.generateVisualBrief({ title: quoted ?? this.extractDraft(input).slice(0, 140), format });
+    }
+
+    // Comment triage, most specific phrasing first.
+    if (/\b(top|best|surface|show)\b/.test(lower) && /\brepl(y|ies)\b/.test(lower)) {
+      if (!id) return need("surface_replies", "the post id (the `c…` string) whose comments to rank");
+      return mindActions.surfaceTopReplies({ postId: id });
+    }
+    if (/\brepl(y|ies|ying)\b/.test(lower)) {
+      if (!id) return need("draft_reply", "the comment id (the `c…` string) to reply to");
+      return mindActions.draftReply({ commentId: id });
+    }
+    if (/\bflag\b/.test(lower)) {
+      if (!id) return need("flag_comment", "the comment id (the `c…` string) to flag");
+      if (!actorId) return need("flag_comment", "an authenticated admin identity, so the audit entry has a name on it");
+      return mindActions.flagComment({ commentId: id, moderatorId: actorId, confirm });
+    }
+    if (/\b(remove|delete)\b/.test(lower)) {
+      if (!id) return need("remove_comment", "the comment id (the `c…` string) to remove");
+      if (!actorId) return need("remove_comment", "an authenticated admin identity before I delete anything");
+      const reason = quoted ?? `Removed on admin instruction: ${input.slice(0, 160)}`;
+      return mindActions.removeComment({ commentId: id, moderatorId: actorId, reason, confirm });
+    }
+
+    // Post lifecycle.
+    if (/\b(publish|unpublish|go live|make it live)\b/.test(lower)) {
+      if (!id) return need("publish_post", "the post id (the `c…` string) to publish");
+      return mindActions.publishPost({ postId: id, confirm });
+    }
+    if (/\b(schedul|reschedul)/.test(lower)) {
+      if (!id) return need("schedule_post", "the post id (the `c…` string) to schedule");
+      const when = parseWhen(input);
+      if (!when) {
+        return need("schedule_post", 'a date and time — for example "schedule it for 2026-09-20 09:00" or "in 3 hours"');
+      }
+      return mindActions.schedulePost({ postId: id, when, confirm });
+    }
+
+    return {
+      ok: false,
+      action: "mind_action",
+      error: "unknown_action",
+      summary:
+        "I can publish or schedule a post, triage comments (rank replies, draft a reply, flag or remove one) and build a visual brief. " +
+        "Tell me which and include the `c…` id of the record.",
+    };
   }
 
   /**
@@ -1875,6 +2219,55 @@ class NeuralMindEngine {
       });
     }
   }
+}
+
+/**
+ * Read a scheduling date out of a chat instruction.
+ *
+ * Accepts an explicit `YYYY-MM-DD [HH:mm]`, a relative window ("in 3 hours"),
+ * or "today"/"tomorrow" with an optional time. Returns null when it cannot be
+ * sure, because publishing on a misread date is worse than asking again.
+ */
+export function parseWhen(input: string): Date | null {
+  const iso = /\b(\d{4}-\d{2}-\d{2})(?:[ T](\d{1,2}:\d{2}))?\b/.exec(input);
+  if (iso) {
+    const parsed = new Date(`${iso[1]}T${iso[2] ?? "09:00"}:00`);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+
+  const rel = /\bin\s+(\d{1,3})\s*(minute|min|hour|hr|day|week)s?\b/i.exec(input);
+  if (rel) {
+    const n = Number(rel[1]);
+    const unit = (rel[2] ?? "").toLowerCase();
+    const ms = unit.startsWith("min")
+      ? 60_000
+      : unit === "hour" || unit === "hr"
+        ? 3_600_000
+        : unit.startsWith("day")
+          ? 86_400_000
+          : 604_800_000;
+    return new Date(Date.now() + n * ms);
+  }
+
+  const day = /\b(today|tomorrow|kesho|leo)\b/i.exec(input);
+  if (day) {
+    const base = new Date();
+    base.setHours(0, 0, 0, 0);
+    if (/tomorrow|kesho/i.test(day[1] ?? "")) base.setDate(base.getDate() + 1);
+
+    const time = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i.exec(input);
+    let hours = time ? Number(time[1]) : 9;
+    const minutes = Number(time?.[2] ?? 0);
+    const meridiem = time?.[3]?.toLowerCase();
+    if (meridiem === "pm" && hours < 12) hours += 12;
+    if (meridiem === "am" && hours === 12) hours = 0;
+    if (hours > 23 || minutes > 59) return null;
+
+    base.setHours(hours, minutes, 0, 0);
+    return base;
+  }
+
+  return null;
 }
 
 export const neuralMind = new NeuralMindEngine();

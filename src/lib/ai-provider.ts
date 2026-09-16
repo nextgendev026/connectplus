@@ -21,7 +21,7 @@ const OPENAI_COMPATIBLE: Record<
   GatewayName,
   { baseUrl: string; defaultModel: string; extraHeaders?: Record<string, string> }
 > = {
-  openai: { baseUrl: "https://api.openai.com/v1", defaultModel: "gpt-4o-mini" },
+  openai: { baseUrl: "https://api.openai.com/v1", defaultModel: "gpt-5.4-mini" },
   openrouter: {
     baseUrl: "https://openrouter.ai/api/v1",
     defaultModel: "z-ai/glm-5.2:free",
@@ -159,21 +159,31 @@ export async function fetchOpenRouterFreeModels(): Promise<string[]> {
 /**
  * Fetch available models from OpenCode Zen API.
  * Falls back to static list when the API is unreachable.
+ *
+ * The key is OPTIONAL, not a precondition. `GET /zen/v1/models` is a public
+ * catalogue endpoint — it answers 200 with the full roster whether or not a key
+ * is presented (verified directly). Gating on the key meant an unkeyed install
+ * could only ever render the hard-coded 10-entry fallback, which is precisely
+ * the "stale static list" symptom: the genuinely free ids Zen publishes
+ * (`big-pickle`, `mimo-v2.5-free`, `nemotron-3-ultra-free`, …) appear in no
+ * static list, so an admin never saw that they existed. The key is still sent
+ * when present, because a keyed call returns the models that key can actually
+ * reach.
  */
 export async function fetchOpenCodeModels(keyOverride?: string): Promise<string[]> {
   try {
     const key = keyOverride || process.env.OPENCODE_API_KEY || "";
-    if (!key) return [...OPENCODE_MODELS];
     const res = await fetch("https://opencode.ai/zen/v1/models", {
       signal: AbortSignal.timeout(10_000),
-      headers: { Authorization: `Bearer ${key}` },
+      ...(key ? { headers: { Authorization: `Bearer ${key}` } } : {}),
     });
     if (!res.ok) return [...OPENCODE_MODELS];
     const data = await res.json();
     const models: string[] = data?.data
       ?.map((m: { id: string }) => m.id)
       .filter((id: string) => !id.includes("contributor-free")) // exclude environment-locked free models
-      .slice(0, 30) ?? [];
+      .filter((id: string) => isChatCapableModel(id))
+      .slice(0, 60) ?? [];
     return models.length > 0 ? models : [...OPENCODE_MODELS];
   } catch {
     return [...OPENCODE_MODELS];
@@ -183,20 +193,39 @@ export async function fetchOpenCodeModels(keyOverride?: string): Promise<string[
 /**
  * Anthropic fallback when no key is available to ask the live list.
  *
- * Deliberately a `-latest` alias rather than a dated id: Anthropic ships
- * dated snapshots and retires them, and the alias is the one identifier that
- * keeps resolving without a code change. A keyed install overrides it with
- * whatever `/v1/models` reports.
+ * Deliberately a date-less alias rather than a dated snapshot: Anthropic ships
+ * dated ids and retires them, and the alias is the one identifier that keeps
+ * resolving without a code change. A keyed install overrides it with whatever
+ * `/v1/models` reports.
+ *
+ * The previous values — `claude-3-5-haiku-latest` and `claude-3-5-sonnet-latest`
+ * — are retired and fail every request. The whole Claude 3 generation is gone:
+ * Claude 3.5 Haiku was retired on 2026-02-19 and Claude 3.5 Sonnet on
+ * 2025-10-28. Because this constant is also the Anthropic *default* model in
+ * `getAiConfig`, a keyed install with no explicit override was calling a model
+ * that no longer existed, and every completion returned null.
+ *
+ * Claude Haiku 4.5 is the current fastest model, but its own deprecation window
+ * opens 2026-10-15 — which is exactly why the live list should drive this and
+ * this constant is only a last resort.
  */
-export const ANTHROPIC_FALLBACK_MODEL = "claude-3-5-haiku-latest";
+export const ANTHROPIC_FALLBACK_MODEL = "claude-haiku-4-5";
 
-/** OpenAI chat models used when the live `/v1/models` list cannot be read. */
-export const OPENAI_FALLBACK_MODELS = ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"] as const;
+/**
+ * OpenAI chat models used when the live `/v1/models` list cannot be read.
+ *
+ * `gpt-4o` was dropped: its API shutdown is 2026-10-23, so offering it in the
+ * admin picker handed out a model that would stop answering weeks later.
+ * `gpt-4o-mini` still resolves but is a 2024 generation, so these are the
+ * current actives filling the same cheap / mid / frontier roles, ending with
+ * the model OpenAI itself names as the replacement for the retired 4.x line.
+ */
+export const OPENAI_FALLBACK_MODELS = ["gpt-5.4-mini", "gpt-5.4", "gpt-5.6-sol"] as const;
 
 /** Anthropic models used when the live `/v1/models` list cannot be read. */
 export const ANTHROPIC_FALLBACK_MODELS = [
   ANTHROPIC_FALLBACK_MODEL,
-  "claude-3-5-sonnet-latest",
+  "claude-sonnet-5",
 ] as const;
 
 /**

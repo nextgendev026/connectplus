@@ -10,6 +10,7 @@ import {
   runEmbedPosts,
   runHiveSweep,
   runPaymentsLifecycle,
+  runPlatformPulse,
   runPublishScheduled,
   runRadioSweep,
   runRecoverThumbnails,
@@ -173,6 +174,19 @@ export const CRON_JOBS: readonly CronJobDef[] = [
     everyMinutes: 1440,
     essential: false,
     run: () => runStatusWatchdog(),
+  },
+  {
+    id: "platform-pulse",
+    name: "Platform pulse",
+    description:
+      "Records traffic depth, creator shape and revenue each run and diffs them against the previous pulse, so bounce rate, session time and returning share are monitored over time rather than only measured once.",
+    // Six-hourly. The window it reads is a rolling seven days, so sampling it
+    // more often would produce deltas that move mostly with the clock rather
+    // than with the audience. Four readings a day is enough to see a real shift.
+    cron: "45 */6 * * *",
+    everyMinutes: 360,
+    essential: false,
+    run: () => runPlatformPulse(),
   },
 ];
 

@@ -401,3 +401,29 @@ export async function runStatusWatchdog(): Promise<{
 
   return { alerted: sendable.length, alerts: sendable.map((s) => ({ id: s.id, name: s.name, status: s.status, detail: s.detail })) };
 }
+
+/**
+ * Platform pulse — the monitoring heartbeat.
+ *
+ * Records one memory per run holding traffic depth (views, unique visitors,
+ * sessions, bounce rate, average session length, returning share), the creator
+ * roster shape and the money summary, each diffed against the previous pulse.
+ * Keeping the diff inside the memory is what lets the mind answer "is the
+ * bounce rate getting worse" rather than only "what is it" — and it needs no
+ * rollup table, because each memory carries the inputs it was derived from.
+ *
+ * Never rethrows: a pulse that cannot be written must not stop the rest of the
+ * schedule, and the next run picks up where this one left off.
+ */
+export async function runPlatformPulse(): Promise<{ day: string; deltas: number; memoryId: string } | { error: string }> {
+  try {
+    const { platformIntelligence } = await import("@/lib/platform-intelligence");
+    const pulse = await platformIntelligence.learnPlatformPulse();
+    log.info("platform pulse recorded", { day: pulse.day, deltas: pulse.deltas.length });
+    return { day: pulse.day, deltas: pulse.deltas.length, memoryId: pulse.memoryId };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log.warn("platform pulse failed", { error: message });
+    return { error: message };
+  }
+}

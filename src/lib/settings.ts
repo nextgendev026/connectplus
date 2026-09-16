@@ -356,7 +356,7 @@ export const SETTINGS_CATALOG: SettingDef[] = [
     defaultValue: "",
     group: "api",
     label: "OpenAI model",
-    hint: "Optional model override, e.g. gpt-4o-mini.",
+    hint: "Optional model override, e.g. gpt-5.4-mini.",
     type: "text",
   },
   {
@@ -364,7 +364,7 @@ export const SETTINGS_CATALOG: SettingDef[] = [
     defaultValue: "",
     group: "api",
     label: "Anthropic model",
-    hint: "Optional model override, e.g. claude-3-5-haiku-latest.",
+    hint: "Optional model override, e.g. claude-haiku-4-5.",
     type: "text",
   },
   {
