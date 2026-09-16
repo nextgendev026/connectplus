@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronRight, Loader2, Newspaper, Infinity as InfinityIcon } from "lucide-react";
+import { ChevronRight, Eye, Heart, Loader2, MessageCircle, Newspaper, Infinity as InfinityIcon } from "lucide-react";
 import { cn, estimateReadTime } from "@/lib/utils";
 import { coverSrc } from "@/lib/thumb";
 
@@ -19,6 +19,13 @@ interface LoadedPost {
   author: { name: string | null; username: string; avatar: string | null };
   category: { name: string; slug: string } | null;
   _count: { comments: number; likes: number };
+}
+
+/** Compact 1.2K / 3.4M form, matching the server-rendered feed card. */
+function formatViews(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`;
+  return String(count);
 }
 
 interface LoadMoreFeedProps {
@@ -118,7 +125,7 @@ export function LoadMoreFeed({
                 <p className="text-surface-400 text-sm leading-relaxed mb-4 line-clamp-2">
                   {post.excerpt ?? post.title}
                 </p>
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
                   <div className="flex items-center gap-2 min-w-0">
                     <div className="w-7 h-7 rounded-full bg-gradient-to-br from-brand-500 to-accent-cyan flex items-center justify-center text-xs font-bold text-white overflow-hidden shrink-0">
                       {post.author.avatar ? (
@@ -141,19 +148,36 @@ export function LoadMoreFeed({
                       {estimateReadTime(post.title + " " + (post.excerpt ?? ""))} min
                     </span>
                   </div>
-                  {post.sourceUrl && (
-                    <a
-                      href={post.sourceUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      title={`Read the original${post.source ? ` on ${post.source}` : ""}`}
-                      className="inline-flex items-center gap-1 rounded-full bg-surface-800/90 px-2 py-0.5 text-[10px] font-medium text-surface-400 ring-1 ring-surface-700/60 transition-colors hover:text-brand-400 hover:ring-brand-500/30"
-                    >
-                      <Newspaper className="h-2.5 w-2.5" />
-                      {post.source ? `via ${post.source}` : "via source"}
-                    </a>
-                  )}
+                  {/* Same stats the server-rendered feed card shows. This card
+                      used to carry the count in its payload and drop it, so the
+                      feed's own cards stopped reading as a series. */}
+                  <div className="flex shrink-0 items-center gap-2.5 text-[11px] text-surface-500">
+                    {post.sourceUrl && (
+                      <a
+                        href={post.sourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        title={`Read the original${post.source ? ` on ${post.source}` : ""}`}
+                        className="inline-flex items-center gap-1 rounded-full bg-surface-800/90 px-2 py-0.5 text-[10px] font-medium text-surface-400 ring-1 ring-surface-700/60 transition-colors hover:text-brand-400 hover:ring-brand-500/30"
+                      >
+                        <Newspaper className="h-2.5 w-2.5" />
+                        {post.source ? `via ${post.source}` : "via source"}
+                      </a>
+                    )}
+                    <span className="inline-flex items-center gap-1" title="Views">
+                      <Eye className="h-3 w-3" />
+                      {formatViews(post.viewCount)}
+                    </span>
+                    <span className="inline-flex items-center gap-1" title="Likes">
+                      <Heart className="h-3 w-3" />
+                      {post._count?.likes ?? 0}
+                    </span>
+                    <span className="inline-flex items-center gap-1" title="Comments">
+                      <MessageCircle className="h-3 w-3" />
+                      {post._count?.comments ?? 0}
+                    </span>
+                  </div>
                 </div>
               </div>
             </Link>

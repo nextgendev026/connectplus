@@ -23,8 +23,10 @@ import {
   Wand2,
   Send,
   Menu,
+  Check,
   ChevronRight,
 } from "lucide-react";
+import type { WritingSuggestion } from "@/lib/writing-checks";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -166,6 +168,18 @@ interface StudioSidebarProps {
   copilotResult: CopilotResult | null;
   setCopilotResult: Dispatch<SetStateAction<CopilotResult | null>>;
   applyCopilot: (result: CopilotResult) => void;
+  /* Live inline writing checks (the Grammarly-shaped copilot) */
+  writingChecks: {
+    suggestions: WritingSuggestion[];
+    score: number;
+    grade: string;
+    tone: string;
+    counts: Record<string, number>;
+  } | null;
+  checksBusy: boolean;
+  applyWritingCheck: (suggestion: WritingSuggestion) => void;
+  applyAllWritingChecks: () => void;
+  dismissWritingCheck: (id: string) => void;
   /* Error */
   error: string | null;
   setError: Dispatch<SetStateAction<string | null>>;
@@ -244,6 +258,7 @@ function SidebarContent(props: SidebarContentProps) {
     enhanceBusy, runEnhance, enhancement, setEnhancement,
     copilotBusy, runCopilot, copilotPrompt, setCopilotPrompt,
     copilotError, setCopilotError, copilotResult, setCopilotResult, applyCopilot,
+    writingChecks, checksBusy, applyWritingCheck, applyAllWritingChecks, dismissWritingCheck,
   } = props;
 
   return (
@@ -275,6 +290,16 @@ function SidebarContent(props: SidebarContentProps) {
       {/* ── AI Brain Tab ──────────────────────── */}
       {railTab === "ai" && (
         <div className="space-y-4">
+          {/* Live writing checks — issues addressed by range, applied in place */}
+          <WritingChecksPanel
+            checks={writingChecks}
+            busy={checksBusy}
+            hasDraft={content.trim().length >= 40}
+            onApply={applyWritingCheck}
+            onApplyAll={applyAllWritingChecks}
+            onDismiss={dismissWritingCheck}
+          />
+
           {/* AI Content Studio */}
           <div className="relative overflow-hidden rounded-2xl bg-surface-900/60 border border-brand-500/20 p-5 shadow-card">
             <div className="pointer-events-none absolute -top-10 -right-10 h-32 w-32 rounded-full bg-brand-500/10 blur-2xl" />
@@ -846,6 +871,144 @@ function SidebarContent(props: SidebarContentProps) {
 /* ------------------------------------------------------------------ */
 /*  Small helper components                                            */
 /* ------------------------------------------------------------------ */
+
+/**
+ * The live checks panel.
+ *
+ * Reads as Grammarly's card, not a report: the score tells the writer how the
+ * draft is doing at a glance, and each issue is a one-tap fix. Issues that
+ * carry a `replacement` get an Apply button; the judgement-only ones get a
+ * Dismiss so the list can be cleared without pretending they were fixed.
+ */
+function WritingChecksPanel({
+  checks,
+  busy,
+  hasDraft,
+  onApply,
+  onApplyAll,
+  onDismiss,
+}: {
+  checks: StudioSidebarProps["writingChecks"];
+  busy: boolean;
+  hasDraft: boolean;
+  onApply: (suggestion: WritingSuggestion) => void;
+  onApplyAll: () => void;
+  onDismiss: (id: string) => void;
+}) {
+  const fixable = checks?.suggestions.filter((s) => s.replacement !== null) ?? [];
+  const score = checks?.score ?? 100;
+
+  return (
+    <div className="relative overflow-hidden rounded-2xl bg-surface-900/60 border border-emerald-500/25 p-5 shadow-card">
+      <div className="pointer-events-none absolute -top-10 -right-10 h-32 w-32 rounded-full bg-emerald-500/10 blur-2xl" />
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-semibold text-emerald-300 uppercase tracking-wider flex items-center gap-2">
+          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500/30 to-brand-500/20 border border-emerald-500/25">
+            <Check className="w-3 h-3 text-emerald-300" />
+          </span>
+          Writing checks
+        </h3>
+        {busy ? (
+          <span className="flex items-center gap-1 type-caption text-surface-500">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            checking…
+          </span>
+        ) : checks ? (
+          <span
+            className={cn(
+              "rounded-full px-2 py-0.5 type-caption font-semibold",
+              checks.score >= 90 ? "bg-emerald-500/15 text-emerald-300" : checks.score >= 75 ? "bg-brand-500/15 text-brand-300" : "bg-amber-500/15 text-amber-300"
+            )}
+          >
+            {checks.grade} · {checks.score}
+          </span>
+        ) : null}
+      </div>
+
+      {!hasDraft ? (
+        <p className="type-caption text-surface-500">
+          Write a sentence or two and the copilot starts checking as you go.
+        </p>
+      ) : (
+        <>
+          <div className="flex items-center gap-2">
+            <div className="h-1.5 flex-1 rounded-full bg-surface-800">
+              <div
+                className={cn(
+                  "h-1.5 rounded-full transition-all duration-500",
+                  score >= 90 ? "bg-emerald-500" : score >= 75 ? "bg-brand-500" : score >= 60 ? "bg-amber-500" : "bg-red-500"
+                )}
+                style={{ width: `${score}%` }}
+              />
+            </div>
+            {checks ? <span className="type-caption text-surface-400">{checks.tone}</span> : null}
+          </div>
+
+          {checks && checks.suggestions.length === 0 ? (
+            <p className="mt-3 type-meta text-emerald-400">No issues found — this draft reads clean.</p>
+          ) : null}
+
+          {checks && checks.suggestions.length > 0 ? (
+            <ul className="mt-3 max-h-64 space-y-2 overflow-y-auto pr-0.5">
+              {checks.suggestions.slice(0, 12).map((s) => (
+                <li key={s.id} className="rounded-lg border border-surface-800 bg-surface-950/40 p-2.5">
+                  <div className="flex items-start gap-2">
+                    <span
+                      className={cn(
+                        "mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide",
+                        s.kind === "correctness" ? "bg-red-500/15 text-red-300"
+                          : s.kind === "clarity" ? "bg-brand-500/15 text-brand-300"
+                          : s.kind === "engagement" ? "bg-accent-violet/15 text-accent-violet"
+                          : "bg-surface-700/60 text-surface-300"
+                      )}
+                    >
+                      {s.kind}
+                    </span>
+                    <p className="type-meta flex-1 text-surface-300 leading-relaxed">{s.message}</p>
+                    <button
+                      onClick={() => onDismiss(s.id)}
+                      title="Dismiss"
+                      className="shrink-0 rounded p-0.5 text-surface-600 hover:text-surface-300 transition-colors"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                  {s.replacement !== null ? (
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate rounded bg-red-500/10 px-1.5 py-0.5 type-caption text-red-300 line-through">
+                        {s.original}
+                      </span>
+                      <span className="shrink-0 text-surface-600">→</span>
+                      <span className="min-w-0 flex-1 truncate rounded bg-emerald-500/10 px-1.5 py-0.5 type-caption text-emerald-300">
+                        {s.replacement}
+                      </span>
+                      <button
+                        onClick={() => onApply(s)}
+                        className="shrink-0 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 type-caption font-semibold text-emerald-300 hover:bg-emerald-500/20 transition-colors"
+                      >
+                        Apply
+                      </button>
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          {fixable.length > 1 ? (
+            <button
+              onClick={onApplyAll}
+              className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-emerald-500/15 to-brand-500/10 border border-emerald-500/25 px-2 py-2 type-caption text-emerald-300 hover:from-emerald-500/25 hover:to-brand-500/15 transition-all"
+            >
+              <Wand2 className="h-3 w-3" />
+              Fix all {fixable.length}
+            </button>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
 
 function SidebarButton({
   onClick,

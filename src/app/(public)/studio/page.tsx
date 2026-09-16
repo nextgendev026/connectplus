@@ -11,6 +11,8 @@ import { ArrowLeft, Eye, EyeOff, Upload, Loader2, X, PenLine, AlertCircle, Clock
 import { StudioToolbar } from "@/components/studio/StudioToolbar";
 import { StudioPreview } from "@/components/studio/StudioPreview";
 import { StudioSidebar } from "@/components/studio/StudioSidebar";
+import { CheckedEditor } from "@/components/studio/CheckedEditor";
+import { applySuggestion, applySuggestions, type WritingSuggestion } from "@/lib/writing-checks";
 
 const AUTOSAVE_MS = 4000;
 const BACKUP_KEY = "connectplus:studio:new";
@@ -82,8 +84,82 @@ export default function StudioPage() {
   const [copilotResult, setCopilotResult] = useState<{ action: "rewrite" | "continue" | "outline" | "summarize" | "headline" | "tags" | "curate" | "assist" | "seo" | "plagiarism" | "optimize"; text: string; alternatives?: string[]; meta?: { notes?: string[]; score?: number; grade?: string; heading?: string; tags?: string[]; wordsBefore?: number; wordsAfter?: number } } | null>(null);
   const mountedRef = useRef(true);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+  /*
+   * Live inline checks — the Grammarly-shaped half of the copilot.
+   *
+   * The brain already reads the composer on demand (title/content/selection);
+   * this reads it *continuously*, on a debounce, and hands back issues addressed
+   * by character offset. The composer then applies a fix to the exact range, so
+   * a change lands where the writer is looking instead of replacing the draft.
+   */
+  const [writingChecks, setWritingChecks] = useState<{
+    suggestions: WritingSuggestion[];
+    score: number;
+    grade: string;
+    tone: string;
+    counts: Record<string, number>;
+  } | null>(null);
+  const [checksBusy, setChecksBusy] = useState(false);
+  const checksSeq = useRef(0);
   const wordCount = content.split(/\s+/).filter(Boolean).length;
   const readTime = Math.max(1, Math.ceil(wordCount / 200));
+
+  useEffect(() => {
+    if (showPreview || content.trim().length < 40) {
+      setWritingChecks(null);
+      setChecksBusy(false);
+      return;
+    }
+    // Sequence-stamped so a slow response for an old draft can never overwrite
+    // the checks for the text now on screen.
+    const seq = ++checksSeq.current;
+    const timer = setTimeout(async () => {
+      setChecksBusy(true);
+      try {
+        const res = await fetch("/api/ai/studio", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ action: "inspect", content, title, excerpt, tags, category: categoryName }),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (checksSeq.current !== seq || !mountedRef.current) return;
+        setWritingChecks({
+          suggestions: Array.isArray(data.suggestions) ? data.suggestions : [],
+          score: data.meta?.score ?? 100,
+          grade: data.meta?.grade ?? "A",
+          tone: data.meta?.tone ?? "Neutral",
+          counts: data.meta?.counts ?? {},
+        });
+      } catch {
+        // A failed check is silent: the editor keeps working, the panel simply
+        // does not update. Nothing about writing should depend on the network.
+      } finally {
+        if (checksSeq.current === seq && mountedRef.current) setChecksBusy(false);
+      }
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [content, title, excerpt, tags, categoryName, showPreview]);
+
+  /** Apply one inline fix to its exact range, then let the debounce re-check. */
+  const applyWritingCheck = useCallback((suggestion: WritingSuggestion) => {
+    setContent((prev) => applySuggestion(prev, suggestion));
+    // Applied fixes shift every later offset, so the remaining suggestions are
+    // dropped rather than applied against stale ranges; the debounce refills.
+    setWritingChecks((prev) => (prev ? { ...prev, suggestions: [] } : prev));
+  }, []);
+
+  const applyAllWritingChecks = useCallback(() => {
+    setContent((prev) => (writingChecks ? applySuggestions(prev, writingChecks.suggestions) : prev));
+    setWritingChecks((prev) => (prev ? { ...prev, suggestions: [] } : prev));
+  }, [writingChecks]);
+
+  const dismissWritingCheck = useCallback((id: string) => {
+    setWritingChecks((prev) =>
+      prev ? { ...prev, suggestions: prev.suggestions.filter((s) => s.id !== id) } : prev
+    );
+  }, []);
 
   const loadCategories = useCallback(async () => {
     try { const res = await fetch("/api/posts?limit=100"); const data = await res.json(); if (!data?.posts) return; const map = new Map<string, Category>(); for (const post of data.posts) { if (post.category && !map.has(post.category.id)) map.set(post.category.id, post.category); } setCategoriesList(Array.from(map.values())); } catch {}
@@ -314,7 +390,15 @@ export default function StudioPage() {
                 </div>
                 <input type="text" placeholder="Your story title..." value={title} onChange={(e) => setTitle(e.target.value)} className="w-full bg-transparent text-2xl sm:text-3xl lg:text-4xl font-display font-extrabold text-editor placeholder-editor focus:outline-none tracking-tight border-b-2 border-transparent pb-3 focus:border-brand-500/30 transition-colors" />
                 <StudioToolbar onInsert={insertMarkdown} disabled={showPreview} />
-                <textarea ref={contentRef} placeholder="Start writing your story... Share your perspective on technology, culture, business, or life in East Africa." value={content} onChange={(e) => setContent(e.target.value)} rows={20} className="w-full min-h-[50vh] bg-surface-800/80 border border-surface-700/50 rounded-2xl px-4 sm:px-6 py-5 text-[15px] sm:text-base font-medium text-editor placeholder-editor placeholder:font-normal focus:outline-none focus:border-brand-500/40 focus:ring-1 focus:ring-brand-500/20 resize-none leading-[1.8] transition-all shadow-inner" />
+                <CheckedEditor
+                  textareaRef={contentRef}
+                  value={content}
+                  onChange={setContent}
+                  suggestions={writingChecks?.suggestions ?? []}
+                  onApply={applyWritingCheck}
+                  onDismiss={dismissWritingCheck}
+                  placeholder="Start writing your story... Share your perspective on technology, culture, business, or life in East Africa."
+                />
                 <div className="space-y-2">
                   <label className="text-xs font-semibold text-surface-300 flex items-center gap-1.5"><AlignLeft className="w-3 h-3 text-accent-strong" />Excerpt</label>
                   <textarea placeholder="A brief summary of your story (shown in feeds and search results)..." value={excerpt} onChange={(e) => setExcerpt(e.target.value)} rows={3} maxLength={300} className="w-full bg-surface-800/80 border border-surface-700/50 rounded-xl px-4 py-3 text-sm text-editor font-medium placeholder-editor placeholder:font-normal focus:outline-none focus:border-brand-500/40 focus:ring-1 focus:ring-brand-500/20 resize-none leading-relaxed transition-all" />
@@ -324,7 +408,7 @@ export default function StudioPage() {
             )}
           </div>
 
-          <StudioSidebar title={title} content={content} tags={tags} setTags={setTags} tagInput={tagInput} setTagInput={setTagInput} handleAddTag={handleAddTag} handleRemoveTag={handleRemoveTag} handleTagKeyDown={handleTagKeyDown} aiSuggestions={aiSuggestions} setAiSuggestions={setAiSuggestions} assistWithPost={assistWithPost} categoryId={categoryId} setCategoryId={setCategoryId} categoryName={categoryName} setCategoryName={setCategoryName} categoriesList={categoriesList} categoryOpen={categoryOpen} setCategoryOpen={setCategoryOpen} scheduledFor={scheduledFor} setScheduledFor={setScheduledFor} now={now} wordCount={wordCount} readTime={readTime} myStories={myStories} storiesLoading={storiesLoading} storiesUnauth={storiesUnauth} editingId={editingId} openStory={openStory} newStory={newStory} deletePost={deletePost} genBusy={genBusy} generateAssist={generateAssist} generated={generated} setGenerated={setGenerated} applyGenerated={applyGenerated} enhanceBusy={enhanceBusy} runEnhance={runEnhance} enhancement={enhancement} setEnhancement={setEnhancement} copilotBusy={copilotBusy} runCopilot={runCopilot} copilotPrompt={copilotPrompt} setCopilotPrompt={setCopilotPrompt} copilotError={copilotError} setCopilotError={setCopilotError} copilotResult={copilotResult} setCopilotResult={setCopilotResult} applyCopilot={applyCopilot} error={error} setError={setError} />
+          <StudioSidebar title={title} content={content} tags={tags} setTags={setTags} tagInput={tagInput} setTagInput={setTagInput} handleAddTag={handleAddTag} handleRemoveTag={handleRemoveTag} handleTagKeyDown={handleTagKeyDown} aiSuggestions={aiSuggestions} setAiSuggestions={setAiSuggestions} assistWithPost={assistWithPost} categoryId={categoryId} setCategoryId={setCategoryId} categoryName={categoryName} setCategoryName={setCategoryName} categoriesList={categoriesList} categoryOpen={categoryOpen} setCategoryOpen={setCategoryOpen} scheduledFor={scheduledFor} setScheduledFor={setScheduledFor} now={now} wordCount={wordCount} readTime={readTime} myStories={myStories} storiesLoading={storiesLoading} storiesUnauth={storiesUnauth} editingId={editingId} openStory={openStory} newStory={newStory} deletePost={deletePost} genBusy={genBusy} generateAssist={generateAssist} generated={generated} setGenerated={setGenerated} applyGenerated={applyGenerated} enhanceBusy={enhanceBusy} runEnhance={runEnhance} enhancement={enhancement} setEnhancement={setEnhancement} copilotBusy={copilotBusy} runCopilot={runCopilot} copilotPrompt={copilotPrompt} setCopilotPrompt={setCopilotPrompt} copilotError={copilotError} setCopilotError={setCopilotError} copilotResult={copilotResult} setCopilotResult={setCopilotResult} applyCopilot={applyCopilot} writingChecks={writingChecks} checksBusy={checksBusy} applyWritingCheck={applyWritingCheck} applyAllWritingChecks={applyAllWritingChecks} dismissWritingCheck={dismissWritingCheck} error={error} setError={setError} />
         </div>
       </div>
     </div>

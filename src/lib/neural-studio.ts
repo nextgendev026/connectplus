@@ -14,6 +14,7 @@ import { generateText, studioSystemPrompt } from "@/lib/ai-provider";
 import { analyzeSeo } from "@/lib/seo-analyzer";
 import { checkPlagiarism } from "@/lib/plagiarism-checker";
 import { optimizeContent } from "@/lib/content-optimizer";
+import { runWritingChecks, type WritingCheckResult, type WritingSuggestion } from "@/lib/writing-checks";
 
 export type StudioAction =
   | "rewrite"
@@ -26,7 +27,8 @@ export type StudioAction =
   | "assist"
   | "seo"
   | "plagiarism"
-  | "optimize";
+  | "optimize"
+  | "inspect";
 
 export interface StudioRequest {
   action: StudioAction;
@@ -34,6 +36,10 @@ export interface StudioRequest {
   content?: string;
   prompt?: string;
   selection?: string;
+  /** The composer's other fields, so an action can reason about the whole post. */
+  excerpt?: string;
+  tags?: string[];
+  category?: string;
 }
 
 export interface StudioResult {
@@ -41,6 +47,8 @@ export interface StudioResult {
   /** Main text the studio should write back (title / excerpt / tags / content). */
   text: string;
   alternatives?: string[];
+  /** Inline, offset-addressed issues — only `inspect` returns these. */
+  suggestions?: WritingSuggestion[];
   meta?: {
     notes?: string[];
     score?: number;
@@ -50,7 +58,38 @@ export interface StudioResult {
     tags?: string[];
     wordsBefore?: number;
     wordsAfter?: number;
+    tone?: WritingCheckResult["tone"]["label"];
+    counts?: Record<string, number>;
+    stats?: WritingCheckResult["stats"];
   };
+}
+
+/**
+ * Hard caps on what a single request may carry.
+ *
+ * These are not just resource guards: a draft longer than this is almost
+ * certainly a paste of several articles, and silently analysing it would let
+ * one request spend an unbounded amount of provider time. Truncating is
+ * reported honestly in the notes rather than pretending the tail was checked.
+ */
+export const MAX_DRAFT_CHARS = 40_000;
+const MAX_TITLE_CHARS = 300;
+const MAX_SELECTION_CHARS = 8_000;
+const MAX_PROMPT_CHARS = 2_000;
+
+/** Normalise and bound a free-text field. */
+function bounded(value: unknown, max: number): string {
+  return typeof value === "string" ? value.slice(0, max) : "";
+}
+
+/** Bound the tag list and drop anything that is not a plain tag. */
+function boundedTags(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((t): t is string => typeof t === "string")
+    .map((t) => t.trim().toLowerCase().replace(/^#/, "").slice(0, 40))
+    .filter(Boolean)
+    .slice(0, 20);
 }
 
 /**
@@ -78,8 +117,25 @@ function parseHeadlineOptions(text: string): { primary: string; alternatives: st
 }
 
 export async function runStudioBrain(req: StudioRequest): Promise<StudioResult> {
-  const { action, title = "", content = "", prompt = "", selection } = req;
-  const draft = selection?.trim() ? selection : content;
+  const title = bounded(req.title, MAX_TITLE_CHARS);
+  const content = bounded(req.content, MAX_DRAFT_CHARS);
+  const prompt = bounded(req.prompt, MAX_PROMPT_CHARS);
+  const selection = bounded(req.selection, MAX_SELECTION_CHARS);
+  const action = req.action;
+  const draft = selection.trim() ? selection : content;
+
+  // The composer's other fields, so an action can reason about the whole post
+  // and not just the body the cursor happens to be in.
+  const excerpt = bounded(req.excerpt, 500);
+  const tags = boundedTags(req.tags);
+  const category = bounded(req.category, 80);
+  const composerContext = [
+    category ? `Category: ${category}` : "",
+    tags.length ? `Tags: ${tags.join(", ")}` : "",
+    excerpt ? `Excerpt: ${excerpt}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   switch (action) {
     case "rewrite": {
@@ -180,11 +236,16 @@ export async function runStudioBrain(req: StudioRequest): Promise<StudioResult> 
     }
 
     case "assist": {
-      // Free-form prompt: try the LLM first with the draft attached, then fall
-      // back to the conversational content brain.
+      // Free-form prompt: try the LLM first with the draft (and the rest of the
+      // composer) attached, then fall back to the conversational content brain.
       const hasDraft = (content || "").trim().length > 20;
       const isInstruction = prompt.trim().length < 120;
-      const message = hasDraft && isInstruction ? `${prompt.trim()}: ${content}` : prompt;
+      const message = [
+        hasDraft && isInstruction ? `${prompt.trim()}: ${content}` : prompt,
+        composerContext ? `Post context:\n${composerContext}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
       const llm = await tryLlmAction(action, message);
       if (llm) return { action, text: llm };
       const response = await neuralMind.processQuery(message);
@@ -258,6 +319,40 @@ export async function runStudioBrain(req: StudioRequest): Promise<StudioResult> 
         });
       }
       return { action, text: lines.join("\n"), meta: { score: result.overallScore, grade: result.overallGrade } };
+    }
+
+    /**
+     * Live inline checks — the Grammarly-shaped half of the copilot.
+     *
+     * Deliberately deterministic and provider-free. This runs on a debounce
+     * while the writer types, so it has to be instant, free, and identical on
+     * every deployment; an LLM here would mean a network round trip per pause
+     * and a different result each time. The judgement-level actions stay on the
+     * explicit buttons above.
+     */
+    case "inspect": {
+      const check = runWritingChecks(content);
+      const truncated = req.content ? req.content.length > MAX_DRAFT_CHARS : false;
+      const notes = truncated
+        ? [`Only the first ${MAX_DRAFT_CHARS.toLocaleString()} characters were checked.`]
+        : [];
+      const summary =
+        check.suggestions.length === 0
+          ? `Clean draft — score ${check.score}/100 (${check.grade}).`
+          : `${check.suggestions.length} suggestion${check.suggestions.length === 1 ? "" : "s"} · score ${check.score}/100 (${check.grade}).`;
+      return {
+        action,
+        text: summary,
+        suggestions: check.suggestions,
+        meta: {
+          score: check.score,
+          grade: check.grade,
+          tone: check.tone.label,
+          counts: check.counts,
+          stats: check.stats,
+          notes,
+        },
+      };
     }
 
     default:

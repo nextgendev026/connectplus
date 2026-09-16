@@ -14,7 +14,16 @@ const ACTIONS: StudioAction[] = [
   "seo",
   "plagiarism",
   "optimize",
+  "inspect",
 ];
+
+/** Actions that are meaningless without a draft to read. */
+const NEEDS_DRAFT: StudioAction[] = ["rewrite", "continue", "outline", "summarize", "headline", "tags"];
+
+/** A string field from the request body, or "". */
+function str(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
 
 /**
  * Studio Brain Copilot — the read/write bridge between the typing console and
@@ -35,13 +44,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid action" }, { status: 400 });
     }
 
-    const content: string = typeof body?.content === "string" ? body.content : "";
-    const title: string = typeof body?.title === "string" ? body.title : "";
-    const prompt: string = typeof body?.prompt === "string" ? body.prompt : "";
-    const selection: string = typeof body?.selection === "string" ? body.selection : "";
+    const content = str(body?.content);
+    const title = str(body?.title);
+    const prompt = str(body?.prompt);
+    const selection = str(body?.selection);
+    // The composer's other fields, so a whole-post action can see the whole post
+    // instead of just the body. Bounded and normalised in `runStudioBrain`.
+    const excerpt = str(body?.excerpt);
+    const category = str(body?.category);
+    const tags = Array.isArray(body?.tags) ? body.tags.filter((t: unknown): t is string => typeof t === "string") : [];
 
-    // Actions that need a draft to operate on.
-    if (["rewrite", "continue", "outline", "summarize", "headline", "tags"].includes(action)) {
+    // Actions that need a draft to operate on. `inspect` is exempt: an empty
+    // editor is a clean editor, and the live checker is called on every pause.
+    if (NEEDS_DRAFT.includes(action)) {
       const hasInput = (content || selection || prompt || title).trim().length >= 20;
       if (!hasInput) {
         return NextResponse.json(
@@ -51,7 +66,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const result = await runStudioBrain({ action, title, content, prompt, selection });
+    const result = await runStudioBrain({ action, title, content, prompt, selection, excerpt, tags, category });
     return NextResponse.json(result, { status: 200 });
   } catch (error) {
     console.error("Studio brain error:", error);

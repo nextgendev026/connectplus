@@ -61,30 +61,52 @@ async function provisionOAuthUser(profile: {
     return existing;
   }
 
-  // Derive a unique username from the email local part.
+  // Derive a unique username from the email local part. Three candidates, the
+  // last UUID-suffixed: a fixed number of random retries can still collide when
+  // several people with similar addresses sign up at once, and that must not
+  // leave the account unnamed or fail the sign-in.
   const base =
     (email.split("@")[0] || "reader").replace(/[^a-z0-9_]/gi, "").slice(0, 20) ||
     "reader";
   let username = base;
-  for (let i = 0; i < 6; i++) {
-    const clash = await prisma.user.findUnique({ where: { username } });
+  const candidates = [
+    base,
+    `${base}${Math.floor(Math.random() * 9000) + 1000}`,
+    `${base}-${randomUUID().slice(0, 8)}`,
+  ];
+  for (const candidate of candidates) {
+    username = candidate;
+    const clash = await prisma.user.findUnique({ where: { username: candidate } });
     if (!clash) break;
-    username = `${base}${Math.floor(Math.random() * 9000) + 1000}`;
   }
 
-  return prisma.user.create({
-    data: {
+  try {
+    return await prisma.user.create({
+      data: {
+        email,
+        username,
+        name: profile.name ?? base,
+        avatar: profile.image ?? null,
+        // OAuth-only account: store an unguessable hash so credentials sign-in
+        // can never match, while the non-null password invariant holds.
+        password: await hash(randomUUID(), 12),
+        role: "USER",
+        emailVerified: new Date(),
+      },
+    });
+  } catch (err) {
+    // A concurrent first sign-in (the provider can deliver the same callback
+    // twice) can win the race for either unique column between the lookup above
+    // and this insert. Re-resolve by email so the same person is linked to the
+    // row that already exists instead of the sign-in failing.
+    const raced = await prisma.user.findUnique({ where: { email } });
+    if (raced) return raced;
+    logger.warn("google provisioning failed", {
       email,
-      username,
-      name: profile.name ?? base,
-      avatar: profile.image ?? null,
-      // OAuth-only account: store an unguessable hash so credentials sign-in
-      // can never match, while the non-null password invariant holds.
-      password: await hash(randomUUID(), 12),
-      role: "USER",
-      emailVerified: new Date(),
-    },
-  });
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
 }
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
@@ -196,11 +218,20 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // OAuth first sign-in: resolve (or create) the local row and key the JWT
       // to ITS id, never the raw provider profile id.
       if (account?.provider === "google" && user) {
-        const dbUser = await provisionOAuthUser({
-          email: user.email,
-          name: user.name,
-          image: (user as { image?: string | null }).image ?? null,
-        }).catch(() => null);
+        // One retry for a transient database blip: without it a single dropped
+        // connection turns a first Google sign-in into a session keyed to the
+        // provider id, which every local query would then miss.
+        const dbUser =
+          (await provisionOAuthUser({
+            email: user.email,
+            name: user.name,
+            image: (user as { image?: string | null }).image ?? null,
+          }).catch(() => null)) ??
+          (await provisionOAuthUser({
+            email: user.email,
+            name: user.name,
+            image: (user as { image?: string | null }).image ?? null,
+          }).catch(() => null));
         if (dbUser) {
           token.id = dbUser.id;
           token.role = dbUser.role;
