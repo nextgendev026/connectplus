@@ -455,6 +455,10 @@ describe("edge cron — cache-first snapshots", () => {
   it("guards the status snapshot on the radio sweep", async () => {
     originReturns('{"overall":"operational"}', "application/json");
     seedSnapshot("status", 30, '{"overall":"operational"}');
+    // Both snapshots this trigger guards have to be fresh for the tick to stay
+    // quiet: the check is per-trigger, not per-snapshot, so a stale radio copy
+    // is by itself reason enough to fire the sweep.
+    seedSnapshot("radio-stations", 30, "[]");
     await tick("*/15 * * * *");
     expect(cronFetches()).toEqual([]);
 
@@ -465,6 +469,22 @@ describe("edge cron — cache-first snapshots", () => {
       "https://origin.test/api/cron?trigger=radio-status-sweep&source=cloudflare-cron",
     ]);
     expect(originFetches).toContain("https://origin.test/api/status");
+  });
+
+  it("fires the radio sweep when only the radio copy has gone stale", async () => {
+    // The radio station list is the single most-polled payload in the app, so it
+    // earns its own guard: a stale copy must reach for the origin even while
+    // service health is perfectly fresh.
+    originReturns("[]", "application/json");
+    seedSnapshot("status", 30, '{"overall":"operational"}');
+    seedSnapshot("radio-stations", 600, "[]");
+
+    await tick("*/15 * * * *");
+
+    expect(cronFetches()).toEqual([
+      "https://origin.test/api/cron?trigger=radio-status-sweep&source=cloudflare-cron",
+    ]);
+    expect(originFetches).toContain("https://origin.test/api/radio/stations");
   });
 
   it("still rebuilds when the snapshot entry has no usable date", async () => {
@@ -522,6 +542,7 @@ describe("edge cron — cache-first snapshots", () => {
       "livescore-football",
       "livescore-basketball",
       "status",
+      "radio-stations",
     ]);
   });
 });

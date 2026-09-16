@@ -106,6 +106,14 @@ const POLLABLE = [
   // because the status page reads it same-origin: the worker should not
   // advertise this JSON to arbitrary sites the way it does the live board.
   { test: /^\/api\/status$/, ttl: 60, swr: 300, cors: false },
+  // The radio station list with now-playing metadata. The hottest poll in the
+  // app and, until now, the one path that never reached the edge: the radio page
+  // refreshes it every 45s and the player every 20s, and every one of those went
+  // straight to a Vercel function. The payload is identical for every anonymous
+  // listener and upstream metadata does not move faster than a couple of
+  // minutes, so a 30s copy at the edge answers essentially all of it. `cors:
+  // false` because the client reads it same-origin.
+  { test: /^\/api\/radio\/stations/, ttl: 30, swr: 120, cors: false },
 ];
 
 /**
@@ -155,6 +163,15 @@ const SNAPSHOTS = [
     // origin eight upstream round trips — so a five-minute copy still answers
     // the status page from the edge.
     ttl: 300,
+    trigger: "radio-status-sweep",
+  },
+  {
+    id: "radio-stations",
+    path: "/api/radio/stations",
+    // Already driven on a 15-minute cadence by the radio metadata trigger, so a
+    // two-minute copy is comfortably fresh for a listener and lets the tick keep
+    // the origin at one fetch per window instead of one per poll.
+    ttl: 120,
     trigger: "radio-status-sweep",
   },
 ];
@@ -333,6 +350,7 @@ const snapshotById = (id) => SNAPSHOTS.find((s) => s.id === id) ?? null;
 /** The snapshot a canonical path warms, or null when this request is not it. */
 function snapshotFor(pathname, params) {
   if (pathname === "/api/status") return snapshotById("status");
+  if (pathname === "/api/radio/stations") return snapshotById("radio-stations");
   if (pathname !== "/api/sports/live") return null;
   // Only the live board is shared with the cron's copy. The board's poll sends
   // today's date (that is what makes it *today's* fixture list), so today counts

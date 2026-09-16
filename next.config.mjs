@@ -163,6 +163,20 @@ const nextConfig = {
         ],
       },
       // Allow public caches for read-only API endpoints
+      //
+      // The blanket `/api/:path*` rule above is `no-store`, which is right for
+      // anything user-specific but wrong for these: each is anonymous, identical
+      // for every caller, and polled on a timer from the client. Left at
+      // `no-store` every poll invoked a function, and the invocation count — not
+      // the data volume — is what was exhausting the hosting allowance. A CDN
+      // hit costs no invocation at all, so the fix is to make the common case a
+      // hit. `stale-while-revalidate` is the other half: a reader after the TTL
+      // is served the previous copy instantly while the refresh happens behind
+      // them, so freshness never costs a visitor a wait.
+      { source: "/api/radio/stations", headers: [...securityHeaders, { key: "Cache-Control", value: "public, s-maxage=30, stale-while-revalidate=120" }] },
+      { source: "/api/sports/live", headers: [...securityHeaders, { key: "Cache-Control", value: "public, s-maxage=15, stale-while-revalidate=45" }] },
+      { source: "/api/sports/calendar", headers: [...securityHeaders, { key: "Cache-Control", value: "public, s-maxage=900, stale-while-revalidate=1800" }] },
+      { source: "/api/forex", headers: [...securityHeaders, { key: "Cache-Control", value: "public, s-maxage=300, stale-while-revalidate=600" }] },
       {
         source: "/api/posts",
         headers: [

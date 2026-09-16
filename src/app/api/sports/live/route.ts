@@ -1,6 +1,6 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { inngest } from "@/lib/inngest";
+import { triggerJob } from "@/lib/inngest-trigger";
 import { getSportsHub, LIVE_STATUSES, type NormalizedMatch } from "@/lib/sports";
 import { BASELINE_MODEL } from "@/lib/sports-intelligence";
 import { runThrottled } from "@/lib/throttled-job";
@@ -62,25 +62,33 @@ export async function GET(request: NextRequest) {
       (m) => m.predictions.length === 0 && (LIVE_STATUSES.includes(m.status) || m.status === "SCHEDULED")
     ).length;
     if (missing > 0) {
-      // Best-effort hand-off: fire-and-forget so a slow model pass can never
-      // delay the scoreboard.
-      void inngest
-        .send({ name: "sports-intel", data: { reason: "missing-picks", missing, sport: hub.sport } })
-        .catch(() => null);
-
-      // …and a scheduler-independent safety net. Inngest is the intended owner,
-      // but it is a single point of failure with no way to notice its own
-      // absence: if the queue is unsynced or paused, the model simply stops and
-      // the board keeps serving picks that predate the current fixtures. This
-      // runs AFTER the response is flushed, so the visitor never waits, and the
-      // heartbeat throttle collapses a thousand concurrent viewers into one
-      // attempt per interval.
+      // One hand-off, decided after the response is flushed.
+      //
+      // This used to do both halves unconditionally: send the Inngest event AND
+      // run the same generation inline as a "safety net". Both executed, so a
+      // visitor to the busiest page could trigger the same pick generation twice
+      // — once on Inngest's compute and once on this function's, which with
+      // Fluid compute is billed time on the free tier. The double run was
+      // invisible: the event fired, the inline pass also ran, and the board just
+      // looked well fed.
+      //
+      // Now the event is offered first and the inline pass runs only when the
+      // queue refused it, so the work happens exactly once and normally
+      // somewhere that is not this function. The hand-off still happens after
+      // the response, so the visitor never waits on a network call, and the
+      // heartbeat throttle still collapses a thousand concurrent viewers into
+      // one fallback attempt per interval.
       after(async () => {
+        const handoff = await triggerJob("sports-intel", { reason: "missing-picks", missing, sport: hub.sport });
+        if (handoff.mode === "inngest") {
+          log.info("pick top-up handed to inngest", { missing, sport: hub.sport });
+          return;
+        }
         const intel = await runThrottled("sports-intel", SELF_HEAL_INTEL_MS, async () => {
           const { runSportsIntelligence } = await import("@/lib/sports-intelligence");
           return runSportsIntelligence({ limit: 12, teach: false });
         });
-        if (intel.ran) log.info("opportunistic pick top-up", { missing, sport: hub.sport });
+        if (intel.ran) log.info("opportunistic pick top-up", { missing, sport: hub.sport, via: "inline-fallback" });
       });
     }
 
@@ -88,6 +96,12 @@ export async function GET(request: NextRequest) {
     // has landed and the price has moved since this morning's pick. Riding the
     // busiest page means a matchday refreshes itself even if Inngest is quiet;
     // the throttle keeps it to one run per interval however many readers arrive.
+    // Deliberately NOT handed to Inngest: there is no function registered for
+    // `sports-kickoff-refresh` (see HANDLED_EVENTS in lib/inngest-trigger). A
+    // hand-off here would return event ids, this route would skip the inline
+    // pass, and the refresh would never run at all — a silent no-op that looks
+    // exactly like the working path. It stays on the heartbeat throttle, which
+    // keeps it to one attempt per interval however many readers arrive.
     after(async () => {
       const kickoff = await runThrottled("sports-kickoff-refresh", SELF_HEAL_KICKOFF_MS, async () => {
         const { refreshApproachingKickoff } = await import("@/lib/sports-intelligence");
@@ -99,11 +113,13 @@ export async function GET(request: NextRequest) {
     // Favourite alerts ride the same surface: the bell only rings when a job
     // runs, so the busiest page in the app guarantees one attempt a minute.
     after(async () => {
+      const handoff = await triggerJob("sports-notify", { reason: "favourite-alerts" });
+      if (handoff.mode === "inngest") return;
       const notify = await runThrottled("sports-notify", SELF_HEAL_NOTIFY_MS, async () => {
         const { notifySportsFavourites } = await import("@/lib/sports-notifications");
         return notifySportsFavourites();
       });
-      if (notify.ran) log.info("opportunistic favourite alert sweep");
+      if (notify.ran) log.info("opportunistic favourite alert sweep", { via: "inline-fallback" });
     });
 
     return NextResponse.json(
