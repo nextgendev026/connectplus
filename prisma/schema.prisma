@@ -40,6 +40,9 @@ model User {
   preference  UserPreference?
   feedback    ModelFeedback[]
   subscriptions UserSubscription[]
+  tipsSent      Tip[] @relation("TipsSent")
+  tipsReceived  Tip[] @relation("TipsReceived")
+  payouts       CreatorPayout[]
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -97,6 +100,7 @@ model Post {
   notifications Notification[]
   postEmbedding PostEmbedding?
   feedback    ModelFeedback[]
+  tips         Tip[]
   seoMetadata  SeoMetadata?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
@@ -857,4 +861,87 @@ model SportsActivity {
   @@index([type, createdAt])
   @@index([referralId])
   @@index([matchId])
+}
+
+/// A reader tipping a creator.
+///
+/// This is the ledger the platform never had. The mind could report
+/// subscriptions and ad impressions, but not what a creator actually earns from
+/// their audience — which is the first number any creator asks about.
+///
+/// Settlement reuses the rails that already exist (Daraja for M-Pesa, PayPal),
+/// and `status` mirrors PaymentIntent's lifecycle on purpose, so the same
+/// reconciliation instincts apply: a tip is created pending, settled by a
+/// provider callback, or left failed with a reason attached.
+model Tip {
+  id            String   @id @default(cuid())
+  /// Who paid. Optional — a reader may tip without an account, and the payment
+  /// rails do not require one, but the recipient never is.
+  fromUserId    String?
+  fromUser      User?    @relation("TipsSent", fields: [fromUserId], references: [id], onDelete: SetNull)
+  toUserId      String
+  toUser        User     @relation("TipsReceived", fields: [toUserId], references: [id], onDelete: Cascade)
+  /// The story that earned it, when the tip came from an article rather than a
+  /// profile. SetNull rather than Cascade: deleting a story must not erase the
+  /// record that its author was paid.
+  postId        String?
+  post          Post?    @relation(fields: [postId], references: [id], onDelete: SetNull)
+  amount        Float
+  currency      String   @default("KES")
+  /// daraja (M-Pesa) | paypal | manual (comps and admin adjustments).
+  provider      String   @default("manual")
+  /// pending | succeeded | failed | refunded
+  status        String   @default("pending")
+  /// M-Pesa receipt number or PayPal capture id — the handle support quotes.
+  providerRef   String?
+  payerPhone    String?
+  message       String?  @db.Text
+  failureReason String?
+  settledAt     DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([toUserId, createdAt])
+  @@index([fromUserId])
+  @@index([status])
+  @@index([postId])
+  @@index([createdAt])
+}
+
+/// A payout to a creator: money leaving the platform.
+///
+/// Deliberately separate from Tip rather than a status on it. One payout settles
+/// many tips — or none at all, for a manual adjustment — and conflating the two
+/// is how a ledger stops balancing. Gross, fee and net are all stored so the
+/// balance is reconstructible without a second table: `amount` is what the
+/// creator received, `feeAmount` is the platform's cut, and the tips covered by
+/// a payout are the succeeded ones inside its period window.
+model CreatorPayout {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Net amount actually sent to the creator.
+  amount        Float
+  /// Platform share withheld. Zero for a goodwill/manual payment.
+  feeAmount     Float    @default(0)
+  currency      String   @default("KES")
+  /// daraja | paypal | manual
+  provider      String   @default("manual")
+  /// pending | processing | paid | failed
+  status        String   @default("pending")
+  providerRef   String?
+  /// MSISDN the money was sent to, for M-Pesa reconciliation.
+  phone         String?
+  /// The window of tips this payout settles.
+  periodStart   DateTime?
+  periodEnd     DateTime?
+  note          String?  @db.Text
+  failureReason String?
+  paidAt        DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([status])
+  @@index([createdAt])
 }

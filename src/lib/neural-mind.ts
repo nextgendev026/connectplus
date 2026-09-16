@@ -1144,7 +1144,15 @@ class NeuralMindEngine {
           `**Settled revenue:** ${money.settlement.collected.toLocaleString()} ${money.settlement.currency} across ${money.settlement.succeeded} settled payments (${money.settlement.failed} failed, ${money.settlement.pending} pending)`,
           "",
           `**Ads:** ${money.ads.active}/${money.ads.total} active · ${money.ads.impressions.toLocaleString()} impressions · ${money.ads.clicks.toLocaleString()} clicks · ${money.ads.ctr}% CTR`,
+          `**Creator earnings:** ${money.creatorEarnings.tipsSettledAmount.toLocaleString()} tipped across ${money.creatorEarnings.tipsSettled} settled tips to ${money.creatorEarnings.creatorsTipped} creators`,
+          `**Paid out:** ${money.creatorEarnings.payoutsPaidAmount.toLocaleString()} over ${money.creatorEarnings.payoutsPaid} payouts · **owed:** ${money.creatorEarnings.unpaidToCreators.toLocaleString()} · ${money.creatorEarnings.payoutsPending} payouts pending`,
         ];
+        if (money.creatorEarnings.topEarners.length > 0) {
+          lines.push("", "**Top earning creators**");
+          money.creatorEarnings.topEarners.forEach((e, i) =>
+            lines.push(`${i + 1}. @${e.username} — ${e.earned.toLocaleString()} from ${e.tips} tips (paid ${e.paidOut.toLocaleString()}, owed ${e.unpaid.toLocaleString()})`)
+          );
+        }
         if (money.subscriptions.byPlan.length > 0) {
           lines.push("", "**Active plans**");
           for (const p of money.subscriptions.byPlan) {
@@ -1891,7 +1899,10 @@ class NeuralMindEngine {
     if (brief.economy) {
       parts.push(
         `Economy: MRR ${brief.economy.mrr}, ${brief.economy.activeSubscriptions} active subscriptions, ` +
-          `${brief.economy.settledRevenue} settled to date, rails ${brief.economy.rails.join(", ") || "none"}.`
+          `${brief.economy.settledRevenue} settled to date, rails ${brief.economy.rails.join(", ") || "none"}` +
+          (brief.economy.creatorTipsSettled !== undefined
+            ? `, creator tips settled ${brief.economy.creatorTipsSettled} with ${brief.economy.owedToCreators} still owed to creators.`
+            : ".")
       );
     }
     if (brief.trends && brief.trends.length > 0) {
@@ -1937,12 +1948,23 @@ class NeuralMindEngine {
       /\b(image|video|thumbnail|visual|cover|feature image|reel|clip)\b/.test(lower) &&
       /\b(generate|make|create|design|build|draft|brief)\b/.test(lower)
     ) {
-      const format: "cover" | "feature" | "short-form" = /vertical|short.?form|reel|tiktok|clip/.test(lower)
-        ? "short-form"
-        : /\bfeature\b/.test(lower)
-          ? "feature"
-          : "cover";
-      return mindActions.generateVisualBrief({ title: quoted ?? this.extractDraft(input).slice(0, 140), format });
+      const vertical = /vertical|short.?form|reel|tiktok|clip/.test(lower);
+      const title = quoted ?? this.extractDraft(input).slice(0, 140);
+      const ownerId = actorId ?? "neural-mind";
+
+      // Video and image are separate tools with separate availability: the image
+      // path works with no key at all, the video path needs a configured
+      // endpoint. Routing "make a reel" to the image generator would answer the
+      // wrong question and look like a failure.
+      if (/\b(video|reel|clip|tiktok|short.?form)\b/.test(lower)) {
+        return mindActions.generateVideoClip({ title, ownerId, format: vertical ? "short-form" : "feature" });
+      }
+
+      return mindActions.generateVisualBrief({
+        title,
+        format: vertical ? "short-form" : /\bfeature\b/.test(lower) ? "feature" : "cover",
+        ownerId,
+      });
     }
 
     // Comment triage, most specific phrasing first.
@@ -1985,8 +2007,8 @@ class NeuralMindEngine {
       action: "mind_action",
       error: "unknown_action",
       summary:
-        "I can publish or schedule a post, triage comments (rank replies, draft a reply, flag or remove one) and build a visual brief. " +
-        "Tell me which and include the `c…` id of the record.",
+        "I can publish or schedule a post, triage comments (rank replies, draft a reply, flag or remove one), generate a cover image " +
+        "and attempt a short video. Tell me which and include the `c…` id of the record.",
     };
   }
 

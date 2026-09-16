@@ -1,16 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { writeFile, mkdir } from "fs/promises";
-import { join } from "path";
-import { randomUUID } from "crypto";
 import { checkStorageQuota, QuotaError } from "@/lib/plans";
+import { storeMediaBytes, extensionFor } from "@/lib/media-storage";
 
-const ALLOWED_TYPES: Record<string, string> = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-  "image/gif": "gif",
-};
 const KINDS = new Set(["avatar", "cover", "post"]);
 
 // Per-type size caps (bytes). Overall default is 5MB; GIFs get a larger cap by
@@ -57,8 +49,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid upload kind" }, { status: 400 });
     }
 
-    const ext = ALLOWED_TYPES[file.type];
-    if (!ext) {
+    const ext = extensionFor(file.type);
+    // Generated clips are stored through the same helper, but only still images
+    // are accepted from a member's upload — the extension map is shared, the
+    // accepted set for this route is not.
+    if (!ext || !ext.match(/^(jpg|png|webp|gif)$/)) {
       return NextResponse.json(
         { error: "Invalid file type. Allowed: jpeg, png, webp, gif" },
         { status: 400 }
@@ -85,46 +80,22 @@ export async function POST(request: NextRequest) {
       throw err;
     }
 
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-    const filename = `${randomUUID()}.${ext}`;
+    // Storage lives in lib/media-storage so generated assets take the identical
+    // path — Supabase when configured, local ./public/uploads otherwise.
+    const buffer = Buffer.from(await file.arrayBuffer());
 
-    const supabaseUrl = process.env.SUPABASE_URL;
-    const serviceKey = process.env.SUPABASE_SERVICE_KEY;
-    const bucket =
-      process.env.SUPABASE_STORAGE_BUCKET?.trim() || "uploads";
-
-    if (supabaseUrl && serviceKey) {
-      // Supabase Storage (persists across deploys, CDN-servable public bucket).
-      const objectKey = `${kindParam}/${session.user.id}/${filename}`;
-      const uploadUrl = `${supabaseUrl}/storage/v1/object/${bucket}/${objectKey}`;
-
-      const res = await fetch(uploadUrl, {
-        method: "POST",
-        headers: {
-          apikey: serviceKey,
-          Authorization: `Bearer ${serviceKey}`,
-          "Content-Type": file.type,
-        },
-        body: buffer,
+    try {
+      const stored = await storeMediaBytes({
+        bytes: buffer,
+        mimeType: file.type,
+        kind: kindParam as "avatar" | "cover" | "post",
+        ownerId: session.user.id,
       });
-
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        console.error("Storage upload failed:", res.status, body.slice(0, 300));
-        return NextResponse.json({ error: "Upload storage failed" }, { status: 502 });
-      }
-
-      const url = `${supabaseUrl}/storage/v1/object/public/${bucket}/${objectKey}`;
-      return NextResponse.json({ url, filename }, { status: 201 });
+      return NextResponse.json({ url: stored.url, filename: stored.filename }, { status: 201 });
+    } catch (err) {
+      console.error("Storage upload failed:", err instanceof Error ? err.message : err);
+      return NextResponse.json({ error: "Upload storage failed" }, { status: 502 });
     }
-
-    // Local fallback (development / offline): writes to ./public/uploads.
-    const uploadDir = join(process.cwd(), "public", "uploads");
-    await mkdir(uploadDir, { recursive: true });
-    await writeFile(join(uploadDir, filename), buffer);
-
-    return NextResponse.json({ url: `/uploads/${filename}`, filename }, { status: 201 });
   } catch (error) {
     console.error("Error uploading file:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

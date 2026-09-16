@@ -3,6 +3,7 @@ import { createLogger } from "@/lib/logger";
 import { generateText } from "@/lib/ai-provider";
 import { paintThumb } from "@/lib/thumb-svg";
 import { extractKeywords } from "@/lib/neural-text";
+import { visualStudio, buildImagePrompt } from "@/lib/visual-studio";
 
 /**
  * Action tools for the combined mind.
@@ -346,49 +347,106 @@ class MindActions {
   // ── Visuals ─────────────────────────────────────────────────────────────
 
   /**
-   * Produce the visual brief for a story, plus a rendered cover thumbnail.
+   * Produce a visual for a story: an actual generated image, stored and URL-able
+   * as a cover.
    *
-   * The fallback thumbnail is real — the same SVG painter the site uses — but it
-   * is typographic, not generative. There is no image or video diffusion model
-   * wired into this project, so `generation` says so plainly and hands over a
-   * ready prompt for whichever tool the editor prefers, rather than pretending
-   * to have made a photo.
+   * This used to return a prompt plus a typographic SVG and call that a visual.
+   * It now generates the image for real — OpenAI Images when a key is configured,
+   * otherwise a keyless provider — and stores it, so the caller gets a URL it can
+   * put on a post.
+   *
+   * The SVG poster is still rendered and still returned, but its role changed: it
+   * is the fallback that guarantees the brief is useful even when every image
+   * provider is unreachable, rather than the whole deliverable.
    */
-  async generateVisualBrief(input: { title: string; category?: string; author?: string; format?: "cover" | "feature" | "short-form" }): Promise<ActionResult> {
+  async generateVisualBrief(input: {
+    title: string;
+    category?: string;
+    author?: string;
+    format?: "cover" | "feature" | "short-form";
+    /** Storage namespace. Defaults to the mind's own folder. */
+    ownerId?: string;
+    /** Skip the image call and return the brief only. */
+    skipGeneration?: boolean;
+  }): Promise<ActionResult> {
     const title = input.title?.trim();
     if (!title) return { ok: false, action: "visual_brief", summary: "Give me the story title and I will build the visual.", error: "title_required" };
 
     const format = input.format ?? "cover";
     const category = input.category ?? "Story";
     const author = input.author ?? "";
+    const ownerId = input.ownerId ?? "neural-mind";
     const keywords = extractKeywords(title, 5).map((k) => k.keyword);
-
     const aspect = format === "short-form" ? "9:16 vertical" : format === "feature" ? "16:9 wide" : "3:2 landscape";
-    const prompt =
-      `Editorial ${format === "short-form" ? "vertical video still" : "photograph"} for an East African news platform. ` +
-      `Subject: ${title}. Setting: recognisable ${keywords[0] ?? "East African"} context — Nairobi/Kampala/Dar es Salaam/Kigali street or workspace realism, ` +
-      `natural daylight, documentary framing, ${aspect}. No text overlays, no watermarks, no logos. ` +
-      `Colour grade: warm but not saturated. Avoid stock-photo posing and avoid Western-default faces for regional subjects.`;
+    const prompt = buildImagePrompt({ title, category, format });
+    const size = format === "short-form" ? "1024x1536" : format === "feature" ? "1536x1024" : "1024x1024";
 
     const svg = paintThumb({ title, category, author, seed: `${title}:${category}` });
+
+    let image: Awaited<ReturnType<typeof visualStudio.generateImage>> | null = null;
+    if (!input.skipGeneration) {
+      image = await visualStudio.generateImage({ prompt, size, ownerId });
+      if (!image.ok) {
+        this.log.warn("image generation failed", { title, error: image.error });
+      } else {
+        this.log.info("visual generated", { title, provider: image.provider, url: image.url });
+      }
+    }
+
+    const summary = image?.ok
+      ? `Image generated for "${title}" (${format}, ${aspect}) with ${image.provider}. Ready to use as the cover: ${image.url}`
+      : `Visual brief ready for "${title}" (${format}, ${aspect}). Image generation did not run${image?.error ? `: ${image.error}` : ""} — the prompt and the SVG cover are below.`;
 
     return {
       ok: true,
       action: "visual_brief",
-      summary: `Visual brief ready for "${title}" (${format}, ${aspect}). Cover thumbnail rendered.`,
+      summary,
       detail: {
         title,
         format,
         aspect,
         prompt,
         keywords,
-        generation: {
-          imageModel: null,
-          videoModel: null,
-          note: "No image or video model is configured in this project. The prompt above is ready to paste into any generator, and the SVG cover is rendered by the platform's own thumbnail painter.",
-        },
+        image: image
+          ? { ok: image.ok, provider: image.provider, url: image.url, size: image.size, bytes: image.media?.bytes ?? null, storage: image.media?.storage ?? null, error: image.error ?? null, notes: image.notes }
+          : null,
         thumbnail: { format: "svg", bytes: svg.length, svg },
       },
+    };
+  }
+
+  /**
+   * Generate a short video for a story.
+   *
+   * Wraps the adapter in visual-studio, which is deliberately not pointed at
+   * OpenAI's Sora API — that API is documented to shut down permanently on
+   * 2026-09-24, so wiring it would ship a feature with a known expiry date.
+   * Without a configured endpoint this reports `unavailable` and says why, which
+   * is a truthful answer; returning a fabricated URL would not be.
+   */
+  async generateVideoClip(input: { title: string; ownerId?: string; seconds?: 4 | 8 | 12; format?: "feature" | "short-form" }): Promise<ActionResult> {
+    const title = input.title?.trim();
+    if (!title) return { ok: false, action: "generate_video", summary: "Give me the story title and I will build the clip.", error: "title_required" };
+
+    const format = input.format ?? "short-form";
+    const prompt = buildImagePrompt({ title, format });
+    const video = await visualStudio.generateVideo({
+      prompt,
+      ownerId: input.ownerId ?? "neural-mind",
+      seconds: input.seconds ?? (format === "short-form" ? 4 : 8),
+      size: format === "feature" ? "1536x1024" : "1024x1536",
+    });
+
+    return {
+      ok: video.ok,
+      action: "generate_video",
+      summary: video.ok
+        ? video.status === "completed"
+          ? `Clip rendered for "${title}": ${video.media?.url}`
+          : `Clip queued for "${title}" (job ${video.jobId}, ${video.progress ?? 0}% done). It keeps rendering — check back with the job id.`
+        : `Video is unavailable: ${video.reason}`,
+      error: video.ok ? undefined : "unavailable",
+      detail: { title, format, prompt, status: video.status, provider: video.provider, jobId: video.jobId, progress: video.progress, url: video.media?.url ?? null, notes: video.notes },
     };
   }
 }

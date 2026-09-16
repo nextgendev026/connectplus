@@ -110,9 +110,25 @@ export async function runPublishScheduled(): Promise<{ published: number }> {
  * hive brain, ingests unlearned RSS articles, and folds Convex view deltas
  * back into Post.viewCount so Postgres stays authoritative for ranking.
  */
-export async function runHiveSweep(): Promise<{ ok: boolean; sweep: HiveSweepResult; viewSync: { posts: number; views: number } }> {
+export async function runHiveSweep(): Promise<{
+  ok: boolean;
+  sweep: HiveSweepResult;
+  viewSync: { posts: number; views: number };
+  retention: { totalBefore: number; totalAfter: number; mergedAway: number; pruned: number };
+}> {
   const sweep = await hiveBrain.sweepInternal();
   await hiveBrain.train();
+
+  // Retention runs AFTER the sweep that added the night's memories, so the day's
+  // new learnings are what gets deduplicated — merging before the sweep would
+  // leave every fresh duplicate for the next night to fix.
+  const { knowledgeRetention } = await import("@/lib/knowledge-retention");
+  const retention = await knowledgeRetention.runMaintenance().catch((error) => {
+    log.warn("retention maintenance failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  });
 
   const { neuralMind } = await import("@/lib/neural-mind");
   await neuralMind.learnFromRssArticles();
@@ -133,7 +149,17 @@ export async function runHiveSweep(): Promise<{ ok: boolean; sweep: HiveSweepRes
   }
   const synced = await convexMarkViewsSynced(applied);
 
-  return { ok: true, sweep, viewSync: { posts: synced, views } };
+  return {
+    ok: true,
+    sweep,
+    viewSync: { posts: synced, views },
+    retention: {
+      totalBefore: retention?.totalBefore ?? 0,
+      totalAfter: retention?.totalAfter ?? 0,
+      mergedAway: retention?.consolidated.mergedAway ?? 0,
+      pruned: retention?.pruned ?? 0,
+    },
+  };
 }
 
 /** Semantic index maintenance: embed published posts missing or stale. */

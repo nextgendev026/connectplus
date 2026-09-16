@@ -138,6 +138,20 @@ export interface TrendingFeed {
 }
 
 export interface Monetization {
+  /** What creators earn from their audience — tips in, payouts out. */
+  creatorEarnings: {
+    tipsSettled: number;
+    tipsSettledAmount: number;
+    tipsPending: number;
+    tipsFailed: number;
+    creatorsTipped: number;
+    payoutsPaid: number;
+    payoutsPaidAmount: number;
+    payoutsPending: number;
+    /** Tips settled but not yet paid out — the platform's outstanding balance. */
+    unpaidToCreators: number;
+    topEarners: { username: string; tips: number; earned: number; paidOut: number; unpaid: number }[];
+  };
   ads: {
     active: number;
     total: number;
@@ -237,7 +251,7 @@ export interface LivePlatformBrief {
   generatedAt: string;
   creators?: { total: number; active: number; dormant: number; verified: number; growth30d: number };
   traffic?: { views: number; uniqueVisitors: number; bounceRate: number; returningShare: number; avgSessionMinutes: number };
-  economy?: { mrr: number; activeSubscriptions: number; settledRevenue: number; rails: string[] };
+  economy?: { mrr: number; activeSubscriptions: number; settledRevenue: number; rails: string[]; creatorTipsSettled?: number; owedToCreators?: number };
   trends?: { topic: string; posts: number; views: number }[];
   region?: { headline: string; source: string }[];
   weather?: { city: string; summary: string }[];
@@ -507,7 +521,7 @@ class PlatformIntelligence {
   async getMonetization(): Promise<Monetization> {
     const notes: string[] = [];
 
-    const [ads, plans, subs, intents] = await Promise.all([
+    const [ads, plans, subs, intents, tipsByStatus, payoutsByStatus, tipsByCreator] = await Promise.all([
       prisma.ad.findMany({ select: { name: true, slot: true, impressions: true, clicks: true, isActive: true } }),
       prisma.subscriptionPlan.findMany({ select: { id: true, name: true, displayName: true, tier: true, audience: true, priceMonthly: true } }),
       prisma.userSubscription.groupBy({
@@ -519,6 +533,9 @@ class PlatformIntelligence {
         _sum: { amount: true },
         _count: { id: true },
       }),
+      prisma.tip.groupBy({ by: ["status"], _sum: { amount: true }, _count: { id: true } }),
+      prisma.creatorPayout.groupBy({ by: ["status"], _sum: { amount: true }, _count: { id: true } }),
+      prisma.tip.groupBy({ by: ["toUserId"], where: { status: "succeeded" }, _sum: { amount: true }, _count: { id: true } }),
     ]);
 
     const planMap = new Map(plans.map((p) => [p.id, p]));
@@ -583,12 +600,71 @@ class PlatformIntelligence {
 
     const mpesaNumbers = await prisma.userSubscription.count({ where: { provider: "daraja", payerPhone: { not: null } } }).catch(() => 0);
 
+    // ── Creator earnings ──
+    // Tips in, payouts out, and the difference per creator — because "what did I
+    // earn" is the first question a creator asks and it is not answerable from
+    // subscriptions or ad impressions.
+    const tipTotals = { settled: 0, settledAmount: 0, pending: 0, failed: 0 };
+    for (const row of tipsByStatus) {
+      const amount = row._sum.amount ?? 0;
+      if (row.status === "succeeded") {
+        tipTotals.settled += row._count.id;
+        tipTotals.settledAmount += amount;
+      } else if (row.status === "pending") tipTotals.pending += row._count.id;
+      else if (row.status === "failed") tipTotals.failed += row._count.id;
+    }
+
+    const payoutTotals = { paid: 0, paidAmount: 0, pending: 0 };
+    for (const row of payoutsByStatus) {
+      if (row.status === "paid") {
+        payoutTotals.paid += row._count.id;
+        payoutTotals.paidAmount += row._sum.amount ?? 0;
+      } else if (row.status === "pending" || row.status === "processing") payoutTotals.pending += row._count.id;
+    }
+
+    const topIds = tipsByCreator
+      .sort((a, b) => (b._sum.amount ?? 0) - (a._sum.amount ?? 0))
+      .slice(0, 10)
+      .map((r) => r.toUserId);
+
+    const [earners, payoutsPerCreator] = await Promise.all([
+      topIds.length > 0
+        ? prisma.user.findMany({ where: { id: { in: topIds } }, select: { id: true, username: true } })
+        : Promise.resolve([] as { id: string; username: string }[]),
+      topIds.length > 0
+        ? prisma.creatorPayout.groupBy({ by: ["userId"], where: { userId: { in: topIds }, status: "paid" }, _sum: { amount: true } })
+        : Promise.resolve([] as { userId: string; _sum: { amount: number | null } }[]),
+    ]);
+
+    const usernameById = new Map(earners.map((u) => [u.id, u.username]));
+    const paidById = new Map(payoutsPerCreator.map((p) => [p.userId, p._sum.amount ?? 0]));
+
+    const topEarners = tipsByCreator
+      .sort((a, b) => (b._sum.amount ?? 0) - (a._sum.amount ?? 0))
+      .slice(0, 10)
+      .map((row) => {
+        const earned = Math.round((row._sum.amount ?? 0) * 100) / 100;
+        const paidOut = Math.round((paidById.get(row.toUserId) ?? 0) * 100) / 100;
+        return {
+          username: usernameById.get(row.toUserId) ?? row.toUserId,
+          tips: row._count.id,
+          earned,
+          paidOut,
+          unpaid: Math.round((earned - paidOut) * 100) / 100,
+        };
+      });
+
     if (plans.every((p) => p.priceMonthly === 0) && active > 0) {
       notes.push("All active plans are priced at 0 — MRR is reported as 0 rather than inferred.");
     }
     if (ads.length === 0) notes.push("No ad creatives are configured, so ad monetization is inert.");
     if (subs.length === 0) notes.push("No subscriptions have ever been recorded.");
-    notes.push("There is no tips ledger in this schema, so no tips revenue is reported.");
+    if (tipsByStatus.length === 0) notes.push("No tips have been recorded yet, so creator earnings are zero rather than unknown.");
+    if (tipTotals.settledAmount > payoutTotals.paidAmount) {
+      notes.push(
+        `Creators are owed ${Math.round((tipTotals.settledAmount - payoutTotals.paidAmount) * 100) / 100} in settled tips that have not been paid out.`
+      );
+    }
 
     const impressions = ads.reduce((s, a) => s + a.impressions, 0);
     const clicks = ads.reduce((s, a) => s + a.clicks, 0);
@@ -611,6 +687,18 @@ class PlatformIntelligence {
             clicks: a.clicks,
             ctr: a.impressions > 0 ? Math.round((a.clicks / a.impressions) * 10000) / 100 : 0,
           })),
+      },
+      creatorEarnings: {
+        tipsSettled: tipTotals.settled,
+        tipsSettledAmount: Math.round(tipTotals.settledAmount * 100) / 100,
+        tipsPending: tipTotals.pending,
+        tipsFailed: tipTotals.failed,
+        creatorsTipped: tipsByCreator.length,
+        payoutsPaid: payoutTotals.paid,
+        payoutsPaidAmount: Math.round(payoutTotals.paidAmount * 100) / 100,
+        payoutsPending: payoutTotals.pending,
+        unpaidToCreators: Math.round((tipTotals.settledAmount - payoutTotals.paidAmount) * 100) / 100,
+        topEarners,
       },
       subscriptions: {
         active,
@@ -988,10 +1076,15 @@ class PlatformIntelligence {
     const deltas: string[] = [];
     const cmp = prior?.traffic;
     if (cmp) {
+      // One arrow only, and it means the movement — not the reading order. An
+      // earlier shape printed an arrow glyph AND a before → after pair, so
+      // "Views → 763 → 763" read as two contradictory directions.
       const move = (label: string, now: number, before: number, unit = "") => {
         const change = before === 0 ? (now === 0 ? 0 : 100) : ((now - before) / before) * 100;
-        const arrow = change > 2 ? "▲" : change < -2 ? "▼" : "→";
-        deltas.push(`${label} ${arrow} ${formatNumber(before)}${unit} → ${formatNumber(now)}${unit} (${change >= 0 ? "+" : ""}${change.toFixed(1)}%)`);
+        const direction = change > 2 ? "up" : change < -2 ? "down" : "flat";
+        deltas.push(
+          `${label}: ${formatNumber(before)}${unit} → ${formatNumber(now)}${unit} (${change >= 0 ? "+" : ""}${change.toFixed(1)}%, ${direction})`
+        );
       };
       move("Views", current.views, cmp.views);
       move("Unique visitors", current.uniqueVisitors, cmp.uniqueVisitors);
@@ -1105,6 +1198,8 @@ class PlatformIntelligence {
         activeSubscriptions: money.subscriptions.active,
         settledRevenue: money.settlement.collected,
         rails: money.rails.map((r) => r.provider),
+        creatorTipsSettled: money.creatorEarnings.tipsSettledAmount,
+        owedToCreators: money.creatorEarnings.unpaidToCreators,
       };
     }
     if (trends) {

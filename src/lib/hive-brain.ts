@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { extractKeywords, analyzeSentiment, extractEntities, summarizeText, stripHtml } from "@/lib/neural-text";
 import { createLogger } from "@/lib/logger";
 import { generateText } from "@/lib/ai-provider";
+import { rankMemories } from "@/lib/knowledge-retention";
 
 export interface HivePostInput {
   id: string;
@@ -411,18 +412,33 @@ class HiveBrain {
       where.OR.push({ tags: { contains: term } });
     }
 
-    const memories = await prisma.neuralMemory.findMany({
+    // Fetch a wider pool than we return: the ranking below decides what is
+    // relevant, and a pool of exactly `limit` leaves it nothing to choose
+    // between. Taking `limit * 2` and then slicing meant the ranking could only
+    // reorder what the *database* already guessed at.
+    const candidates = await prisma.neuralMemory.findMany({
       where,
       orderBy: [{ accessCount: "desc" }, { createdAt: "desc" }],
-      take: limit * 2,
+      take: limit * 4,
     });
 
-    await prisma.neuralMemory.updateMany({
-      where: { id: { in: memories.map(m => m.id) } },
-      data: { accessCount: { increment: 1 }, lastAccessedAt: new Date() },
-    });
+    // Rank by standing — decayed confidence, extended by reinforcement — rather
+    // than by raw use count, so a memory read a hundred times two years ago does
+    // not permanently outrank what the hive learned this week. Decay only
+    // reorders; it never rewrites the stored confidence.
+    const memories = rankMemories(candidates, new Date()).slice(0, limit);
 
-    return memories.slice(0, limit);
+    // Reinforce only what was actually returned. The previous shape incremented
+    // every row it *fetched*, which credited memories the caller never saw and
+    // made a broad query inflate rows at random.
+    if (memories.length > 0) {
+      await prisma.neuralMemory.updateMany({
+        where: { id: { in: memories.map(m => m.id) } },
+        data: { accessCount: { increment: 1 }, lastAccessedAt: new Date() },
+      });
+    }
+
+    return memories;
   }
 
   async status(): Promise<HiveStatus> {
