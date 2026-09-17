@@ -141,8 +141,10 @@ export function LoadingScreen() {
           </div>
         </div>
         <div>
-          <p className="text-center text-sm font-semibold text-surface-200">
-            connect<span className="text-gradient-brand">Plus</span>
+          {/* The artwork's own wordmark treatment — uppercase, extra-bold, tight
+              tracking, in the ink the logo uses. */}
+          <p className="text-center text-[13px] font-extrabold uppercase tracking-tight text-surface-50">
+            connectplus
           </p>
           <p className="mt-0.5 text-center text-xs text-surface-500">
             Voices of the Silicon Savanna
