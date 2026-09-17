@@ -88,7 +88,7 @@ export const SETTINGS_CATALOG: SettingDef[] = [
   {
     key: "siteDescription",
     defaultValue:
-      "East Africa's home for homegrown stories, live radio, and real-time football and basketball livescores — with model-generated betting analysis and tips for every fixture. Read, write, listen, and follow the games from Nairobi to Dar es Salaam.",
+      "East Africa's home for homegrown stories, live radio, and real-time football livescores — with model-generated betting analysis and tips for every fixture. Read, write, listen, and follow the games from Nairobi to Dar es Salaam.",
     group: "general",
     label: "Site description",
     hint: "Default description used for SEO and link previews. Aim for 150–160 characters so search results don't truncate it.",

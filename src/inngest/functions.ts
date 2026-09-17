@@ -126,8 +126,9 @@ export const publishScheduled = inngest.createFunction(
 );
 
 /**
- * Polls all active RSS feeds. Inngest fires this hourly (cron trigger below);
- * the event trigger remains for manual admin runs and the safety net.
+ * Polls all active RSS feeds. Inngest fires this twice a day (cron trigger
+ * below, mirrored from CRON_JOBS); the event trigger remains for manual admin
+ * runs and the safety net.
  *
  * Each feed runs as its OWN step: if a source hangs or a serverless window
  * ends mid-run, Inngest resumes from the next feed instead of losing the
@@ -137,9 +138,10 @@ export const rssPoll = inngest.createFunction(
   {
     id: "rss-poll",
     name: "Poll RSS feeds",
-    // Six-hourly. Per-feed lastPolled intervals still throttle individual
-    // sources, and one run at a time + a cap keeps outbound egress flat.
-    triggers: [{ event: "rss-poll" }, { cron: "0 */6 * * *" }],
+    // Twice a day, 00:00 and 12:00 UTC. Per-feed lastPolled intervals still
+    // throttle individual sources, and one run at a time + a per-run cap keeps
+    // outbound egress flat. The admin console can always force a poll.
+    triggers: [{ event: "rss-poll" }, { cron: "0 */12 * * *" }],
     concurrency: 1,
     retries: 2,
   },

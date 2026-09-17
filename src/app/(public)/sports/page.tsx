@@ -3,14 +3,14 @@ import AdSlot from "@/components/ads/AdSlot";
 import SportsHub from "@/components/sports/SportsHub";
 
 export const metadata: Metadata = {
-  title: "Live Scores & Today's Predictions",
+  title: "Live Football Scores & Today's Predictions",
   description:
-    "Live football and basketball scores, our model's prediction for every match and the reasons behind it — plus today's tips and a fixture calendar for the weeks ahead.",
+    "Live football scores from the FKF Premier League, the big European leagues and the rest of the world, our model's prediction for every match and the reasons behind it — plus today's tips and a fixture calendar for the weeks ahead.",
   keywords: [
     "live scores",
     "livescore today",
     "football live scores",
-    "basketball live scores",
+    "live football scores Kenya",
     "football predictions today",
     "why this prediction",
     "football betting tips",
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   openGraph: {
     // The brand comes from the root title template — see about/page.tsx. Share
     // cards are not templated, so these keep it explicitly.
-    title: "Live Scores & Today's Predictions · connectPlus",
+    title: "Live Football Scores & Today's Predictions · connectPlus",
     description:
       "Every match, updating live, with our model's prediction and the reasons behind it.",
     type: "website",
@@ -33,8 +33,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Live Scores & Today's Predictions · connectPlus",
-    description: "Live scores, and predictions that explain themselves.",
+    title: "Live Football Scores & Today's Predictions · connectPlus",
+    description: "Live football scores, and predictions that explain themselves.",
   },
 };
 
@@ -50,12 +50,12 @@ export const metadata: Metadata = {
 const SPORTS_SCHEMA = JSON.stringify({
   "@context": "https://schema.org",
   "@type": "CollectionPage",
-  name: "Live Scores & Today's Predictions",
+  name: "Live Football Scores & Today's Predictions",
   description:
-    "Live football and basketball scores, our model's prediction for every fixture with the reasons behind it, today's tips and the fixture calendar.",
+    "Live football scores, our model's prediction for every fixture with the reasons behind it, today's tips and the fixture calendar.",
   inLanguage: "en",
   isPartOf: { "@type": "WebSite", name: "connectPlus" },
-  about: { "@type": "Thing", name: "Association football and basketball results and betting markets" },
+  about: { "@type": "Thing", name: "Association football results and betting markets" },
   breadcrumb: {
     "@type": "BreadcrumbList",
     itemListElement: [

@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { X, Loader2, BadgeCheck, MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ViewCount } from "@/components/ui/ViewCount";
 
 interface UserItem {
   id: string;
@@ -277,7 +278,7 @@ function renderBookmarkItems(items: PostItem[]) {
         </p>
       </div>
       <div className="shrink-0 text-[10px] text-surface-500">
-        {post.viewCount.toLocaleString()} views
+        <ViewCount value={post.viewCount} />
       </div>
     </Link>
   ));

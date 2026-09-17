@@ -1,70 +1,74 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-
-interface ThirdPartyAdSlotProps {
-  slot: string;
-  className?: string;
-}
+import type { NetworkSlotConfig } from "@/lib/ads";
 
 /**
- * Renders a third-party ad slot (Google AdSense, Facebook Audience Network,
- * MGID, Propeller, or custom HTML). The slot config is fetched server-side
- * and injected via the HTML attribute; this component only manages script
- * lifecycle and view tracking.
+ * Injects a configured third-party ad tag (AdSense, Meta, MGAN, custom HTML).
+ *
+ * What changed and why:
+ *
+ *   1. THE CONFIG ARRIVES AS A PROP. This used to `fetch("/api/ads/slots?slot=…")`
+ *      from the browser once per placement — a round trip per slot, an empty box
+ *      while it resolved, and a request the browser could abort mid-flight
+ *      (observed in production as `net::ERR_ABORTED` on `feed-sidebar`). The
+ *      server resolves the same config into the same page, so there is nothing
+ *      left to fetch.
+ *   2. IT DOES NOT TRACK ANYTHING. Counting belongs to the slot container, which
+ *      is the element that can actually observe whether the creative was seen.
+ *   3. IT IS CONSENT-GATED BY ITS PARENT. A network tag is a third-party script
+ *      and is mounted only when the reader has allowed advertising cookies;
+ *      first-party creatives do not need that permission and are not gated.
  */
-export default function ThirdPartyAdSlot({ slot, className }: ThirdPartyAdSlotProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
+export default function ThirdPartyAdSlot({
+  config,
+  slot,
+  className,
+}: {
+  config: NetworkSlotConfig;
+  slot: string;
+  className?: string;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const el = containerRef.current;
-    if (!el) return;
+    if (!el || !config.scriptTag) return;
 
-    // Fetch the slot configuration from the server
-    const abort = new AbortController();
-    fetch(`/api/ads/slots?slot=${encodeURIComponent(slot)}`, { signal: abort.signal })
-      .then((r) => r.json())
-      .then((data) => {
-        if (!data?.slot?.scriptTag || !el) return;
+    const wrapper = document.createElement("div");
+    wrapper.className = "third-party-ad";
+    // Deliberately NOT `data-ad-slot`: the placement box already carries that,
+    // and a duplicate makes the slot ambiguous to anything selecting on it —
+    // screenshots, audits, tests.
+    wrapper.setAttribute("data-ad-network-slot", slot);
+    wrapper.setAttribute("data-ad-provider", config.provider);
+    if (config.adUnitId) wrapper.setAttribute("data-ad-unit", config.adUnitId);
+    wrapper.innerHTML = config.scriptTag;
+    el.appendChild(wrapper);
 
-        // Inject the ad script/tag
-        const wrapper = document.createElement("div");
-        wrapper.className = "third-party-ad";
-        wrapper.setAttribute("data-ad-slot", slot);
-        wrapper.setAttribute("data-ad-provider", data.slot.provider);
-        wrapper.innerHTML = data.slot.scriptTag;
-        el.appendChild(wrapper);
-
-        // Track impression
-        fetch("/api/ads/slots/track", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ slotId: data.slot.id, type: "impression" }),
-        }).catch(() => {});
-
-        // Handle script execution for inline scripts
-        const scripts = wrapper.querySelectorAll("script");
-        scripts.forEach((oldScript) => {
-          const newScript = document.createElement("script");
-          Array.from(oldScript.attributes).forEach((attr) => newScript.setAttribute(attr.name, attr.value));
-          if (oldScript.textContent) newScript.textContent = oldScript.textContent;
-          oldScript.parentNode?.replaceChild(newScript, oldScript);
-        });
-      })
-      .catch(() => {});
+    // Scripts inserted through `innerHTML` are parsed but never executed, so each
+    // one is rebuilt as a live element — otherwise a tag that only contains
+    // inline script silently does nothing.
+    for (const old of Array.from(wrapper.querySelectorAll("script"))) {
+      const replacement = document.createElement("script");
+      for (const attr of Array.from(old.attributes)) {
+        replacement.setAttribute(attr.name, attr.value);
+      }
+      if (old.textContent) replacement.textContent = old.textContent;
+      old.parentNode?.replaceChild(replacement, old);
+    }
 
     return () => {
-      abort.abort();
-      if (el) el.innerHTML = "";
+      el.innerHTML = "";
     };
-  }, [slot]);
+  }, [config.scriptTag, config.adUnitId, config.provider, slot]);
 
   return (
     <div
       ref={containerRef}
-      className={`ad-slot-third-party ${className ?? ""}`}
+      className={className}
       data-slot={slot}
-      style={{ minHeight: "1px" }}
+      aria-label={`Advertisement served by ${config.provider}`}
     />
   );
 }

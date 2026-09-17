@@ -10,13 +10,11 @@
  * that the keyless feeds either omit entirely or carry as a bare name and a
  * kick-off. For an East African audience that is the difference between a desk
  * that knows about the Premier League and one that knows about *their* league.
- * It also carries basketball, which the desk's second board is built on.
  *
  * ## What governs the design: 100 calls a day
  *
- * The account on this key is the **Free plan: 100 requests per day, per
- * product** (football and basketball are counted separately). That budget is
- * small enough to be spent by accident — one page render fanning out to four
+ * The account on this key is the **Free plan: 100 requests per day**. That
+ * budget is small enough to be spent by accident — one page render fanning out to four
  * endpoints, a livescore strip polling every few seconds, an admin console
  * refresh — and a spent budget is not a slow board, it is an *empty* one. So the
  * three rules below are the module, and the API is what hangs off them:
@@ -31,7 +29,7 @@
  *     with three concurrent readers still makes ONE upstream call, because the
  *     promise is shared rather than the result.
  *  3. **A governor that stops before the wall.** Every call is counted against
- *     the UTC day for its product, in Redis (atomically) with a per-process
+ *     the UTC day, in Redis (atomically) with a per-process
  *     fallback, and the provider refuses to make the call that would cross
  *     `APISPORTS_DAY_BUDGET` — default 90, leaving a tenth of the day as
  *     headroom for a manual look-up that would otherwise be the one that fails.
@@ -47,6 +45,7 @@
 
 import { cacheGet, cacheSet, cacheIncr } from "@/lib/redis";
 import { createLogger } from "@/lib/logger";
+import { isFootballScope } from "@/lib/sports-scope";
 import type { MatchStatus, NormalizedMatch, SportsProvider } from "@/lib/sports";
 
 const log = createLogger("sports-apisports");
@@ -73,12 +72,15 @@ export const APISPORTS_ODDS_MAX_LOOKUPS = clampInt(Number(env("APISPORTS_ODDS_MA
 
 export const apisportsConfigured = (): boolean => APISPORTS_API_KEY.length > 0 && !APISPORTS_DISABLED;
 
-type Product = "football" | "basketball";
-
-const BASE: Record<Product, string> = {
-  football: "https://v3.football.api-sports.io",
-  basketball: "https://v1.basketball.api-sports.io",
-};
+/**
+ * One product, one base URL.
+ *
+ * This used to be a `Product` union with a base per sport, and the second entry
+ * was basketball's. The desk serves football, so the union is gone: a request can
+ * no longer name a product the app does not cover, which removes a whole class of
+ * "fetched the wrong thing" bug along with the dead branch that would have run it.
+ */
+const BASE_URL = "https://v3.football.api-sports.io";
 
 /* ══════════════════════════════════════════════════════════════════════════
    The quota governor
@@ -89,8 +91,8 @@ function utcDay(now: Date = new Date()): string {
   return now.toISOString().slice(0, 10);
 }
 
-function quotaKey(product: Product, day: string): string {
-  return `sports:apisports:calls:${product}:${day}`;
+function quotaKey(day: string): string {
+  return `sports:apisports:calls:football:${day}`;
 }
 
 /**
@@ -114,9 +116,9 @@ export function apiSportsQuotaBackend(): "redis" | "process" {
  * Spend one call from today's budget. Returns false when the budget is gone —
  * the caller then serves what it has rather than making the request.
  */
-async function spendCall(product: Product): Promise<boolean> {
+async function spendCall(): Promise<boolean> {
   const day = utcDay();
-  const key = quotaKey(product, day);
+  const key = quotaKey(day);
   const counted = await cacheIncr(key, 26 * 60 * 60).catch(() => 0);
 
   let used: number;
@@ -133,7 +135,6 @@ async function spendCall(product: Product): Promise<boolean> {
 
   if (used > APISPORTS_DAY_BUDGET) {
     log.warn("api-sports daily budget reached — serving cache only", {
-      product,
       used,
       budget: APISPORTS_DAY_BUDGET,
     });
@@ -143,15 +144,16 @@ async function spendCall(product: Product): Promise<boolean> {
 }
 
 /** Today's usage without spending anything — what the console reads. */
-async function usedToday(product: Product): Promise<number> {
-  const key = quotaKey(product, utcDay());
+async function usedToday(): Promise<number> {
+  const key = quotaKey(utcDay());
   const counted = await cacheGet<number>(key).catch(() => null);
   const fromRedis = typeof counted === "number" && Number.isFinite(counted) ? counted : 0;
   return Math.max(fromRedis, memoryCalls.get(key) ?? 0);
 }
 
 export interface ApiSportsProductQuota {
-  product: Product;
+  /** Always football. Kept in the payload so a console can label the row. */
+  product: "football";
   used: number;
   budget: number;
   remaining: number;
@@ -183,19 +185,19 @@ export interface ApiSportsState {
  * trying to inspect.
  */
 export async function apiSportsState(): Promise<ApiSportsState> {
-  const products: Product[] = ["football", "basketball"];
-  const used = await Promise.all(products.map((p) => usedToday(p)));
+  const used = await usedToday();
 
-  const quotas: ApiSportsProductQuota[] = products.map((product, i) => {
-    const n = used[i] ?? 0;
-    return {
-      product,
-      used: n,
+  // A one-row array rather than a scalar: the console renders "the products"
+  // and a shape that stops being a list is a shape that stops rendering.
+  const quotas: ApiSportsProductQuota[] = [
+    {
+      product: "football",
+      used,
       budget: APISPORTS_DAY_BUDGET,
-      remaining: Math.max(0, APISPORTS_DAY_BUDGET - n),
-      exhausted: n >= APISPORTS_DAY_BUDGET,
-    };
-  });
+      remaining: Math.max(0, APISPORTS_DAY_BUDGET - used),
+      exhausted: used >= APISPORTS_DAY_BUDGET,
+    },
+  ];
 
   if (!apisportsConfigured()) {
     return {
@@ -210,7 +212,7 @@ export async function apiSportsState(): Promise<ApiSportsState> {
     };
   }
 
-  const status = await apiSportsGet<ApiStatusResponse>("football", "status", 6 * 60 * 60).catch(() => null);
+  const status = await apiSportsGet<ApiStatusResponse>("status", 6 * 60 * 60).catch(() => null);
   const account = status?.subscription;
   const requests = status?.requests;
 
@@ -243,7 +245,8 @@ interface ApiEnvelope<T> {
 
 /** Shared so three concurrent readers of a cold cache make one upstream call. */
 const inflight = new Map<string, Promise<unknown>>();
-const lastCallAt = new Map<Product, number>();
+/** The last upstream call, for the per-minute throttle. */
+let lastCallAt = 0;
 
 /** True when `errors` carries anything — the API answers 200 with errors inside. */
 function hasErrors(errors: unknown): boolean {
@@ -260,17 +263,17 @@ function hasErrors(errors: unknown): boolean {
  * merge, and every failure mode here has a better answer than an exception —
  * stale data, or nothing at all, while the rest of the chain carries the board.
  */
-async function apiSportsGet<T>(product: Product, path: string, ttlSeconds: number): Promise<T | null> {
+async function apiSportsGet<T>(path: string, ttlSeconds: number): Promise<T | null> {
   if (!apisportsConfigured()) return null;
 
-  const key = `sports:apisports:${product}:${path}`;
+  const key = `sports:apisports:football:${path}`;
   const cached = await cacheGet<CacheEnvelope<T>>(key).catch(() => null);
   if (cached && Date.now() - cached.at < ttlSeconds * 1000) return cached.body;
 
   const pending = inflight.get(key);
   if (pending) return pending as Promise<T | null>;
 
-  const throttledUntil = (lastCallAt.get(product) ?? 0) + APISPORTS_MIN_INTERVAL_MS;
+  const throttledUntil = lastCallAt + APISPORTS_MIN_INTERVAL_MS;
   if (cached && Date.now() < throttledUntil) {
     // Inside the per-minute window with something to serve: keep the request
     // budget for later rather than spending it to refresh early.
@@ -278,11 +281,11 @@ async function apiSportsGet<T>(product: Product, path: string, ttlSeconds: numbe
   }
 
   const run = (async (): Promise<T | null> => {
-    if (!(await spendCall(product))) return cached?.body ?? null;
+    if (!(await spendCall())) return cached?.body ?? null;
 
     try {
-      lastCallAt.set(product, Date.now());
-      const res = await fetch(`${BASE[product]}/${path}`, {
+      lastCallAt = Date.now();
+      const res = await fetch(`${BASE_URL}/${path}`, {
         headers: {
           // The current header. (`x-rapidapi-key` is the RapidAPI variant of the
           // same service; a direct key only ever works with this one.)
@@ -294,7 +297,7 @@ async function apiSportsGet<T>(product: Product, path: string, ttlSeconds: numbe
         cache: "no-store",
       });
       if (!res.ok) {
-        log.warn("api-sports request failed", { product, path, status: res.status });
+        log.warn("api-sports request failed", { path, status: res.status });
         return cached?.body ?? null;
       }
       const json = (await res.json()) as ApiEnvelope<T>;
@@ -302,7 +305,7 @@ async function apiSportsGet<T>(product: Product, path: string, ttlSeconds: numbe
       // bad parameter or a suspended subscription. Serving the last good copy
       // beats serving an empty board for any of those.
       if (hasErrors(json.errors)) {
-        log.warn("api-sports returned errors", { product, path, errors: json.errors });
+        log.warn("api-sports returned errors", { path, errors: json.errors });
         return cached?.body ?? null;
       }
       const body = (json.response ?? null) as T | null;
@@ -312,7 +315,6 @@ async function apiSportsGet<T>(product: Product, path: string, ttlSeconds: numbe
       return body;
     } catch (err) {
       log.warn("api-sports request threw", {
-        product,
         path,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -335,6 +337,14 @@ export interface ApiScorePair {
   away?: number | null;
 }
 
+/**
+ * One football fixture row from `fixtures?date=`.
+ *
+ * Deliberately a narrow type: it names the football shape only, so a row that
+ * does not look like this is a null rather than a silently half-mapped fixture.
+ * The basketball variant of the same feed (`id`/`status`/`scores` at the top
+ * level) is no longer described here, because the desk no longer asks for it.
+ */
 export interface ApiFixtureRow {
   fixture?: {
     id?: number | string;
@@ -342,20 +352,13 @@ export interface ApiFixtureRow {
     venue?: { name?: string | null; city?: string | null } | null;
     status?: { long?: string; short?: string; elapsed?: number | null; extra?: number | null };
   };
-  /** Basketball is the same payload with the id at the top level. */
-  id?: number | string;
-  date?: string;
-  time?: string;
-  status?: { long?: string; short?: string; timer?: string | null };
-  league?: { id?: number | string; name?: string; country?: string | { name?: string }; season?: number | string };
-  country?: { name?: string; code?: string | null } | null;
+  league?: { id?: number | string; name?: string; country?: string; season?: number | string };
   teams?: {
     home?: { id?: number | string; name?: string; logo?: string | null };
     away?: { id?: number | string; name?: string; logo?: string | null };
   };
   goals?: ApiScorePair | null;
   score?: { fulltime?: ApiScorePair | null; halftime?: ApiScorePair | null };
-  scores?: { home?: { total?: number | null }; away?: { total?: number | null } } | null;
 }
 
 interface ApiStatusResponse {
@@ -379,13 +382,11 @@ export interface ApiOddsRow {
    ══════════════════════════════════════════════════════════════════════════ */
 
 /**
- * API-Sports status codes → ours.
+ * API-Sports football status codes → ours.
  *
- * The short codes are shared between the football and basketball products
- * (`Q1`–`Q4` and `OT` are basketball's, `1H`/`2H`/`ET`/`P` football's), so one
- * table covers both. Anything unrecognised falls back to a minute-based guess,
- * because a feed that says "45" and a status we do not know is still a match in
- * progress — and "in progress" is the only thing the board must not get wrong.
+ * Anything unrecognised falls back to a minute-based guess, because a feed that
+ * says "45" and a status we do not know is still a match in progress — and "in
+ * progress" is the only thing the board must not get wrong.
  */
 export function apiSportsStatus(short: string | null | undefined, elapsed: number | null): MatchStatus {
   const s = (short ?? "").toUpperCase();
@@ -396,12 +397,6 @@ export function apiSportsStatus(short: string | null | undefined, elapsed: numbe
     case "BT":
     case "P":
     case "LIVE":
-    case "Q1":
-    case "Q2":
-    case "Q3":
-    case "Q4":
-    case "OT":
-    case "AOT":
       return "LIVE";
     case "HT":
       return "HT";
@@ -458,23 +453,15 @@ export function apiSportsIdFromExternal(externalId: string | null | undefined): 
 }
 
 /**
- * One row from either product onto the desk's fixture shape.
+ * One row from the football feed onto the desk's fixture shape.
  *
- * The two products are the same JSON with different names for the same things —
- * `fixture.id` versus a top-level `id`, `goals.home` versus `scores.home.total`,
- * a `league.country` string versus a `country` object — so this reads both rather
- * than existing twice. Returns null for a row with no teams: a fixture with no
- * two sides is not something any board can render.
- *
- * Football carries the fixture nested under `row.fixture`; basketball carries the
- * id at the top level. The two `status` shapes differ too (football has
- * `elapsed`/`extra`, basketball has `timer`), so we read from the variant that
- * actually exists rather than from a union that promises both.
+ * Returns null for a row with no teams, or one with no nested `fixture`: a
+ * fixture with no two sides is not something any board can render, and a row
+ * without the football envelope is not one this mapper understands.
  */
 export function mapApiSportsFixture(row: ApiFixtureRow, sport: string): NormalizedMatch | null {
-  // Football: fixture is nested; basketball: id is top-level.
-  const isFootball = !!row.fixture;
-  const source = row.fixture ?? row;
+  const source = row.fixture;
+  if (!source) return null;
   const home = row.teams?.home;
   const away = row.teams?.away;
   const homeName = (home?.name ?? "").trim();
@@ -485,28 +472,22 @@ export function mapApiSportsFixture(row: ApiFixtureRow, sport: string): Normaliz
   if (id === undefined || id === null) return null;
 
   const leagueCountry = typeof row.league?.country === "string" ? row.league.country : null;
-  const country = leagueCountry ?? row.country?.name ?? null;
 
-  // Status: football has elapsed+extra, basketball has timer. Read the one that
-  // exists on this variant.
-  const footballStatus = isFootball ? (row.fixture?.status ?? {}) : {};
-  const basketballStatus = !isFootball ? (row.status ?? {}) : {};
-  const elapsed = typeof footballStatus.elapsed === "number" ? footballStatus.elapsed : null;
-  const extra = typeof footballStatus.extra === "number" ? footballStatus.extra : null;
-  const short = (footballStatus.short ?? basketballStatus.short) ?? null;
-  const statusValue = apiSportsStatus(short, elapsed);
+  const elapsed = typeof source.status?.elapsed === "number" ? source.status.elapsed : null;
+  const extra = typeof source.status?.extra === "number" ? source.status.extra : null;
+  const statusValue = apiSportsStatus(source.status?.short ?? null, elapsed);
 
-  // Scores arrive as `goals` (football) or `scores.*.total` (basketball), and a
-  // scheduled fixture has neither — which must stay null, not become 0-0.
+  // A scheduled fixture has no score at all, which must stay null rather than
+  // become 0-0 — `goals` is the live figure and `score.fulltime` fills in for a
+  // match the day's payload already finished.
   const goals = row.goals ?? null;
-  const homeScore = goals?.home ?? row.scores?.home?.total ?? row.score?.fulltime?.home ?? null;
-  const awayScore = goals?.away ?? row.scores?.away?.total ?? row.score?.fulltime?.away ?? null;
+  const homeScore = goals?.home ?? row.score?.fulltime?.home ?? null;
+  const awayScore = goals?.away ?? row.score?.fulltime?.away ?? null;
 
-  const kickoffRaw = source.date ?? row.date ?? null;
+  const kickoffRaw = source.date ?? null;
   const kickoff = kickoffRaw ? new Date(kickoffRaw) : null;
 
-  // venue is only on the football fixture shape; basketball has none.
-  const venue = isFootball ? row.fixture?.venue?.name ?? null : null;
+  const venue = source.venue?.name ?? null;
 
   return {
     externalId: apiSportsExternalId(id),
@@ -516,7 +497,7 @@ export function mapApiSportsFixture(row: ApiFixtureRow, sport: string): Normaliz
     // Namespaced, because `competitionId` is matched against ESPN's slugs
     // elsewhere and a bare "276" could collide with one.
     competitionId: row.league?.id !== undefined && row.league?.id !== null ? `apisports:${row.league.id}` : null,
-    country,
+    country: leagueCountry,
     homeTeam: homeName,
     awayTeam: awayName,
     homeLogo: home?.logo ?? null,
@@ -573,12 +554,17 @@ export function apiSportsMatchOdds(rows: ApiOddsRow[] | null | undefined): {
    Public fetch surface
    ══════════════════════════════════════════════════════════════════════════ */
 
-/** The path that answers a whole day for a product, or null for other sports. */
-export function apiSportsDayPath(date: Date, sport: string): { product: Product; path: string } | null {
+/**
+ * The path that answers a whole day.
+ *
+ * Returns null for anything that is not football, and the caller treats that as
+ * "nothing to fetch" rather than falling back to football's path — a request for
+ * another sport should come back empty, not come back mislabelled.
+ */
+export function apiSportsDayPath(date: Date, sport: string): { path: string } | null {
+  if (!isFootballScope(sport)) return null;
   const day = date.toISOString().slice(0, 10);
-  if (sport === "football") return { product: "football", path: `fixtures?date=${day}&timezone=UTC` };
-  if (sport === "basketball") return { product: "basketball", path: `games?date=${day}&timezone=UTC` };
-  return null;
+  return { path: `fixtures?date=${day}&timezone=UTC` };
 }
 
 /**
@@ -595,7 +581,7 @@ export async function apiSportsDay(date: Date, sport: string): Promise<Normalize
   const isToday = date.toISOString().slice(0, 10) === utcDay();
   const ttl = isToday ? APISPORTS_LIVE_TTL : APISPORTS_DAY_TTL;
 
-  const rows = await apiSportsGet<ApiFixtureRow[]>(target.product, target.path, ttl);
+  const rows = await apiSportsGet<ApiFixtureRow[]>(target.path, ttl);
   if (!Array.isArray(rows)) return [];
   return rows.map((row) => mapApiSportsFixture(row, sport)).filter((m): m is NormalizedMatch => m !== null);
 }
@@ -612,7 +598,7 @@ export async function apiSportsFixtureOdds(fixtureId: string | number): Promise<
   draw: number;
   away: number;
 } | null> {
-  const rows = await apiSportsGet<ApiOddsRow[]>("football", `odds?fixture=${encodeURIComponent(String(fixtureId))}`, APISPORTS_ODDS_TTL);
+  const rows = await apiSportsGet<ApiOddsRow[]>(`odds?fixture=${encodeURIComponent(String(fixtureId))}`, APISPORTS_ODDS_TTL);
   if (!Array.isArray(rows)) return null;
   return apiSportsMatchOdds(rows);
 }
@@ -621,9 +607,9 @@ export async function apiSportsFixtureOdds(fixtureId: string | number): Promise<
  * The provider entry.
  *
  * Priority 1 — the top of the chain — because it is the only source that carries
- * the FKF Premier League *and* live minutes *and* basketball in one shape. When
- * its budget is spent it returns nothing and the rest of the chain fills the
- * board, which is exactly what the priority ordering is for.
+ * the FKF Premier League *and* live minutes in one shape. When its budget is
+ * spent it returns nothing and the rest of the chain fills the board, which is
+ * exactly what the priority ordering is for.
  */
 export const apiSportsProvider: SportsProvider = {
   id: "apisports",

@@ -5,6 +5,7 @@ import { getMatchDetail } from "@/lib/sports-detail";
 import { getSportsHub, LIVE_STATUSES } from "@/lib/sports";
 import { runThrottled } from "@/lib/throttled-job";
 import { BASELINE_MODEL, MARKET_LABELS, PICK_REFRESH_MIN_AGE_MINUTES } from "@/lib/sports-intelligence";
+import { ESPN_SPORT_PATH } from "@/lib/sports-scope";
 
 const log = createLogger("sports-match-api");
 
@@ -67,8 +68,10 @@ export async function GET(request: NextRequest) {
     const homeTeam = row?.homeTeam ?? (searchParams.get("home") ?? "Home").slice(0, 120);
     const awayTeam = row?.awayTeam ?? (searchParams.get("away") ?? "Away").slice(0, 120);
 
-    // Our sport vocabulary ("football") is not ESPN's path segment ("soccer").
-    const sport = row?.sport === "basketball" ? "basketball" : "soccer";
+    // ESPN addresses football as `soccer`, and that is the only path this desk
+    // has: a stored row from before the scope change cannot send the panel at a
+    // sport we do not serve.
+    const sport = ESPN_SPORT_PATH;
 
     const detail = await getMatchDetail({
       externalId,

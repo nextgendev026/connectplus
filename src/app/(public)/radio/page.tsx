@@ -34,6 +34,7 @@ import { RadioPlayerBar } from "@/components/radio/RadioPlayerBar";
 import { StationThumb } from "@/components/radio/StationThumb";
 import { WeatherWidget } from "@/components/weather/WeatherWidget";
 import { RadioHeroInsights } from "@/components/radio/RadioHeroInsights";
+import AdSlotClient from "@/components/ads/AdSlotClient";
 
 function EqualizerBars({ isPlaying }: { isPlaying: boolean }) {
   return (
@@ -390,6 +391,12 @@ export default function RadioPage() {
             </div>
           </div>
 
+          {/* A placement above the dial. This page is a client component, so it
+              uses the client placement component; the pool is fetched lazily and
+              the box holds its height until it arrives. */}
+          <AdSlotClient slot="radio-hero" />
+          <AdSlotClient slot="global-anchor" label="Ad" />
+
           {/* Stats strip */}
           <div className="grid grid-cols-3 gap-2 sm:max-w-md">
             {[
@@ -621,6 +628,10 @@ export default function RadioPage() {
             ))}
           </div>
         </div>
+
+        {/* Between the dial and the stations — the reader scrolling to pick a
+            station passes straight through it. */}
+        <AdSlotClient slot="radio-inline" className="my-8" />
 
         {/* Station grid */}
         <div className="mb-3 flex items-center justify-between">

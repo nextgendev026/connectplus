@@ -11,6 +11,7 @@ import type { FeedRankVariant } from "@/lib/experiments";
 import { autoTagPost } from "@/lib/auto-tag";
 import { findDuplicate } from "@/lib/neural-vector";
 import { postCoverSrc } from "@/lib/thumb";
+import { convexViewCounts, mergeLiveViewCounts } from "@/lib/convex";
 import { checkPostsQuota, QuotaError } from "@/lib/plans";
 
 // NOTE: `coverImage` is deliberately absent — stored covers can be multi-MB
@@ -152,8 +153,12 @@ export async function GET(request: NextRequest) {
       const { posts: ranked, variant } = await rankFeed(pool, authorId);
       const total = ranked.length;
       const pagePosts = await withSources(ranked.slice(skip, skip + limit));
+      // Live totals, so a "load more" card shows the same number as the article
+      // page it links to. Always a miss for this branch (personalized reads are
+      // never cached), and bounded to one page of ids.
+      const liveCounts = await convexViewCounts(pagePosts.map((p) => p.id));
       return NextResponse.json({
-        posts: pagePosts,
+        posts: mergeLiveViewCounts(pagePosts, liveCounts),
         pagination: {
           page,
           limit,
@@ -174,10 +179,16 @@ export async function GET(request: NextRequest) {
       }),
       prisma.post.count({ where }),
     ]);
-    const enriched = (await withSources(posts)).map((post) => ({
-      ...post,
-      coverImage: postCoverSrc(post.id),
-    }));
+    const enriched = mergeLiveViewCounts(
+      (await withSources(posts)).map((post) => ({
+        ...post,
+        coverImage: postCoverSrc(post.id),
+      })),
+      // Resolved before the body is cached: a Redis hit returns above and costs
+      // no Convex call at all, while a miss bakes the live numbers into the
+      // copy every visitor in the next 45s receives.
+      await convexViewCounts(posts.map((post) => post.id))
+    );
 
     const body = JSON.stringify({
       posts: enriched,

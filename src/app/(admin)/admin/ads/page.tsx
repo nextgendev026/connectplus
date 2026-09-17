@@ -18,6 +18,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { AD_SLOTS, AD_SLOT_LABELS, parseTargetList } from "@/lib/ad-selection";
 
 interface Ad {
   id: string;
@@ -29,6 +30,9 @@ interface Ad {
   targetUrl: string | null;
   sponsor: string | null;
   weight: number;
+  categories: string | null;
+  devices: string | null;
+  frequencyCap: number | null;
   isActive: boolean;
   startsAt: string | null;
   endsAt: string | null;
@@ -44,17 +48,17 @@ interface Summary {
   clicks: number;
 }
 
-const SLOT_OPTIONS = [
-  { value: "feed-inline", label: "Feed — between cards" },
-  { value: "feed-sidebar", label: "Feed — sidebar" },
-  { value: "article-top", label: "Article — above the fold" },
-  { value: "article-inline", label: "Article — mid-content" },
-  { value: "article-sidebar", label: "Article — sidebar" },
-  { value: "radio-hero", label: "Radio — hero panel" },
-  { value: "sports-hero", label: "Sports — hero panel" },
-  { value: "sports-inline", label: "Sports — between fixtures" },
-  { value: "sports-sidebar", label: "Sports — sidebar rail" },
-];
+/**
+ * Built from the shared catalogue rather than hand-listed.
+ *
+ * This used to be a hardcoded nine-entry copy, so eight placements that the app
+ * can render could not be selected in the console at all — the list drifted and
+ * nothing detected it. `AD_SLOTS` cannot drift from itself.
+ */
+const SLOT_OPTIONS = AD_SLOTS.map((slot) => ({
+  value: slot as string,
+  label: AD_SLOT_LABELS[slot] ?? slot,
+}));
 
 const emptyForm = {
   name: "",
@@ -65,6 +69,9 @@ const emptyForm = {
   targetUrl: "",
   sponsor: "",
   weight: 1,
+  categories: "",
+  devices: [] as string[],
+  frequencyCap: "" as number | "",
   startsAt: "",
   endsAt: "",
 };
@@ -128,6 +135,9 @@ export default function AdminAdsPage() {
       targetUrl: ad.targetUrl ?? "",
       sponsor: ad.sponsor ?? "",
       weight: ad.weight,
+      categories: parseTargetList(ad.categories).join(", "),
+      devices: parseTargetList(ad.devices),
+      frequencyCap: ad.frequencyCap ?? "",
       startsAt: ad.startsAt ? ad.startsAt.slice(0, 10) : "",
       endsAt: ad.endsAt ? ad.endsAt.slice(0, 10) : "",
     });
@@ -172,6 +182,9 @@ export default function AdminAdsPage() {
       const payload = {
         ...form,
         weight: Number(form.weight) || 1,
+        categories: form.categories.trim() || null,
+        devices: form.devices.length ? form.devices.join(",") : null,
+        frequencyCap: form.frequencyCap === "" ? null : Number(form.frequencyCap),
         startsAt: form.startsAt || null,
         endsAt: form.endsAt || null,
       };
@@ -294,6 +307,62 @@ export default function AdminAdsPage() {
                 value={form.sponsor}
                 onChange={(e) => setForm({ ...form, sponsor: e.target.value })}
                 placeholder="Safaricom"
+                className={inputCls}
+              />
+            </Field>
+
+            {/* Targeting. Left blank, a campaign serves everywhere — which is
+                what every campaign created before these fields existed means. */}
+            <Field label="Target categories (optional)">
+              <input
+                value={form.categories}
+                onChange={(e) => setForm({ ...form, categories: e.target.value })}
+                placeholder="technology, business"
+                className={inputCls}
+              />
+            </Field>
+            <Field label="Devices (blank = all)">
+              <div className="flex flex-wrap gap-2">
+                {["mobile", "tablet", "desktop"].map((d) => {
+                  const on = form.devices.includes(d);
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() =>
+                        setForm({
+                          ...form,
+                          devices: on
+                            ? form.devices.filter((v) => v !== d)
+                            : [...form.devices, d],
+                        })
+                      }
+                      className={cn(
+                        "rounded-lg border px-3 py-1.5 text-xs font-medium capitalize transition",
+                        on
+                          ? "border-brand-500/50 bg-brand-500/10 text-brand-500"
+                          : "border-surface-800 text-surface-400 hover:border-brand-500/40"
+                      )}
+                    >
+                      {d}
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+            <Field label="Frequency cap (per reader / day)">
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={form.frequencyCap}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    frequencyCap: e.target.value === "" ? "" : Number(e.target.value),
+                  })
+                }
+                placeholder="3"
                 className={inputCls}
               />
             </Field>
@@ -444,6 +513,13 @@ export default function AdminAdsPage() {
                 </div>
 
                 {ad.sponsor ? <p className="mt-0.5 text-xs text-surface-500">Sponsored by {ad.sponsor}</p> : null}
+
+                <p className="mt-1 text-[10px] text-surface-500">
+                  {ad.categories ? `targets ${parseTargetList(ad.categories).join(", ")}` : "all categories"}
+                  {" · "}
+                  {ad.devices ? parseTargetList(ad.devices).join(", ") : "all devices"}
+                  {ad.frequencyCap ? ` · max ${ad.frequencyCap}/reader/day` : ""}
+                </p>
 
                 <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-surface-500">
                   <span className="inline-flex items-center gap-1">

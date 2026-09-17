@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { AD_SLOTS, invalidateSlotAds } from "@/lib/ads";
+import { normalizeDeviceList, normalizeFrequencyCap, normalizeTargetList } from "@/lib/ad-selection";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,6 +37,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if ("targetUrl" in body) data.targetUrl = typeof body.targetUrl === "string" && body.targetUrl.trim() ? body.targetUrl.trim() : null;
   if ("sponsor" in body) data.sponsor = typeof body.sponsor === "string" && body.sponsor.trim() ? body.sponsor.trim() : null;
   if (body.weight !== undefined) data.weight = Math.max(1, Math.min(100, Math.trunc(Number(body.weight)) || 1));
+  if ("categories" in body) data.categories = normalizeTargetList(typeof body.categories === "string" ? body.categories : null);
+  if ("devices" in body) data.devices = normalizeDeviceList(typeof body.devices === "string" ? body.devices : null);
+  if ("frequencyCap" in body) data.frequencyCap = normalizeFrequencyCap(body.frequencyCap);
   if (typeof body.isActive === "boolean") data.isActive = body.isActive;
   if ("startsAt" in body) data.startsAt = body.startsAt ? new Date(body.startsAt) : null;
   if ("endsAt" in body) data.endsAt = body.endsAt ? new Date(body.endsAt) : null;

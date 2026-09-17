@@ -20,12 +20,12 @@
 import { cacheGet, cacheSet } from "@/lib/redis";
 import { createLogger } from "@/lib/logger";
 import {
-  ESPN_BASKETBALL_LEAGUES,
   ESPN_SOCCER_LEAGUES,
   mapEspnEvent,
   type NormalizedMatch,
 } from "@/lib/sports";
 import { openFootballRange } from "@/lib/sports-openfootball";
+import { ESPN_SPORT_PATH, footballScope } from "@/lib/sports-scope";
 
 const log = createLogger("sports-calendar");
 
@@ -85,14 +85,12 @@ async function fetchEspnRange(
   sport: string
 ): Promise<{ matches: NormalizedMatch[]; sources: string[] }> {
   const days = Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1;
-  const leagues =
-    sport === "basketball"
-      ? ESG_BASKETBALL_KEYS()
-      : days > LONG_RANGE_DAYS
-        ? [...LONG_RANGE_LEAGUES]
-        : Object.keys(ESPN_SOCCER_LEAGUES);
+  // A month-long range is asked of the leagues people actually plan around; a
+  // short one of everything we carry. There is no per-sport league set any
+  // more — the desk covers one sport.
+  const leagues = days > LONG_RANGE_DAYS ? [...LONG_RANGE_LEAGUES] : Object.keys(ESPN_SOCCER_LEAGUES);
 
-  const sportPath = sport === "basketball" ? "basketball" : "soccer";
+  const sportPath = ESPN_SPORT_PATH;
   const range = `${compact(from)}-${compact(to)}`;
 
   const results = await Promise.allSettled(
@@ -105,10 +103,7 @@ async function fetchEspnRange(
       });
       if (!res.ok) throw new Error(`espn ${slugName} HTTP ${res.status}`);
       const body = (await res.json()) as { events?: unknown[] };
-      const display =
-        sport === "basketball"
-          ? ESPN_BASKETBALL_LEAGUES[slugName]
-          : ESPN_SOCCER_LEAGUES[slugName];
+      const display = ESPN_SOCCER_LEAGUES[slugName];
       return (Array.isArray(body.events) ? body.events : [])
         .map((row) => mapEspnEvent(row, display ?? slugName, sport))
         .filter((m): m is NormalizedMatch => m !== null);
@@ -127,11 +122,6 @@ async function fetchEspnRange(
   return { matches, sources: matches.length > 0 ? ["espn"] : [] };
 }
 
-/** The basketball league keys, isolated so the type of the map stays out of the call site. */
-function ESG_BASKETBALL_KEYS(): string[] {
-  return Object.keys(ESPN_BASKETBALL_LEAGUES);
-}
-
 /**
  * Fixtures between two dates, newest-first sources winning.
  *
@@ -146,7 +136,9 @@ export async function getSportsCalendar(input: {
   sport?: string;
   fresh?: boolean;
 }): Promise<SportsCalendar> {
-  const sport = input.sport === "basketball" ? "basketball" : "football";
+  // Coerced rather than rejected: a bookmarked `?sport=basketball` link should
+  // still land on a calendar, and the calendar it lands on is football's.
+  const sport = footballScope(input.sport);
   const now = new Date();
   const from = input.from ?? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const to = input.to ?? new Date(from.getTime() + 6 * 86_400_000);
@@ -164,10 +156,7 @@ export async function getSportsCalendar(input: {
   const seen = new Set(
     espn.matches.map((m) => `${slug(m.homeTeam)}|${slug(m.awayTeam)}|${m.kickoff ? dayKey(new Date(m.kickoff)) : ""}`)
   );
-  const archive =
-    sport === "football"
-      ? await openFootballRange(from, to).catch(() => [] as NormalizedMatch[])
-      : [];
+  const archive = await openFootballRange(from, to).catch(() => [] as NormalizedMatch[]);
   const extras = archive.filter((m) => {
     const key = `${slug(m.homeTeam)}|${slug(m.awayTeam)}|${m.kickoff ? dayKey(new Date(m.kickoff)) : ""}`;
     if (seen.has(key)) return false;

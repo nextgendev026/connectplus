@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { createLogger } from "@/lib/logger";
 import { getSportsCalendar } from "@/lib/sports-calendar";
 import { canonicalCompetition } from "@/lib/sports";
+import { isFootballScope, SPORTS_SCOPE } from "@/lib/sports-scope";
 import { BASELINE_MODEL, MARKET_LABELS } from "@/lib/sports-intelligence";
 
 const log = createLogger("sports-calendar-api");
@@ -34,7 +35,13 @@ function isoDay(raw: string | null): Date | null {
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const sport = searchParams.get("sport") === "basketball" ? "basketball" : "football";
+  // Football only — see the live route: a stale `?sport=` is served with
+  // football and logged, never rejected.
+  const requestedSport = searchParams.get("sport");
+  if (!isFootballScope(requestedSport)) {
+    log.info("non-football sport requested — serving football", { requestedSport });
+  }
+  const sport = SPORTS_SCOPE;
   const fresh = searchParams.get("fresh") === "1";
 
   const now = new Date();

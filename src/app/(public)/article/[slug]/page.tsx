@@ -4,7 +4,7 @@ import Image from "next/image";
 import { cache } from "react";
 import type { Prisma } from "@prisma/client";
 
-import { Clock, Eye, MessageCircle, ChevronRight, ExternalLink, Newspaper } from "lucide-react";
+import { Clock, MessageCircle, ChevronRight, ExternalLink, Newspaper } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { formatDate, estimateReadTime } from "@/lib/utils";
@@ -18,6 +18,8 @@ import { ArticleActions } from "@/components/ui/ArticleActions";
 import { CommentsSection } from "@/components/ui/CommentsSection";
 import { StyledContent } from "@/components/ui/StyledContent";
 import AdSlot from "@/components/ads/AdSlot";
+import { splitForInlineAd } from "@/lib/article-body";
+import { ViewCount } from "@/components/ui/ViewCount";
 import { convexRecordView, convexViewCount } from "@/lib/convex";
 
 /**
@@ -189,6 +191,12 @@ export default async function ArticlePage({ params }: ArticleParams) {
     if (live !== null) viewCount = Math.max(live, post.viewCount + 1);
   }
   const readTime = estimateReadTime(post.content);
+  // Contextual targeting: a campaign can name the category slug or its id, and
+  // both are offered so an admin does not have to know which one we key on.
+  const adCategories = [post.category?.slug ?? "", post.categoryId ?? ""].filter(Boolean);
+  // Mid-content is the highest-viewability placement on the page, and it is only
+  // placed when the body is long enough to carry it and has a safe block break.
+  const bodySplit = splitForInlineAd(post.content);
   const publishedDate = post.publishedAt
     ? formatDate(post.publishedAt)
     : formatDate(post.createdAt);
@@ -295,7 +303,7 @@ export default async function ArticlePage({ params }: ArticleParams) {
             <div className="flex items-center gap-4 text-xs text-white/70">
               <span>{publishedDate}</span>
               <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{readTime} min read</span>
-              <span className="flex items-center gap-1"><Eye className="h-3 w-3" />{viewCount.toLocaleString()}</span>
+              <ViewCount value={viewCount} />
             </div>
           </div>
         </div>
@@ -306,7 +314,7 @@ export default async function ArticlePage({ params }: ArticleParams) {
         <div className="grid min-w-0 grid-cols-1 gap-12 lg:grid-cols-[1fr_280px]">
           <article className="min-w-0">
             {/* Above-the-fold sponsor slot (renders only when a campaign is live) */}
-            <AdSlot slot="article-top" className="mb-8" />
+            <AdSlot slot="article-top" className="mb-8" categories={adCategories} />
 
             <div className="flex flex-wrap gap-2 mb-8">
               {post.tags.map((tag) => (
@@ -344,7 +352,20 @@ export default async function ArticlePage({ params }: ArticleParams) {
               </div>
             )}
 
-            <StyledContent content={post.content} />
+            {bodySplit ? (
+              <>
+                <StyledContent content={bodySplit.lead} />
+                <AdSlot slot="article-inline" className="my-10" categories={adCategories} />
+                <StyledContent content={bodySplit.rest} />
+              </>
+            ) : (
+              <StyledContent content={post.content} />
+            )}
+
+            {/* End-of-story: the reader who finished the piece is the one most
+                likely to actually see this one. */}
+            <AdSlot slot="article-bottom" className="mt-10" categories={adCategories} />
+            <AdSlot slot="global-anchor" label="Ad" categories={adCategories} />
 
             {/* Actions — wraps into two rows on phones instead of overflowing */}
             <div className="mt-12 border-t border-surface-800 pt-6">
@@ -409,7 +430,8 @@ export default async function ArticlePage({ params }: ArticleParams) {
           <aside className="hidden lg:block">
             <div className="sticky top-24 space-y-6">
               {/* Sponsored slot */}
-              <AdSlot slot="article-sidebar" />
+              <AdSlot slot="article-sidebar" categories={adCategories} />
+              <AdSlot slot="article-sticky" categories={adCategories} />
 
               {/* Author Card */}
               <div className="rounded-2xl border border-surface-800 bg-surface-900/50 p-5">

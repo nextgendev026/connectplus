@@ -87,7 +87,10 @@ export async function triggerRssPoll(
   feedId?: string,
   opts: { inline?: boolean } = {}
 ): Promise<RssPollResult> {
-  if (process.env.INNGEST_EVENT_KEY && !opts.inline && !(await hasStaleFeeds(3))) {
+  // The staleness threshold is the one from rss-poll, whatever the schedule is:
+  // it has to sit ABOVE the poll cadence, otherwise "stale" is simply the normal
+  // state of a feed and every manual trigger skips the queue to poll inline.
+  if (process.env.INNGEST_EVENT_KEY && !opts.inline && !(await hasStaleFeeds())) {
     try {
       const sent = await inngest.send({
         name: feedId ? "rss-poll-feed" : "rss-poll",

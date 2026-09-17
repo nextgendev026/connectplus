@@ -883,6 +883,97 @@ html:not(.dark) .connectplus-prose a { color: #15803d; }
 
 .animate-score-flash { animation: score-flash 1.6s ease-out both; }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   THE SPORTS DESK'S OWN MOTION
+   ══════════════════════════════════════════════════════════════════════════
+
+   Four animations, each with one job. They live here rather than in Tailwind's
+   config because two of them are composed (a sweep under a mask, a marquee that
+   needs its track duplicated) and because the sports desk's motion is a family:
+   they share one duration scale and one easing so the page reads as a single
+   piece of kit rather than twelve unrelated effects.
+
+   Every one of them is a *background* or an *accent*. Nothing here moves a
+   score, a fixture or a control: a board whose rows shift while you are reading
+   them is a board you cannot read.
+*/
+
+/*
+   A groundskeeper's mower, seen from the stand: a wide, soft band of light
+   travelling slowly across the hero's pitch stripes. It runs for 18s because
+   anything faster reads as a loading bar.
+*/
+@keyframes pitch-sweep {
+  0% { transform: translateX(-60%) skewX(-12deg); opacity: 0; }
+  12% { opacity: 0.5; }
+  88% { opacity: 0.5; }
+  100% { transform: translateX(160%) skewX(-12deg); opacity: 0; }
+}
+
+.animate-pitch-sweep {
+  animation: pitch-sweep 18s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+/*
+   The live-scores ticker.
+
+   The track holds the fixture list TWICE and slides exactly half its own width,
+   which is what makes the loop seamless: at -50% the second copy sits precisely
+   where the first began, so there is no jump back to the start. That is also why
+   the `marquee` animation in the Tailwind config does not fit here — it moves a
+   single element across the viewport once, which is a banner, not a ticker.
+*/
+@keyframes ticker-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+.animate-ticker {
+  animation: ticker-scroll linear infinite;
+}
+
+/*
+   A score that just changed: the digits themselves give a single, small kick.
+
+   Scale alone would blur the number at 1.06, so this overshoots by 12% for 120ms
+   and settles — enough to catch the eye mid-scroll, not enough to break the
+   tabular alignment the columns depend on.
+*/
+@keyframes score-pop {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+
+.animate-score-pop { animation: score-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+
+/*
+   The expanding ring on a live dot.
+
+   `animate-pulse` changes opacity, which on a 6px dot is barely a movement; a
+   ring that grows past it and fades is what makes "live" look like something
+   happening rather than a red pixel.
+*/
+@keyframes live-ring {
+  0% { transform: scale(0.8); opacity: 0.7; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+
+.animate-live-ring { animation: live-ring 1.6s ease-out infinite; }
+
+/*
+   A light travelling across the hero's badge, the way a trophy catches one.
+   Masked to the element's own box by the caller's `overflow-hidden`.
+*/
+@keyframes badge-shine {
+  0%, 55% { transform: translateX(-120%); }
+  100% { transform: translateX(220%); }
+}
+
+.animate-badge-shine {
+  animation: badge-shine 4.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
 /* Hero viewport height. 100vh on a mobile browser includes the chrome that is
    actually off-screen, so a "full height" hero is taller than the viewport.
    svh pins it to the visible area and lets the next section peek in. */
@@ -911,6 +1002,20 @@ html:not(.dark) .connectplus-prose a { color: #15803d; }
   /* A background flash is exactly the kind of motion this preference exists to
      stop; the score itself still updates, it just does not strobe. */
   .animate-score-flash { animation: none !important; background-color: transparent !important; }
+
+  /* The sports desk's own motion, for the same reason. The ticker is the one
+     that would actually hurt: text that scrolls forever cannot be read by
+     someone who needs the page to hold still, so it stops and the list is left
+     in place — readable, unanimated. */
+  .animate-pitch-sweep,
+  .animate-ticker,
+  .animate-score-pop,
+  .animate-live-ring,
+  .animate-badge-shine {
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
 }
 
 /* Animation delays */

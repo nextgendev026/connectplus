@@ -53,7 +53,10 @@ function nowMs(): number {
 function nextDueLabel(feed: HealthFeed, now: number): { label: string; due: boolean } {
   if (!feed.isActive) return { label: "Paused", due: false };
   if (!feed.lastPolled) return { label: "Due now", due: true };
-  const interval = feed.pollInterval > 0 ? feed.pollInterval : 3600;
+  // Mirrors DEFAULT_POLL_INTERVAL_SECONDS in lib/rss-poll (twice a day). The
+  // literal is repeated rather than imported because this is a client component
+  // and that module drags the RSS parser and Prisma into the browser bundle.
+  const interval = feed.pollInterval > 0 ? feed.pollInterval : 43200;
   const dueAt = new Date(feed.lastPolled).getTime() + interval * 1000;
   const diff = dueAt - now;
   if (diff <= 0) return { label: "Due now", due: true };

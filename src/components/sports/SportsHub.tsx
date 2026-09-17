@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Activity, CalendarDays, LineChart, Radio, Sparkles, Trophy } from "lucide-react";
+import { Activity, ArrowRight, CalendarDays, LineChart, Radio, Sparkles, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ScoresBoard from "./ScoresBoard";
 import BettingTips from "./BettingTips";
 import MatchCentre from "./MatchCentre";
 import MatchCalendar from "./MatchCalendar";
+import LiveTicker from "./LiveTicker";
 
 type Tab = "scores" | "analysis" | "tips" | "calendar";
 const TABS: Tab[] = ["scores", "analysis", "tips", "calendar"];
@@ -46,6 +47,15 @@ const TAB_META: Record<Tab, { label: string; hint: string; icon: typeof Activity
  * written at 9–11px, so every size here is scaled by one multiplier — 1.1875
  * after the 5% reduction — and every weight moves one step up in one place
  * rather than in a hundred class names.
+ *
+ * ## Why the switcher moves
+ *
+ * A four-tab bar that just swaps a background colour tells the reader nothing
+ * about where they are relative to the other boards. Here the highlight is a
+ * single element that *travels* to the tab you picked, the tab you picked lifts
+ * its icon, and the bar answers the arrow keys and a sideways swipe on a phone.
+ * All three are the same idea — the switcher should feel like one control you
+ * move, not four buttons that each happen to be on or off.
  */
 export default function SportsHub({
   heroAd,
@@ -58,6 +68,9 @@ export default function SportsHub({
 }) {
   const [tab, setTab] = useState<Tab>("scores");
   const navRef = useRef<HTMLElement | null>(null);
+  const tabRefs = useRef(new Map<Tab, HTMLButtonElement | null>());
+  /** The travelling highlight's geometry, in the bar's own coordinate space. */
+  const [indicator, setIndicator] = useState<{ left: number; width: number } | null>(null);
 
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("tab");
@@ -93,7 +106,36 @@ export default function SportsHub({
     return () => observer.disconnect();
   }, []);
 
-  function go(next: Tab) {
+  /**
+   * Measure the active tab so the highlight can travel to it.
+   *
+   * Measured rather than calculated from an index: on a phone the four buttons
+   * share the bar equally, from `sm` up they size to their own content, and the
+   * desk's type scale changes all four widths at breakpoints in between. An
+   * index-times-width formula would be right at exactly one screen size — which
+   * is the class of bug this avoids. A ResizeObserver re-measures on rotation,
+   * on a font swap and when the type scale kicks in.
+   */
+  const positionIndicator = useCallback(() => {
+    const nav = navRef.current;
+    const button = tabRefs.current.get(tab);
+    if (!nav || !button) return;
+    const navBox = nav.getBoundingClientRect();
+    const box = button.getBoundingClientRect();
+    setIndicator({ left: box.left - navBox.left, width: box.width });
+  }, [tab]);
+
+  useEffect(() => {
+    positionIndicator();
+    const nav = navRef.current;
+    if (!nav || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => positionIndicator());
+    observer.observe(nav);
+    for (const button of tabRefs.current.values()) if (button) observer.observe(button);
+    return () => observer.disconnect();
+  }, [positionIndicator]);
+
+  const go = useCallback((next: Tab) => {
     setTab(next);
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", next === "scores" ? "/sports" : `/sports?tab=${next}`);
@@ -102,14 +144,83 @@ export default function SportsHub({
       // left them.
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
+  }, []);
+
+  /**
+   * Arrow keys, Home and End across the switcher.
+   *
+   * The standard tablist contract, and the reason this is not optional: a board
+   * with four tabs and no keyboard path is a board someone using a keyboard
+   * cannot leave the first tab of. Focus follows selection, so the reader can
+   * arrow along the strip and read each board's name as they arrive.
+   */
+  function onNavKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    const current = TABS.indexOf(tab);
+    let next = current;
+    if (event.key === "ArrowRight") next = (current + 1) % TABS.length;
+    else if (event.key === "ArrowLeft") next = (current - 1 + TABS.length) % TABS.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = TABS.length - 1;
+    else return;
+    event.preventDefault();
+    const target = TABS[next];
+    if (!target) return;
+    go(target);
+    tabRefs.current.get(target)?.focus();
   }
+
+  /**
+   * Sideways swipe between boards, for the phone.
+   *
+   * Registered on the board container rather than on `window`, so a swipe inside
+   * a horizontally scrolling table or the day strip is left alone. The vertical
+   * guard matters as much as the horizontal threshold: without it, a reader
+   * flicking *down* the page with a slightly diagonal thumb would change board
+   * under them.
+   */
+  const swipe = useRef<{ x: number; y: number } | null>(null);
+  function onTouchStart(event: React.TouchEvent) {
+    const touch = event.touches[0];
+    swipe.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
+  }
+  function onTouchEnd(event: React.TouchEvent) {
+    const start = swipe.current;
+    swipe.current = null;
+    if (!start) return;
+    const touch = event.changedTouches[0];
+    if (!touch) return;
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    if (Math.abs(dx) < 64 || Math.abs(dy) > 48) return;
+    const current = TABS.indexOf(tab);
+    const next = TABS[dx < 0 ? current + 1 : current - 1];
+    if (!next) return;
+    go(next);
+  }
+
+  const activeMeta = useMemo(() => TAB_META[tab], [tab]);
 
   return (
     <div className="sports-desk min-h-screen bg-surface-950 pb-16 text-surface-50">
       <section className="relative overflow-hidden border-b border-surface-800/60 bg-gradient-to-br from-surface-900 via-surface-950 to-surface-900">
+        {/* The pitch: mown stripes in perspective, a centre circle, and a band of
+            light that travels across them every eighteen seconds. All of it is
+            `pointer-events-none` and `aria-hidden` — decoration a reader can
+            ignore, on a page whose job is numbers. */}
         <div
+          aria-hidden="true"
           className="pointer-events-none absolute inset-0 opacity-[0.06]"
-          style={{ backgroundImage: "repeating-linear-gradient(90deg, #ffffff 0 1px, transparent 1px 60px)" }}
+          style={{
+            backgroundImage: "repeating-linear-gradient(90deg, #ffffff 0 1px, transparent 1px 60px)",
+          }}
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -top-24 left-1/2 h-64 w-64 -translate-x-1/2 rounded-full border border-white/[0.06]"
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 bg-gradient-to-r from-transparent via-white/[0.07] to-transparent animate-pitch-sweep"
         />
         <div className="pointer-events-none absolute -left-24 -top-16 h-72 w-72 rounded-full bg-brand-500/15 blur-3xl" />
         <div className="pointer-events-none absolute -right-10 bottom-0 h-64 w-64 rounded-full bg-emerald-500/10 blur-3xl" />
@@ -118,19 +229,28 @@ export default function SportsHub({
           <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-brand-500/30 bg-brand-500/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-brand-300">
+                <span className="relative inline-flex items-center gap-1.5 overflow-hidden rounded-full border border-brand-500/30 bg-brand-500/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-brand-300">
                   <Trophy className="h-3 w-3" />
-                  Sports
+                  Football
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-y-0 w-6 bg-white/25 blur-[6px] animate-badge-shine"
+                  />
                 </span>
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-surface-700 bg-surface-900/60 px-2.5 py-1 text-[11px] font-medium text-surface-400">
-                  <Radio className="h-3 w-3 text-red-400" />
+                  <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
+                    <span className="absolute inline-flex h-full w-full rounded-full bg-red-500 animate-live-ring" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-red-500" />
+                  </span>
                   Updating live
+                  <Radio className="h-3 w-3 text-red-400/70" />
                 </span>
                 <Link
                   href="/trending"
-                  className="ml-auto hidden text-[11px] font-medium text-surface-400 transition hover:text-surface-50 sm:inline"
+                  className="ml-auto hidden items-center gap-1 text-[11px] font-medium text-surface-400 transition hover:text-surface-50 sm:inline-flex"
                 >
                   News
+                  <ArrowRight className="h-3 w-3" />
                 </Link>
               </div>
 
@@ -140,11 +260,15 @@ export default function SportsHub({
               {/* One sentence. The old copy listed the whole feature set, which
                   is what made the top of this page read like a spec sheet. */}
               <p className="mt-1.5 max-w-2xl text-[13px] text-surface-400 sm:text-sm">
-                Live football and basketball, our model&apos;s prediction for every match, and why it made it.
+                Live football, our model&apos;s prediction for every match, and why it made it.
               </p>
             </div>
-
           </div>
+
+          {/* The scores that are happening right now, above the fold, on every
+              board — tap one to jump to the full board. Renders nothing at all
+              when nothing is in play. */}
+          <LiveTicker onOpen={() => go("scores")} />
         </div>
       </section>
 
@@ -159,19 +283,47 @@ export default function SportsHub({
       <nav
         ref={navRef}
         aria-label="Sports boards"
+        onKeyDown={onNavKeyDown}
         className="sports-nav relative z-40 border-b border-surface-800/60 bg-surface-950/95 shadow-[0_6px_20px_-14px_rgb(0_0_0_/_0.9)] backdrop-blur"
       >
-        <div className="mx-auto flex w-full max-w-[1600px] items-stretch gap-1 px-3 sm:gap-2 sm:px-6 sm:py-1.5 xl:px-8">
+        <div
+          role="tablist"
+          className="relative mx-auto flex w-full max-w-[1600px] items-stretch gap-1 px-3 sm:gap-2 sm:px-6 sm:py-1.5 xl:px-8"
+        >
+          {/* The travelling highlight, behind the buttons. */}
+          {indicator ? (
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute top-0 bottom-0 rounded-xl bg-brand-500 shadow-lg shadow-brand-500/20 transition-[transform,width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+              style={{ width: indicator.width, transform: `translateX(${indicator.left}px)`, left: 0 }}
+            />
+          ) : null}
           {TABS.map((id) => (
-            <TabButton key={id} id={id} active={tab === id} onClick={() => go(id)} />
+            <TabButton
+              key={id}
+              id={id}
+              active={tab === id}
+              onClick={() => go(id)}
+              register={(node) => tabRefs.current.set(id, node)}
+            />
           ))}
         </div>
       </nav>
 
       {heroAd ? <div className="mx-auto w-full max-w-[1600px] px-3 pt-4 sm:px-6 xl:px-8">{heroAd}</div> : null}
 
-      {/* Keyed so a tab change reads as a new board arriving, not a silent swap. */}
-      <div key={tab} className="motion-safe:animate-rise">
+      {/* Keyed so a tab change reads as a new board arriving, not a silent swap.
+          The swipe handlers live here rather than on the body so a sideways drag
+          inside a table or the day strip is never mistaken for a board change. */}
+      <div
+        key={tab}
+        id="sports-board"
+        role="tabpanel"
+        aria-label={`${activeMeta.label} — ${activeMeta.hint}`}
+        className="motion-safe:animate-rise"
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+      >
         {tab === "scores" ? (
           <ScoresBoard inlineAd={inlineAd} sidebarAd={sidebarAd} />
         ) : tab === "analysis" ? (
@@ -183,6 +335,25 @@ export default function SportsHub({
         )}
       </div>
 
+      {/*
+        What this board is, in the reader's own words, at the foot of the page —
+        and a way straight to the top of a long board without hunting for the
+        switcher. The hint line is what a reader would say if they were
+        describing this tab to someone else.
+      */}
+      <div className="mx-auto flex w-full max-w-[1600px] items-center gap-3 px-3 pt-6 sm:px-6 xl:px-8">
+        <p className="text-[11px] text-surface-500">
+          <span className="font-semibold text-surface-400">{activeMeta.label}</span> · {activeMeta.hint}
+        </p>
+        <button
+          type="button"
+          onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+          className="ml-auto inline-flex items-center gap-1 rounded-full border border-surface-800 px-2.5 py-1 text-[11px] font-medium text-surface-400 transition hover:border-brand-500/40 hover:text-surface-50"
+        >
+          Back to top
+          <ArrowRight className="h-3 w-3 -rotate-90" />
+        </button>
+      </div>
     </div>
   );
 }
@@ -196,30 +367,46 @@ export default function SportsHub({
  * From `sm` up there is room for the full card: hint included, icon beside the
  * label. Both still stretch to fill the bar, so the four are always one even row
  * and neither shape jumps as the page scrolls.
+ *
+ * The highlight colour is NOT applied here — it travels on a separate element
+ * behind these buttons, so a tab change animates as one movement. What each
+ * button does own is its own text colour and its icon's lift.
  */
-function TabButton({ id, active, onClick }: { id: Tab; active: boolean; onClick: () => void }) {
+function TabButton({
+  id,
+  active,
+  onClick,
+  register,
+}: {
+  id: Tab;
+  active: boolean;
+  onClick: () => void;
+  register: (node: HTMLButtonElement | null) => void;
+}) {
   const meta = TAB_META[id];
   const Icon = meta.icon;
   return (
     <button
+      ref={register}
       onClick={onClick}
       role="tab"
       aria-selected={active}
+      aria-controls="sports-board"
       aria-label={`${meta.label} — ${meta.hint}`}
+      tabIndex={active ? 0 : -1}
       className={cn(
-        "group relative flex flex-1 flex-col items-center justify-center gap-1 rounded-xl px-1 py-2 text-center transition duration-200 sm:flex-none sm:flex-row sm:gap-2.5 sm:px-3 sm:text-left",
+        "group relative z-10 flex flex-1 flex-col items-center justify-center gap-1 rounded-xl px-1 py-2 text-center transition duration-200 sm:flex-none sm:flex-row sm:gap-2.5 sm:px-3 sm:text-left",
         active
-          ? "bg-brand-500 text-white shadow-lg shadow-brand-500/20"
-          : "text-surface-400 hover:bg-surface-900/70 hover:text-surface-50"
+          ? "text-white"
+          : "text-surface-400 hover:bg-surface-900/70 hover:text-surface-50 active:scale-[0.97]"
       )}
     >
-      {active ? (
-        <span className="absolute inset-x-6 -top-2 h-0.5 rounded-full bg-brand-400 sm:hidden" />
-      ) : null}
       <span
         className={cn(
-          "grid h-6 w-6 shrink-0 place-items-center rounded-lg transition sm:h-8 sm:w-8",
-          active ? "bg-white/15 text-white" : "bg-surface-800/70 text-surface-400 group-hover:text-surface-200"
+          "grid h-6 w-6 shrink-0 place-items-center rounded-lg transition duration-200 sm:h-8 sm:w-8",
+          active
+            ? "bg-white/15 text-white"
+            : "bg-surface-800/70 text-surface-400 group-hover:-translate-y-0.5 group-hover:text-surface-200"
         )}
       >
         <Icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />

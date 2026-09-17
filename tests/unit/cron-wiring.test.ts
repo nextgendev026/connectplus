@@ -62,14 +62,34 @@ describe("cron ownership", () => {
     expect(everyFive.every((m) => m === 5)).toBe(true);
   });
 
-  it("polls syndication six-hourly rather than hourly", () => {
-    // Hourly re-downloaded the same unchanged documents six times a day for news
-    // that does not move that fast. The registry, the Inngest trigger and the
-    // declared spacing all have to agree, or the console reports a healthy job
-    // that is actually running on a different clock.
+  it("polls syndication twice a day and no more", () => {
+    // The poll is the most expensive thing on the schedule: every cycle
+    // re-downloads each source's mostly-unchanged document, and the originals
+    // are hundreds of kilobytes. It went hourly → six-hourly → twice daily, each
+    // step cutting the same bytes and the same egress. The registry, the Inngest
+    // trigger and the declared spacing have to agree, or the console reports a
+    // healthy job that is running on a different clock than it prints.
     const rss = CRON_JOBS.find((j) => j.id === "rss-poll");
-    expect(rss?.cron).toBe("0 */6 * * *");
-    expect(rss?.everyMinutes).toBe(360);
+    expect(rss?.cron).toBe("0 */12 * * *");
+    expect(rss?.everyMinutes).toBe(720);
+
+    // A floor, not just an equality: "twice a day" is the requirement, so a
+    // future edit that tightens the expression has to fail here rather than
+    // quietly reinstating a four-times-daily poll.
+    expect(rss?.everyMinutes).toBeGreaterThanOrEqual(720);
+  });
+
+  it("keeps the per-feed interval behind the schedule, not in front of it", () => {
+    // A default interval shorter than the cadence can never reject a feed, so it
+    // is decoration: it looks like a throttle while every cycle polls everything
+    // anyway. It was an hour against a six-hourly cron; it is now the cadence.
+    const poll = read("src/lib/rss-poll.ts");
+    expect(poll).toContain("RSS_POLL_INTERVAL_SECONDS ?? 43200");
+
+    // And the staleness watchdog has to sit ABOVE the cadence for the same
+    // reason: at three hours it called every feed stale all day, so every manual
+    // trigger polled inline and the Inngest queue was never used at all.
+    expect(poll).toContain("export const RSS_STALE_AFTER_HOURS = 14");
   });
 
   it("keeps the Cloudflare edge schedules pointed at real jobs", () => {

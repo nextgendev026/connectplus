@@ -3,7 +3,6 @@ import Link from "next/link";
 import Image from "next/image";
 import {
   TrendingUp,
-  Eye,
   Heart,
   MessageCircle,
   Clock,
@@ -15,6 +14,8 @@ import { cn, estimateReadTime, timeAgo } from "@/lib/utils";
 import { coverSrc } from "@/lib/thumb";
 import { BentoGrid } from "@/components/blog/BentoGrid";
 import { RealtimeRefresh } from "@/components/feed/RealtimeRefresh";
+import { formatCompact } from "@/lib/format-views";
+import { ViewCount } from "@/components/ui/ViewCount";
 import type { PostWithAuthor } from "@/types";
 
 /**
@@ -31,12 +32,6 @@ export const metadata: Metadata = {
   alternates: { canonical: "/trending" },
   robots: { index: true, follow: true },
 };
-
-function formatCount(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`;
-  return String(count);
-}
 
 function engagementScore(post: PostWithAuthor): number {
   const views = post.viewCount;
@@ -205,13 +200,10 @@ export default async function TrendingPage() {
                         i === 0 && "flex-wrap"
                       )}
                     >
-                      <span className="flex items-center gap-1.5">
-                        <Eye className="w-3.5 h-3.5" />
-                        {formatCount(post.viewCount)} views
-                      </span>
+                      <ViewCount value={post.viewCount} size="md" className="gap-1.5" />
                       <span className="flex items-center gap-1.5">
                         <Heart className="w-3.5 h-3.5" />
-                        {formatCount(post._count?.likes ?? 0)} loves
+                        <span title={`${(post._count?.likes ?? 0).toLocaleString()} likes`}>{formatCompact(post._count?.likes ?? 0)} loves</span>
                       </span>
                       <span className="flex items-center gap-1.5">
                         <MessageCircle className="w-3.5 h-3.5" />

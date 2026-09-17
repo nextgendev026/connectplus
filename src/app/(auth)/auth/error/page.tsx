@@ -1,13 +1,20 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 import ConnectPlusMark from "@/components/ui/ConnectPlusMark";
-import { AlertTriangle, ArrowLeft, LifeBuoy } from "lucide-react";
+import { AlertTriangle, ArrowLeft, LifeBuoy, Info } from "lucide-react";
+import { diagnoseGoogleSignIn } from "@/lib/oauth-diagnostic";
+import { cn } from "@/lib/utils";
 
 interface SearchParams {
   error?: string;
+  error_description?: string;
 }
 
 const errorMessages: Record<string, string> = {
-  Configuration: "There is a problem with the server configuration. Please contact support.",
+  // Deliberately specific: "contact support" told the reader nothing, and the
+  // reader is usually the person who can fix this in the Google console.
+  Configuration:
+    "Google refused the sign-in request — almost always because the app's redirect URI is not on the OAuth client's Authorized redirect URIs list. The exact URI to add is below.",
   AccessDenied: "You do not have permission to sign in. Please contact the administrator.",
   Verification: "The sign-in link you used is invalid or has expired. Please request a new one.",
   OAuthSignin: "There was an error with the sign-in provider. Please try again.",
@@ -26,9 +33,20 @@ const errorMessages: Record<string, string> = {
 };
 
 export default async function AuthErrorPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  const { error: errorCode } = await searchParams ?? {};
+  const { error: errorCode, error_description: errorDescription } = (await searchParams) ?? {};
   const code = errorCode ?? "Default";
   const message = errorMessages[code] ?? errorMessages.Default;
+
+  // "There is a problem with the server configuration" is the same sentence for a
+  // dozen different faults. When one of those faults is an OAuth allow-list
+  // mismatch, this page can name it and print the exact fix — so it asks Google
+  // rather than guessing. Failures here never block the page.
+  const host = (await headers()).get("host") ?? "";
+  const proto = (await headers()).get("x-forwarded-proto") ?? "https";
+  const diagnosis =
+    code === "Configuration" || code === "OAuthCallback" || code === "OAuthSignin"
+      ? await diagnoseGoogleSignIn(`${proto}://${host}`).catch(() => null)
+      : null;
 
   return (
     <div className="min-h-screen bg-surface-950 text-surface-50 flex items-center justify-center px-6 relative overflow-hidden">
@@ -63,6 +81,40 @@ export default async function AuthErrorPage({ searchParams }: { searchParams: Pr
               Error code: {code}
             </p>
           )}
+
+          {diagnosis ? (
+            <div
+              className={cn(
+                "mb-6 rounded-xl border p-4 text-left",
+                diagnosis.status === "ok"
+                  ? "border-emerald-500/25 bg-emerald-500/5"
+                  : "border-amber-500/25 bg-amber-500/5"
+              )}
+            >
+              <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-surface-300">
+                <Info className="h-3.5 w-3.5" />
+                Google sign-in check
+              </p>
+              <p className="mt-2 text-xs leading-relaxed text-surface-300">{diagnosis.hint}</p>
+              <p className="mt-3 text-[10px] font-medium uppercase tracking-wide text-surface-500">
+                Redirect URI
+              </p>
+              <code className="mt-1 block break-all rounded-lg bg-surface-950/70 px-2.5 py-2 font-mono text-[11px] text-surface-200">
+                {diagnosis.register}
+              </code>
+              {diagnosis.detail ? (
+                <p className="mt-3 font-mono text-[10px] leading-relaxed text-surface-500">
+                  {diagnosis.detail.slice(0, 240)}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {errorDescription ? (
+            <p className="mb-5 break-words font-mono text-[10px] leading-relaxed text-surface-500">
+              {errorDescription.slice(0, 240)}
+            </p>
+          ) : null}
 
           <div className="space-y-3">
             <Link

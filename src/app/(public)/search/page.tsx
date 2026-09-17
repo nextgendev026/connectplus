@@ -1,4 +1,6 @@
+import { Fragment } from "react";
 import Link from "next/link";
+import AdSlot from "@/components/ads/AdSlot";
 import { prisma } from "@/lib/prisma";
 import { SearchX, Search, ArrowRight } from "lucide-react";
 import { PostCard } from "@/components/blog/PostCard";
@@ -98,8 +100,13 @@ export default async function SearchPage({
           </p>
           {results.length > 0 ? (
             <div className="grid grid-cols-1 gap-4">
-              {results.map((post) => (
-                <PostCard key={post.id} post={post as PostWithAuthor} variant="wide" />
+              {results.map((post, index) => (
+                <Fragment key={post.id}>
+                  <PostCard post={post as PostWithAuthor} variant="wide" />
+                  {/* After the third hit, so a reader who is scanning results
+                      has already found something worth opening. */}
+                  {index === 2 ? <AdSlot slot="search-inline" /> : null}
+                </Fragment>
               ))}
             </div>
           ) : (

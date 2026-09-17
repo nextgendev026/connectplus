@@ -4,8 +4,9 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { cn, timeAgo } from "@/lib/utils";
-import { ChevronLeft, ChevronRight, ArrowRight, Eye } from "lucide-react";
+import { ChevronLeft, ChevronRight, ArrowRight } from "lucide-react";
 import { coverSrc } from "@/lib/thumb";
+import { ViewCount } from "@/components/ui/ViewCount";
 
 export interface HeroSlide {
   id: string;
@@ -237,8 +238,7 @@ export function HeroSlideshow({ slides, stats }: HeroSlideshowProps) {
               {slide.category?.name ?? "Featured story"}
             </span>
             <span className="inline-flex items-center gap-1 rounded-full bg-black/40 border border-white/20 px-3 py-1 text-[11px] text-white/80 backdrop-blur-sm">
-              <Eye className="w-3 h-3" />
-              {slide.viewCount.toLocaleString()} reads
+              <ViewCount value={slide.viewCount} size="md" />
             </span>
           </div>
 

@@ -6,6 +6,14 @@ import { Cookie, X } from "lucide-react";
 interface Consent {
   essential: boolean;
   analytics: boolean;
+  /**
+   * Permission for third-party ad networks to set cookies.
+   *
+   * Optional so that a consent recorded before this category existed reads as
+   * "not granted" — the network tier stays off until the reader says otherwise.
+   * First-party creatives are our own content and are not gated on this.
+   */
+  advertising?: boolean;
   savedAt: string;
 }
 
@@ -25,6 +33,7 @@ export function getCookieConsent(): Consent | null {
 export function CookieConsent() {
   const [visible, setVisible] = useState(false);
   const [analytics, setAnalytics] = useState(false);
+  const [advertising, setAdvertising] = useState(false);
 
   useEffect(() => {
     // Wait a beat so the banner doesn't fight the first paint.
@@ -34,8 +43,13 @@ export function CookieConsent() {
     return () => clearTimeout(t);
   }, []);
 
-  const save = (allowAnalytics: boolean) => {
-    const consent: Consent = { essential: true, analytics: allowAnalytics, savedAt: new Date().toISOString() };
+  const save = (allowAnalytics: boolean, allowAdvertising = false) => {
+    const consent: Consent = {
+      essential: true,
+      analytics: allowAnalytics,
+      advertising: allowAdvertising,
+      savedAt: new Date().toISOString(),
+    };
     try {
       window.localStorage.setItem(CONSENT_KEY, JSON.stringify(consent));
     } catch {
@@ -71,6 +85,15 @@ export function CookieConsent() {
               />
               Allow anonymous analytics cookies
             </label>
+            <label className="mt-1.5 flex cursor-pointer items-center gap-2 text-xs text-surface-300">
+              <input
+                type="checkbox"
+                checked={advertising}
+                onChange={(e) => setAdvertising(e.target.checked)}
+                className="h-3.5 w-3.5 rounded accent-brand-500"
+              />
+              Allow advertising cookies from partner networks
+            </label>
           </div>
           <button
             onClick={() => save(false)}
@@ -89,7 +112,7 @@ export function CookieConsent() {
             Essential only
           </button>
           <button
-            onClick={() => save(true)}
+            onClick={() => save(true, true)}
             className="btn-gradient rounded-lg px-3.5 py-2 text-xs font-semibold text-white"
           >
             Accept all

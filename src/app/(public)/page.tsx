@@ -10,8 +10,10 @@ import { auth } from "@/lib/auth";
 import { rankFeed } from "@/lib/feed-ranker";
 import AdSlot from "@/components/ads/AdSlot";
 import { cacheGet, cacheSet } from "@/lib/redis";
+import { convexViewCounts, mergeLiveViewCounts } from "@/lib/convex";
+import { formatCompact } from "@/lib/format-views";
+import { ViewCount } from "@/components/ui/ViewCount";
 import {
-  Eye,
   Heart,
   MessageCircle,
   ArrowRight,
@@ -56,19 +58,13 @@ const HeroSlideshow = nextDynamic(
   () => import("@/components/feed/HeroSlideshow").then((m) => m.HeroSlideshow)
 );
 
-function formatViews(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`;
-  return String(count);
-}
-
-/** Feed-pool data layer. The pool (posts + hero + categories + tags +
- * creators) is user-independent — personalization is applied afterwards in
- * `rankFeed` — so it is safe to share across visitors.
+/** Feed-pool data layer. The pool (posts + hero + categories + creators) is
+ * user-independent — personalization is applied afterwards in `rankFeed` — so it
+ * is safe to share across visitors.
  *
  * Three tiers, cheapest first:
- *   1. Redis pool snapshot (stale-while-revalidate, 60s freshness) — the five
- *      heavy queries below take 15-25s against a shared free-tier Postgres, so
+ *   1. Redis pool snapshot (stale-while-revalidate, 60s freshness) — the heavy
+ *      queries below take 15-25s against a shared free-tier Postgres, so
  *      serving them from Redis keeps the home page fast AND keeps the DB from
  *      being hammered on every render. `feed:version` (bumped on publish)
  *      invalidates instantly, so new stories still appear immediately.
@@ -76,7 +72,9 @@ function formatViews(count: number): string {
  *   3. 24h Redis emergency snapshot + an in-process last-known-good mirror, so
  *      the page still renders when the DB (or both DB and Redis) is down.
  */
-const FALLBACK_KEY = "feed:home:fallback";
+// Versioned with the pool shape below — a snapshot written by an older deploy
+// destructures into the wrong variables, so it must never be read back.
+const FALLBACK_KEY = "feed:home:fallback:v2";
 const FRESH_MS = 60_000;
 const POOL_TTL_SECONDS = 60 * 60 * 6;
 interface PoolSnapshot {
@@ -180,13 +178,6 @@ interface PostData {
   category: { name: string; slug: string } | null;
   tags: { id: string; name: string; slug: string }[];
   _count: { comments: number; likes: number };
-}
-
-interface TagData {
-  id: string;
-  name: string;
-  slug: string;
-  _count: { posts: number };
 }
 
 interface CreatorData {
@@ -308,13 +299,10 @@ function PostCard({
             </div>
 
             <div className="flex items-center gap-3 text-surface-500 text-xs">
-              <span className="flex items-center gap-1">
-                <Eye className="w-3 h-3" />
-                {formatViews(post.viewCount)}
-              </span>
+              <ViewCount value={post.viewCount} />
               <span className="flex items-center gap-1">
                 <Heart className="w-3 h-3" />
-                {formatViews(post._count.likes)}
+                <span title={`${post._count.likes.toLocaleString()} likes`}>{formatCompact(post._count.likes)}</span>
               </span>
               <span className="flex items-center gap-1">
                 <MessageCircle className="w-3 h-3" />
@@ -466,10 +454,7 @@ function FeaturedStoryBanner({ post }: { post: PostData }) {
                   )}{" "}
                   min read
                 </span>
-                <span className="flex items-center gap-1.5">
-                  <Eye className="w-3.5 h-3.5" />
-                  {formatViews(post.viewCount)}
-                </span>
+                <ViewCount value={post.viewCount} size="md" className="gap-1.5" />
                 <span className="flex items-center gap-1.5">
                   <MessageCircle className="w-3.5 h-3.5" />
                   {post._count.comments}
@@ -649,7 +634,7 @@ export default async function HomeFeedPage({
     where.category = { slug: categoryFilter };
   }
 
-  const [postRows, heroRows, allCategories, allTags, allCreators] = await withFeedFallback([
+  const [postRows, heroRows, allCategories, allCreators] = await withFeedFallback([
     prisma.post.findMany({
       where,
       // The stored cover can be a multi-megabyte base64 data URI; selecting it
@@ -692,14 +677,10 @@ export default async function HomeFeedPage({
         _count: { select: { posts: true } },
       },
     }) as Promise<CategoryData[]>,
-    prisma.tag.findMany({
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-        _count: { select: { posts: true } },
-      },
-    }) as Promise<TagData[]>,
+    // No tag query here. It existed to feed a `trendingTags` rail that nothing
+    // renders any more (TrendingTopics fetches its own), so a whole `findMany`
+    // with a per-row `_count` was being paid for on every feed render — from the
+    // pool cache, and on every revalidation, against a shared free-tier Postgres.
     prisma.user.findMany({
       where: {
         posts: { some: { status: "PUBLISHED", moderationStatus: "APPROVED" } },
@@ -714,19 +695,43 @@ export default async function HomeFeedPage({
         _count: { select: { posts: true } },
       },
     }) as Promise<CreatorData[]>,
-  ], `feed:pool2:${categoryFilter ?? "all"}`);
+    // The cache key carries the pool's SHAPE: dropping a query above reuses
+    // nothing that a previous deploy wrote, because a stale snapshot destructured
+    // into a shorter tuple silently shifts one element into the next slot's
+    // variable (the tags array would have become the creator list).
+  ], `feed:pool3:${categoryFilter ?? "all"}`);
 
   // Swap the (omitted) stored cover for the small, cacheable thumb URL. This
   // keeps 2–4 MB base64 rows out of the RSC payload entirely.
-  const posts = postRows.map((p) => ({ ...p, coverImage: postCoverSrc(p.id) }));
-  const heroPostRows = heroRows.map((p) => ({ ...p, coverImage: postCoverSrc(p.id) }));
+  const storedPosts = postRows.map((p) => ({ ...p, coverImage: postCoverSrc(p.id) }));
+  const storedHero = heroRows.map((p) => ({ ...p, coverImage: postCoverSrc(p.id) }));
+
+  // View counts, made live.
+  //
+  // `Post.viewCount` is fed by a nightly fold of Convex's view deltas, and this
+  // pool is additionally served from Redis for up to six hours, so a card could
+  // read a number that was two clocks out of date — and a syndicated story,
+  // created with `viewCount: 0`, read none at all while its article page showed
+  // thousands. The article page has always asked Convex for the live total; the
+  // cards now do too, for exactly the stories on screen, in one round trip.
+  //
+  // Run against the session read rather than after it: the two are independent,
+  // so the overlay costs one round trip's latency at most, not two.
+  const [liveCounts, session] = await Promise.all([
+    convexViewCounts([
+      ...storedPosts.map((p) => p.id),
+      ...storedHero.map((p) => p.id),
+    ]),
+    auth(),
+  ]);
+  // Rank on the live numbers, not the stored ones: engagement is a ranking
+  // input, so ordering a feed by a stale count orders it by the wrong thing.
+  const posts = mergeLiveViewCounts(storedPosts, liveCounts);
+  const heroPostRows = mergeLiveViewCounts(storedHero, liveCounts);
 
   const categories = allCategories
     .sort((a, b) => b._count.posts - a._count.posts)
     .slice(0, 8);
-  const trendingTags = allTags
-    .sort((a, b) => b._count.posts - a._count.posts)
-    .slice(0, 5);
   const popularCreators = allCreators
     .sort((a, b) => b._count.posts - a._count.posts)
     .slice(0, 5);
@@ -734,7 +739,6 @@ export default async function HomeFeedPage({
   // Phase 1: adaptive ranking (recency for anonymous users, personalized for
   // signed-in users per their A/B variant). The displayed page is always the
   // top 20 of the ranked pool so "load more" slices continue cleanly.
-  const session = await auth();
   const { posts: ranked, variant } = await rankFeed(posts, session?.user?.id ?? null);
   const top = ranked.slice(0, 20);
   const featuredPost = top.find((p) => p.featured) ?? top[0];
@@ -783,6 +787,13 @@ export default async function HomeFeedPage({
                 {categoryFilter ? " in this category" : " from across East Africa"}
               </span>
             </div>
+
+            {/* Above the fold on the feed. The anchor is fixed-position, so it
+                sits at the bottom of the viewport wherever it is mounted — it is
+                kept out of the studio and settings by simply not being placed
+                there. */}
+            <AdSlot slot="feed-top" className="mb-5" />
+            <AdSlot slot="global-anchor" label="Ad" />
 
             {posts.length === 0 ? (
               <EmptyState categoryFilter={categoryFilter} />

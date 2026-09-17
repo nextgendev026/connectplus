@@ -3,12 +3,12 @@
 import Link from "next/link";
 import Image from "next/image";
 import {
-  Eye,
   MessageCircle,
   Clock,
   Newspaper,
 } from "lucide-react";
 import { cn, estimateReadTime, truncate } from "@/lib/utils";
+import { ViewCount } from "@/components/ui/ViewCount";
 import type { PostWithAuthor } from "@/types";
 import { TagBadge } from "./TagBadge";
 import { BookmarkButton } from "@/components/ui/BookmarkButton";
@@ -81,10 +81,7 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
               {post.title}
             </h3>
             <div className="flex items-center gap-3 text-xs text-surface-400">
-              <span className="flex items-center gap-1">
-                <Eye className="h-3 w-3" />
-                {post.viewCount.toLocaleString()}
-              </span>
+              <ViewCount value={post.viewCount} />
               <span className="flex items-center gap-1">
                 <MessageCircle className="h-3 w-3" />
                 {commentCount}
@@ -155,10 +152,7 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
                   <Clock className="h-3.5 w-3.5" />
                   {readTime} min read
                 </span>
-                <span className="flex items-center gap-1">
-                  <Eye className="h-3.5 w-3.5" />
-                  {post.viewCount.toLocaleString()}
-                </span>
+                <ViewCount value={post.viewCount} />
                 <span className="flex items-center gap-1">
                   <MessageCircle className="h-3.5 w-3.5" />
                   {commentCount}
@@ -241,10 +235,7 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
                   <Clock className="h-4 w-4" />
                   {readTime} min
                 </span>
-                <span className="flex items-center gap-1.5">
-                  <Eye className="h-4 w-4" />
-                  {post.viewCount.toLocaleString()}
-                </span>
+                <ViewCount value={post.viewCount} size="md" className="gap-1.5" />
                 <span className="flex items-center gap-1.5">
                   <MessageCircle className="h-4 w-4" />
                   {commentCount}
@@ -351,10 +342,7 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
                 <Clock className="h-3.5 w-3.5" />
                 {readTime} min read
               </span>
-              <span className="flex items-center gap-1">
-                <Eye className="h-3.5 w-3.5" />
-                {post.viewCount.toLocaleString()}
-              </span>
+              <ViewCount value={post.viewCount} />
               <span className="flex items-center gap-1">
                 <MessageCircle className="h-3.5 w-3.5" />
                 {commentCount}

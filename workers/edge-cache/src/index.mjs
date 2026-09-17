@@ -151,12 +151,6 @@ const SNAPSHOTS = [
     trigger: "sports-live",
   },
   {
-    id: "livescore-basketball",
-    path: "/api/sports/live?sport=basketball",
-    ttl: 120,
-    trigger: "sports-live",
-  },
-  {
     id: "status",
     path: "/api/status",
     // Service health moves in minutes, not seconds, and probing it costs the
@@ -359,7 +353,9 @@ function snapshotFor(pathname, params) {
   // lands here as the live read, which is where the origin would route it too.
   const date = params.get("date") ?? "";
   if (date && date !== new Date().toISOString().slice(0, 10)) return null;
-  return snapshotById(params.get("sport") === "basketball" ? "livescore-basketball" : "livescore-football");
+  // One live board. A `?sport=` we no longer serve still lands on football's
+  // copy, which is what the origin will answer it with anyway.
+  return snapshotById("livescore-football");
 }
 
 /**
@@ -571,13 +567,16 @@ function resolveOriginPath(url) {
    * distinct edge-cache entry — so a page that appends cache-busting params
    * would shred the cache into one useless entry per viewer. This alias keeps
    * only the params that actually change the payload and snaps them to a closed
-   * set, so the cardinality is "2 sports × distinct dates" and nothing else.
+   * set, so the cardinality is "one sport × distinct dates" and nothing else.
+   *
+   * The sport is written as a literal rather than copied from the request: the
+   * desk serves one, so any other value is a stale link, and letting it through
+   * would create a second cache entry for a payload identical to the first.
    */
-  const sport = url.searchParams.get("sport") === "basketball" ? "basketball" : "football";
   const rawDate = url.searchParams.get("date") ?? "";
   const date = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : "";
   const fresh = url.searchParams.get("fresh") === "1" ? "&fresh=1" : "";
-  return `/api/sports/live?sport=${sport}${date ? `&date=${date}` : ""}${fresh}`;
+  return `/api/sports/live?sport=football${date ? `&date=${date}` : ""}${fresh}`;
 }
 
 const tagged = (response, state) => {

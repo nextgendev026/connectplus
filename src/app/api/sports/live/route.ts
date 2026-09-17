@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { triggerJob } from "@/lib/inngest-trigger";
 import { getSportsHub, LIVE_STATUSES, type NormalizedMatch } from "@/lib/sports";
 import { BASELINE_MODEL } from "@/lib/sports-intelligence";
+import { isFootballScope, SPORTS_SCOPE } from "@/lib/sports-scope";
 import { runThrottled } from "@/lib/throttled-job";
 import { createLogger } from "@/lib/logger";
 
@@ -48,7 +49,15 @@ export interface ApiPrediction {
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const sport = searchParams.get("sport") || "football";
+  // Football only. A stale link, a bookmark or the edge worker's own cached URL
+  // can still carry `?sport=basketball`; answering that with a 400 would turn a
+  // retired feature into a broken page, so the request is served with football
+  // and the mismatch is logged rather than hidden.
+  const requestedSport = searchParams.get("sport");
+  if (!isFootballScope(requestedSport)) {
+    log.info("non-football sport requested — serving football", { requestedSport });
+  }
+  const sport = SPORTS_SCOPE;
   const dateParam = searchParams.get("date");
   const parsed = dateParam ? new Date(dateParam) : new Date();
   const date = Number.isNaN(parsed.getTime()) ? new Date() : parsed;

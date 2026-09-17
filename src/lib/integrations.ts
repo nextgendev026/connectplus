@@ -799,7 +799,7 @@ export async function getIntegrations(): Promise<IntegrationsReport> {
           label: "Poll interval",
           env: "RSS_POLL_INTERVAL_SECONDS",
           present: has("RSS_POLL_INTERVAL_SECONDS"),
-          value: env("RSS_POLL_INTERVAL_SECONDS") || "3600 (default)",
+          value: env("RSS_POLL_INTERVAL_SECONDS") || "43200 (default — twice a day)",
           required: false,
         },
         {

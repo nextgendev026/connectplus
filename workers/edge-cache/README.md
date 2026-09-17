@@ -79,8 +79,8 @@ rebuilds when that copy is genuinely old:
 | Snapshot | Path | Fresh for | Guards |
 | --- | --- | --- | --- |
 | `livescore-football` | `/api/sports/live?sport=football` | 120s | `sports-live` |
-| `livescore-basketball` | `/api/sports/live?sport=basketball` | 120s | `sports-live` |
 | `status` | `/api/status` | 300s | `radio-status-sweep` |
+| `radio-stations` | `/api/radio/stations` | 120s | `radio-status-sweep` |
 
 Three properties make that check honest rather than optimistic:
 
@@ -95,8 +95,9 @@ Three properties make that check honest rather than optimistic:
    before the tick's 120s window opens — which turns the check back into a
    rebuild on every tick.
 2. **A trigger with several snapshots is only skipped when every one of them is
-   fresh.** `sports-live` refreshes both sports in a single run, so skipping
-   while basketball's copy has gone cold would silently stop grading football.
+   fresh.** `radio-status-sweep` refreshes service health and the station list in
+   a single run, so skipping while only one of the two has gone cold would
+   silently stop grading the other.
 3. **The durable copy outlives its own freshness window.** Each snapshot is
    mirrored into the `SNAPSHOTS` KV namespace as well as the per-colo cache, and
    that record is kept for eight times its TTL. Expiring it at exactly the TTL

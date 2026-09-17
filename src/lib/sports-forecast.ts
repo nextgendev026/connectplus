@@ -47,6 +47,8 @@ export const DEFAULT_MARKET_WEIGHT = 0.4;
 export const MIN_DECISIVE_CONFIDENCE = 0.5;
 /** Settled picks in the competition before the model trusts its own edge. */
 export const MIN_DECISIVE_SAMPLE = 20;
+import { SPORTS_SCOPE, type SportsScope } from "@/lib/sports-scope";
+
 /** Percentage points above the market's implied price before an edge is real. */
 export const MIN_DECISIVE_EDGE = 2;
 
@@ -62,9 +64,19 @@ const round = (n: number, dp = 4): number => Math.round(n * 10 ** dp) / 10 ** dp
  * score" headline, and a learned "149.73 goals per game" trend for a basketball
  * cup — so the gate lives here and every caller filters on it, rather than each
  * call site assuming someone upstream already did.
+ *
+ * The value comes from `sports-scope` rather than being written here, so the
+ * desk's scope and the model's scope are one constant: they were two literals a
+ * file apart, which is how the board and the picks could disagree about what
+ * this desk covers.
  */
-export const MODELED_SPORT = "football";
+export const MODELED_SPORT: SportsScope = SPORTS_SCOPE;
 
+/**
+ * Strict equality, deliberately: unlike the request scope it does NOT accept
+ * `soccer`. A fixture labelled `soccer` did not come from a provider this desk
+ * controls, and quietly modelling it is the mistake this gate exists to stop.
+ */
 export function isModeledSport(sport: string | null | undefined): boolean {
   return (sport ?? "").trim().toLowerCase() === MODELED_SPORT;
 }

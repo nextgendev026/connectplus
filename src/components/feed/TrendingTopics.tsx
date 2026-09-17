@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { TrendingUp, RefreshCw, Flame, ArrowUpRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ViewCount } from "@/components/ui/ViewCount";
 
 interface Topic {
   id: string;
@@ -16,12 +17,6 @@ interface Topic {
   thumbnail: string | null;
   topPostTitle: string | null;
   topPostSlug: string | null;
-}
-
-function formatViews(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`;
-  return String(count);
 }
 
 /**
@@ -155,7 +150,7 @@ export function TrendingTopics({ limit = 6 }: { limit?: number }) {
                 </p>
                 <p className="text-[10px] text-surface-500 truncate">
                   {topic.postCount} {topic.postCount === 1 ? "post" : "posts"} ·{" "}
-                  {formatViews(topic.totalViews)} views
+                  <ViewCount value={topic.totalViews} />
                 </p>
               </div>
               {i < 3 && <Flame className="w-3.5 h-3.5 text-brand-500/80 shrink-0" />}

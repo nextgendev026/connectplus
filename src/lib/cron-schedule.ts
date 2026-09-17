@@ -62,13 +62,26 @@ export const CRON_JOBS: readonly CronJobDef[] = [
     id: "rss-poll",
     name: "RSS syndication",
     description: "Polls every active Kenyan/regional feed, filters spam, and files items by category.",
-    // Every six hours, not hourly. News does not arrive faster than that, and
-    // the hourly cycle re-downloaded the same unchanged documents six times a
-    // day (conditional GETs help, but they still cost a request per feed per
-    // hour). Six-hourly keeps the feed current while cutting the poll volume to
-    // a quarter. Per-feed `pollInterval` still throttles individual sources.
-    cron: "0 */6 * * *",
-    everyMinutes: 360,
+    // TWICE A DAY — 00:00 and 12:00 UTC. Deliberate, and not a place to "improve"
+    // the freshness by tightening the expression:
+    //
+    //   • The poll is the single biggest consumer of outbound egress and upstream
+    //     requests in the schedule. Every cycle re-downloads each source's
+    //     document, and each of those documents is mostly *unchanged*. Six-hourly
+    //     already meant four copies a day of the same bytes; twice daily halves
+    //     that again, and the ETag/Last-Modified conditional GETs mean an
+    //     unchanged feed often costs a 304 rather than the body anyway.
+    //   • News does not arrive on a schedule that four passes a day can exploit.
+    //     A story that breaks at 09:00 is on the site by midday and its reader
+    //     will not have noticed the difference.
+    //   • A manual poll is always available: the admin console's "Poll now" and
+    //     `GET /api/cron?trigger=rss-poll` both bypass this cadence, so an
+    //     operator who needs a story in the next minute can still get it.
+    //
+    // Per-feed `pollInterval` still throttles individual sources inside a cycle,
+    // so a slow publisher is not dragged along by the registry's schedule.
+    cron: "0 */12 * * *",
+    everyMinutes: 720,
     essential: true,
     run: () => runRssPollInline(),
   },

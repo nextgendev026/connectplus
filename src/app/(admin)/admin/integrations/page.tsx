@@ -97,6 +97,7 @@ function formatCadence(cron: string): string {
     "*/5 * * * *": "every 5 minutes",
     "*/15 * * * *": "every 15 minutes",
     "0 * * * *": "hourly",
+    "0 */12 * * *": "twice a day · 00:00 & 12:00 UTC",
     "15 */6 * * *": "every 6 hours",
     "0 1 * * *": "daily · 01:00 UTC",
     "30 1 * * *": "daily · 01:30 UTC",

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { AD_SLOTS, getAdStats, invalidateSlotAds } from "@/lib/ads";
+import { normalizeDeviceList, normalizeFrequencyCap, normalizeTargetList } from "@/lib/ad-selection";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -81,6 +82,11 @@ export async function POST(request: NextRequest) {
       targetUrl: typeof body.targetUrl === "string" && body.targetUrl.trim() ? body.targetUrl.trim() : null,
       sponsor: typeof body.sponsor === "string" && body.sponsor.trim() ? body.sponsor.trim() : null,
       weight,
+      // Targeting is optional: left blank, the campaign serves everywhere, which
+      // is what every campaign created before these fields existed already means.
+      categories: normalizeTargetList(typeof body.categories === "string" ? body.categories : null),
+      devices: normalizeDeviceList(typeof body.devices === "string" ? body.devices : null),
+      frequencyCap: normalizeFrequencyCap(body.frequencyCap),
       isActive: body.isActive !== false,
       startsAt: body.startsAt ? new Date(body.startsAt) : null,
       endsAt: body.endsAt ? new Date(body.endsAt) : null,

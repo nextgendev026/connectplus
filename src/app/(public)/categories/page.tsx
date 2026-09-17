@@ -1,9 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { LayoutGrid, BookOpen, Eye, ArrowRight } from "lucide-react";
+import { LayoutGrid, BookOpen, ArrowRight } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { cn } from "@/lib/utils";
 import { RealtimeRefresh } from "@/components/feed/RealtimeRefresh";
+import AdSlot from "@/components/ads/AdSlot";
+import { formatCompact } from "@/lib/format-views";
+import { ViewCount } from "@/components/ui/ViewCount";
 
 /**
  * Rendered per request, never prerendered — the counts come from live posts, and
@@ -52,11 +55,6 @@ function categoryGradient(slug: string): string {
     hash = slug.charCodeAt(i) + ((hash << 5) - hash);
   }
   return CATEGORY_GRADIENTS[Math.abs(hash) % CATEGORY_GRADIENTS.length] ?? "";
-}
-
-function formatCount(count: number): string {
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`;
-  return String(count);
 }
 
 export default async function CategoriesPage() {
@@ -109,7 +107,7 @@ export default async function CategoriesPage() {
           <div className="inline-flex items-center gap-2 rounded-full bg-brand-500/10 border border-brand-500/20 px-4 py-1.5 mb-6 animate-fade-in-up">
             <LayoutGrid className="w-3.5 h-3.5 text-brand-400" />
             <span className="text-xs font-medium text-brand-400">
-              {sorted.length} categories · {formatCount(totalStories)} stories
+              {sorted.length} categories · {formatCompact(totalStories)} stories
             </span>
           </div>
           <h1 className="font-display text-4xl sm:text-6xl font-bold tracking-tight text-surface-50 mb-4 animate-fade-in-up animation-delay-100">
@@ -125,6 +123,8 @@ export default async function CategoriesPage() {
       <RealtimeRefresh />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-20">
+        <AdSlot slot="categories-top" className="mb-6" />
+
         {sorted.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">
             <div className="w-20 h-20 rounded-3xl bg-surface-800/60 border border-surface-700/50 flex items-center justify-center mb-6">
@@ -164,7 +164,7 @@ export default async function CategoriesPage() {
                         className="inline-flex items-center gap-1 rounded-full bg-surface-800/70 border border-surface-700/50 px-2.5 py-1 text-[10px] font-medium text-surface-300 backdrop-blur-sm"
                       >
                         <BookOpen className="w-3 h-3" />
-                        {formatCount(cat._count.posts)}
+                        {formatCompact(cat._count.posts)}
                       </span>
                     </div>
 
@@ -190,8 +190,7 @@ export default async function CategoriesPage() {
                               {post.title}
                             </span>
                             <span className="text-[10px] text-surface-500 mt-0.5 flex items-center gap-1">
-                              <Eye className="w-3 h-3" />
-                              {formatCount(post.viewCount)} views ·{" "}
+                              <ViewCount value={post.viewCount} /> ·{" "}
                               {post.author.name ?? post.author.username}
                             </span>
                           </Link>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { redisDel } from "@/lib/redis";
+import { postCoverSrc } from "@/lib/thumb";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -83,7 +84,10 @@ export async function GET(request: NextRequest) {
         slug: p.slug,
         status: p.status,
         featured: p.featured,
-        coverImage: p.coverImage ? `/api/thumb/${p.id}?v=150&h=100` : null,
+        // `/api/thumb/<code>` decodes a base64url payload, so handing it a post
+        // id produced a 400 and every cover in this list rendered as a broken
+        // image. Stored covers live at `/api/thumb/post/<id>`.
+        coverImage: p.coverImage ? postCoverSrc(p.id) : null,
         createdAt: p.createdAt,
         publishedAt: p.publishedAt,
         category: p.category,

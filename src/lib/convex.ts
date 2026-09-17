@@ -155,6 +155,61 @@ export async function convexViewCount(postId: string): Promise<number | null> {
   return call((c) => c.query(api.views.count, { postId }), null, "views.count");
 }
 
+/**
+ * Live totals for a whole page of posts, in ONE round trip.
+ *
+ * This is the query the `counts` function was written for and never got: it
+ * existed in convex/views.ts with the comment "one round trip for a whole feed
+ * page", and no caller ever used it. Without it, every card outside the article
+ * page read `Post.viewCount`, which only receives Convex deltas in the nightly
+ * hive sweep — so a story read a thousand times today still carried yesterday's
+ * number, and a syndicated story (created with `viewCount: 0`) carried no
+ * number at all. The article page has always shown the live total; the cards
+ * did not, which is exactly why the same story disagreed with itself.
+ *
+ * Bounded to the 100 ids the Convex function itself accepts, deduplicated, and
+ * capped again by the caller. Absent posts simply have no entry, so the caller
+ * keeps whatever Postgres knows.
+ */
+export async function convexViewCounts(postIds: string[]): Promise<Map<string, number>> {
+  const unique = [...new Set(postIds.filter(Boolean))].slice(0, 100);
+  if (unique.length === 0) return new Map();
+  const rows = await call(
+    (c) => c.query(api.views.counts, { postIds: unique }),
+    [] as { postId: string; total: number }[],
+    "views.counts"
+  );
+  return new Map(rows.map((r) => [r.postId, r.total]));
+}
+
+/**
+ * Overlay live Convex totals onto a page of posts.
+ *
+ * Pure, so the rule can be tested without a Convex deployment. Two properties
+ * matter and both are asserted in tests:
+ *
+ *  • **A count never goes down.** The overlay raises a card to the live total
+ *    and never lowers it. A Convex row that has been folded into Postgres and
+ *    reset, or a deployment that answers with a partial map, must not make a
+ *    story look less read than it did a second ago.
+ *  • **Absent means unchanged.** A post Convex has never seen (every story
+ *    imported since the offload, plus anything read only while Convex was
+ *    unreachable) keeps its Postgres count instead of being zeroed.
+ */
+export function mergeLiveViewCounts<T extends { id: string; viewCount: number }>(
+  posts: T[],
+  live: Map<string, number>
+): T[] {
+  if (live.size === 0) return posts;
+  return posts.map((post) => {
+    const liveTotal = live.get(post.id);
+    if (typeof liveTotal !== "number" || !Number.isFinite(liveTotal)) return post;
+    const stored = Number.isFinite(post.viewCount) ? post.viewCount : 0;
+    if (liveTotal <= stored) return post;
+    return { ...post, viewCount: liveTotal };
+  });
+}
+
 export interface ViewDelta {
   postId: string;
   delta: number;

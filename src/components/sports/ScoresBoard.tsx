@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { liveEndpoint } from "@/lib/sports-endpoint";
+import { SPORTS_SCOPE } from "@/lib/sports-scope";
 import {
   playSportsAlert,
   setSportsAlertsMuted,
@@ -100,7 +101,6 @@ function matchKeyOf(match: LiveMatch): string {
 }
 
 const LIVE = new Set(["LIVE", "HT"]);
-const SPORTS = ["football", "basketball"] as const;
 const DAYS_BACK = 3;
 /**
  * A whole month of fixtures ahead, not a long weekend.
@@ -159,15 +159,26 @@ export default function ScoresBoard({
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sport, setSport] = useState<string>("football");
   const [dayOffset, setDayOffset] = useState(0);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [liveOnly, setLiveOnly] = useState(false);
   const [alertsOn, setAlertsOn] = useState(false);
+  /**
+   * Fixtures whose score moved on the last poll, so they can flash.
+   *
+   * Deliberately NOT the same set as the alert diff below it: a sound is only
+   * played for a team the reader follows, because a board that beeps for all
+   * eighteen fixtures is a board people silence — but the *visual* has to be for
+   * every match on screen, since a score changing under a reader's eye with no
+   * acknowledgement is how they end up doubting the numbers.
+   */
+  const [flashed, setFlashed] = useState<Set<string>>(() => new Set());
   const inFlight = useRef(false);
   const dayStrip = useRef<HTMLDivElement | null>(null);
   /** Previous score and status per fixture, so a change can be told from a poll. */
   const previous = useRef(new Map<string, { score: string; status: string }>());
+  /** Clears the goal flashes; one timer, restarted per poll, not one per row. */
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const followedRef = useRef<string[]>([]);
   const remindersRef = useRef<string[]>([]);
 
@@ -207,6 +218,7 @@ export default function ScoresBoard({
     const next = new Map<string, { score: string; status: string }>();
     const watched = new Set(followedRef.current);
     const reminded = new Set(remindersRef.current);
+    const goals = new Set<string>();
 
     for (const match of snapshot.matches) {
       const key = `${match.provider}:${match.externalId}`;
@@ -215,18 +227,34 @@ export default function ScoresBoard({
 
       const before = previous.current.get(key);
       if (!before) continue;
-      const mine = watched.has(match.homeTeam) || watched.has(match.awayTeam) || reminded.has(key);
-      if (!mine) continue;
       if (before.score === score && before.status === match.status) continue;
 
-      if (before.score !== score && match.status !== "SCHEDULED") playSportsAlert("goal");
+      // A first sighting is not a goal: the map above has no entry for a fixture
+      // the reader has not seen, so they never arrive to a board mid-flash for
+      // something that happened before they got here.
+      const scored = before.score !== score && match.status !== "SCHEDULED";
+      if (scored) goals.add(key);
+
+      const mine = watched.has(match.homeTeam) || watched.has(match.awayTeam) || reminded.has(key);
+      if (!mine) continue;
+      if (scored) playSportsAlert("goal");
       else if (before.status === "SCHEDULED" && (match.status === "LIVE" || match.status === "HT")) {
         playSportsAlert("kickoff");
       } else if (before.status !== "FT" && match.status === "FT") playSportsAlert("fulltime");
     }
 
     previous.current = next;
+
+    if (goals.size > 0) {
+      setFlashed(goals);
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      // Long enough to finish the 1.6s flash, and restarted on every poll so a
+      // second goal in the same fixture re-triggers rather than cutting short.
+      flashTimer.current = setTimeout(() => setFlashed(new Set()), 1800);
+    }
   }, []);
+
+  useEffect(() => () => { if (flashTimer.current) clearTimeout(flashTimer.current); }, []);
 
   const load = useCallback(
     async (opts: { fresh?: boolean; silent?: boolean } = {}) => {
@@ -236,7 +264,7 @@ export default function ScoresBoard({
       try {
         // Routed through the Cloudflare edge when NEXT_PUBLIC_EDGE_URL is set:
         // every viewer's poll collapses into one origin fetch per TTL window.
-        const res = await fetch(liveEndpoint({ sport, date, fresh: opts.fresh }), {
+        const res = await fetch(liveEndpoint({ sport: SPORTS_SCOPE, date, fresh: opts.fresh }), {
           cache: "no-store",
         });
         if (!res.ok) throw new Error("Livescores are unavailable right now.");
@@ -254,7 +282,7 @@ export default function ScoresBoard({
         setRefreshing(false);
       }
     },
-    [sport, date, reactToSnapshot]
+    [date, reactToSnapshot]
   );
 
   useEffect(() => {
@@ -437,8 +465,8 @@ export default function ScoresBoard({
             These were two separate strips: the day strip pinned itself at
             `top-0`, which on this app parks it *underneath* the navbar (that
             one is z-50 and 4rem tall), so the control for choosing a day was
-            invisible and untappable for the whole page; and the sport/live/
-            alerts row was not sticky at all, so it scrolled away the moment the
+            invisible and untappable for the whole page; and the live/alerts
+            row was not sticky at all, so it scrolled away the moment the
             reader moved. Both now live in a single block parked exactly at the
             navbar's height, which is what makes the toolbar feel attached to
             the board rather than to the hero above it. */}
@@ -529,22 +557,6 @@ export default function ScoresBoard({
               Showing the last saved scores
             </span>
           ) : null}
-
-          <div className="flex shrink-0 items-center rounded-xl border border-surface-800 bg-surface-900/70 p-1">
-            {SPORTS.map((s) => (
-              <button
-                key={s}
-                onClick={() => setSport(s)}
-                className={cn(
-                  "rounded-lg px-3 py-1.5 text-xs font-medium capitalize transition",
-                  sport === s ? "bg-brand-500 text-white" : "text-surface-400 hover:text-surface-50",
-                  "lg:px-2.5 lg:py-1"
-                )}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
 
           <button
             onClick={() => setLiveOnly((v) => !v)}
@@ -650,7 +662,7 @@ export default function ScoresBoard({
                 ? "Turn off the Live filter to see the day's full schedule."
                 : onlyFollowed
                   ? "Turn off the My teams filter to see every fixture."
-                  : "Try another day or sport."}
+                  : "Try another day."}
             </p>
           </div>
         ) : (
@@ -685,6 +697,7 @@ export default function ScoresBoard({
                       onFollow={toggleFollow}
                       reminders={reminders}
                       onRemind={toggleReminder}
+                      flash={flashed.has(matchKeyOf(match))}
                     />
                   ))}
                 </div>
@@ -764,6 +777,7 @@ function MatchRow({
   onFollow,
   reminders,
   onRemind,
+  flash = false,
 }: {
   match: LiveMatch;
   /** Position in its competition, used to stagger the entrance. */
@@ -775,16 +789,24 @@ function MatchRow({
   onFollow: (team: string, sport: string, competition: string) => void;
   reminders: string[];
   onRemind: (m: LiveMatch) => void;
+  /** The score moved on the last poll: tint the row and kick the digits. */
+  flash?: boolean;
 }) {
   const isLive = LIVE.has(match.status);
   const reminded = reminders.includes(matchKeyOf(match));
   const hasOdds = match.oddsHome != null || match.oddsDraw != null || match.oddsAway != null;
   return (
     // Rows tick in one after another rather than appearing all at once; capped
-    // so a twenty-fixture competition never takes a second to fill in.
+    // so a twenty-fixture competition never takes a second to fill in. A row
+    // whose score just changed flashes instead of ticking in — the entrance and
+    // the goal would otherwise fight for the same 400ms.
     <div
-      className="border-b border-surface-800/50 last:border-b-0 motion-safe:animate-rise"
-      style={{ animationDelay: `${Math.min(rowIndex, 8) * 35}ms` }}
+      className={cn(
+        "border-b border-surface-800/50 last:border-b-0",
+        flash ? "motion-safe:animate-score-flash" : "motion-safe:animate-rise"
+      )}
+      style={flash ? undefined : { animationDelay: `${Math.min(rowIndex, 8) * 35}ms` }}
+      data-score-flash={flash ? "1" : undefined}
     >
       <div className="flex items-center gap-0.5 px-2 py-2.5 transition hover:bg-surface-800/40 sm:gap-1 sm:px-4 lg:py-2">
         <button
@@ -810,6 +832,7 @@ function MatchRow({
               form={match.homeForm}
               score={match.homeScore}
               leading={(match.homeScore ?? 0) > (match.awayScore ?? 0)}
+              pop={flash}
             />
             <TeamLine
               name={match.awayTeam}
@@ -817,6 +840,7 @@ function MatchRow({
               form={match.awayForm}
               score={match.awayScore}
               leading={(match.awayScore ?? 0) > (match.homeScore ?? 0)}
+              pop={flash}
             />
           </div>
 
@@ -909,12 +933,15 @@ function TeamLine({
   score,
   leading,
   form,
+  pop = false,
 }: {
   name: string;
   logo?: string | null;
   score: number | null;
   leading: boolean;
   form?: string | null;
+  /** The score just changed: give the digits a single kick. */
+  pop?: boolean;
 }) {
   return (
     <div className="flex items-center justify-between gap-2 py-[1px] sm:gap-3">
@@ -923,7 +950,13 @@ function TeamLine({
         <span className={cn("truncate text-sm", leading ? "font-semibold text-surface-50" : "text-surface-300")}>{name}</span>
         {form ? <FormPills form={form} /> : null}
       </span>
-      <span className={cn("w-6 text-right text-sm font-bold tabular-nums", leading ? "text-surface-50" : "text-surface-400")}>
+      <span
+        className={cn(
+          "w-6 text-right text-sm font-bold tabular-nums",
+          leading ? "text-surface-50" : "text-surface-400",
+          pop && "motion-safe:animate-score-pop"
+        )}
+      >
         {score ?? "–"}
       </span>
     </div>

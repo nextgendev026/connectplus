@@ -104,8 +104,17 @@ async function fetchFeedXml(feed: {
   return { status: lastStatus, error: lastError };
 }
 
+/**
+ * Per-feed interval used when a feed row carries no `pollInterval` of its own.
+ *
+ * Matches the scheduled cadence (twice a day, see CRON_JOBS "rss-poll"): a feed
+ * with no opinion must not be polled more often than the schedule that drives
+ * it, or the interval throttle silently stops being a throttle at all. It was an
+ * hour, which — against a twelve-hourly cron — never once rejected a feed and
+ * existed only to look like a limit.
+ */
 export const DEFAULT_POLL_INTERVAL_SECONDS = Number(
-  process.env.RSS_POLL_INTERVAL_SECONDS ?? 3600
+  process.env.RSS_POLL_INTERVAL_SECONDS ?? 43200
 );
 
 /** Per-run cap on feeds polled in a single unattended cron cycle. When many
@@ -647,8 +656,16 @@ export async function pollSingleFeed(
  * but never runs the poll function (app not synced, wrong environment, dead
  * schedule), every feed silently goes stale. Rather than keep queueing events
  * into the void, the trigger notices and runs the poll inline instead.
+ *
+ * The default sits above the poll cadence rather than below it. At three hours
+ * — against a schedule that now runs every twelve — "stale" would have been the
+ * normal state of every feed, so a manual trigger would have run inline every
+ * single time and the queue would never have been used. Fourteen hours is late
+ * enough to be unambiguous evidence that a cycle was actually missed.
  */
-export async function hasStaleFeeds(hours = 3): Promise<boolean> {
+export const RSS_STALE_AFTER_HOURS = 14;
+
+export async function hasStaleFeeds(hours = RSS_STALE_AFTER_HOURS): Promise<boolean> {
   const cutoff = new Date(Date.now() - hours * 3_600_000);
   const stale = await prisma.rssFeed
     .findFirst({

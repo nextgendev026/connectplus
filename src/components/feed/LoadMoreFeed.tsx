@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronRight, Eye, Heart, Loader2, MessageCircle, Newspaper, Infinity as InfinityIcon } from "lucide-react";
+import { ChevronRight, Heart, Loader2, MessageCircle, Newspaper, Infinity as InfinityIcon } from "lucide-react";
 import { cn, estimateReadTime } from "@/lib/utils";
 import { coverSrc } from "@/lib/thumb";
+import { ViewCount } from "@/components/ui/ViewCount";
 
 interface LoadedPost {
   id: string;
@@ -22,12 +23,6 @@ interface LoadedPost {
 }
 
 /** Compact 1.2K / 3.4M form, matching the server-rendered feed card. */
-function formatViews(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`;
-  return String(count);
-}
-
 interface LoadMoreFeedProps {
   initialIds: string[];
   /** First API page to fetch — accounts for the server-rendered first page. */
@@ -165,10 +160,7 @@ export function LoadMoreFeed({
                         {post.source ? `via ${post.source}` : "via source"}
                       </a>
                     )}
-                    <span className="inline-flex items-center gap-1" title="Views">
-                      <Eye className="h-3 w-3" />
-                      {formatViews(post.viewCount)}
-                    </span>
+                    <ViewCount value={post.viewCount} />
                     <span className="inline-flex items-center gap-1" title="Likes">
                       <Heart className="h-3 w-3" />
                       {post._count?.likes ?? 0}

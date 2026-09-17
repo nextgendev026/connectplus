@@ -198,6 +198,27 @@ const nextConfig = {
           { key: "Cache-Control", value: "public, s-maxage=120, stale-while-revalidate=300" },
         ],
       },
+      // Covers — every story's picture, and the most-requested asset in the app.
+      //
+      // The blanket `/api/:path*` rule above is `no-store`, and these rules are
+      // applied last so this one wins for the thumb paths. That mattered here
+      // more than anywhere else: `/api/thumb/post/<id>` sets its own week-long
+      // Cache-Control, but a config header overrides a route's own, so every card
+      // cover, hero image, PWA card picture and og:image was going out
+      // uncacheable — the CDN re-fetched and re-encoded a multi-hundred-kilobyte
+      // JPEG once per card per visitor. The route already serves immutable bytes
+      // (content-addressed by post id) from a 30-day optimizer cache, so this is
+      // the header that matches what it actually returns.
+      {
+        source: "/api/thumb/:path*",
+        headers: [
+          ...securityHeaders,
+          {
+            key: "Cache-Control",
+            value: "public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400",
+          },
+        ],
+      },
     ];
   },
 };

@@ -290,7 +290,7 @@ model RssArticle {
 model Ad {
   id          String    @id @default(cuid())
   name        String
-  /// Placement key: feed-inline | article-top | article-inline | article-sidebar | radio-hero
+  /// Placement key — the catalogue lives in `AD_SLOTS` (src/lib/ads.ts).
   slot        String    @default("feed-inline")
   /// image = trackable click-through; html = raw embed (network scripts)
   format      String    @default("image")
@@ -300,6 +300,12 @@ model Ad {
   sponsor     String?
   /// Higher weight wins more often when several ads share a slot.
   weight      Int       @default(1)
+  /// JSON array of category ids this campaign targets; null = every category.
+  categories   String?
+  /// JSON array of devices (mobile | tablet | desktop); null = every device.
+  devices      String?
+  /// Max impressions per visitor per day; null = uncapped.
+  frequencyCap Int?
   isActive    Boolean   @default(true)
   startsAt    DateTime?
   endsAt      DateTime?

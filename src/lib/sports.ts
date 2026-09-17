@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { cacheGet, cacheSet } from "@/lib/redis";
 import { createLogger } from "@/lib/logger";
 import { openFootballProvider } from "@/lib/sports-openfootball";
+import { ESPN_SPORT_PATH, SPORTS_SCOPE } from "@/lib/sports-scope";
 import {
   apisportsConfigured as apiSportsConfigured,
   apiSportsFixtureOdds,
@@ -412,8 +413,15 @@ export function sportsDbKeyState(): { using: string; fallback: boolean } {
     : { using: "configured", fallback: false };
 }
 
-function sportsDbSport(sport: string): string {
-  return sport === "basketball" ? "Basketball" : "Soccer";
+/**
+ * TheSportsDB's own word for what this desk covers.
+ *
+ * The parameter is gone rather than ignored: this used to answer "Basketball"
+ * for a basketball request, and a function that can no longer be asked is one
+ * fewer place for the desk's scope to be wrong.
+ */
+function sportsDbSport(): string {
+  return "Soccer";
 }
 
 /**
@@ -485,7 +493,7 @@ const sportsDbProvider: SportsProvider = {
 
     if (isToday) {
       try {
-        const body = await sportsDbGet(`livescore.php?s=${sportsDbSport(sport)}`);
+        const body = await sportsDbGet(`livescore.php?s=${sportsDbSport()}`);
         const rows = Array.isArray(body?.livescore) ? (body!.livescore as unknown[]) : [];
         // The v1 livescore response is `{ livescore: [...] }`; older deployments
         // answered `{ events: [...] }`, so accept either.
@@ -498,7 +506,7 @@ const sportsDbProvider: SportsProvider = {
     }
 
     // A specific day: scheduled and finished fixtures for that calendar date.
-    const body = await sportsDbGet(`eventsday.php?d=${day}&s=${sportsDbSport(sport)}`);
+    const body = await sportsDbGet(`eventsday.php?d=${day}&s=${sportsDbSport()}`);
     const rows = Array.isArray(body?.events) ? (body.events as unknown[]) : [];
     return rows
       .map((row) => mapSportsDbEvent(row, day))
@@ -593,14 +601,6 @@ export const ESPN_SOCCER_LEAGUES: Record<string, string> = {
   "eng.league_cup": "EFL Cup",
 };
 
-export const ESPN_BASKETBALL_LEAGUES: Record<string, string> = {
-  "nba": "NBA",
-  "wnba": "WNBA",
-  "mens-college-basketball": "NCAA Basketball",
-  "womens-college-basketball": "NCAA Women's Basketball",
-  "nba-dleague": "NBA G League",
-};
-
 /** How many ESPN scoreboards may be in flight at once. See `mapLimit`. */
 const ESPN_FETCH_CONCURRENCY = 12;
 
@@ -680,9 +680,7 @@ const ESPN_COUNTRY: Record<string, string> = {
  * them, the predictions and reminders keyed off those ids.
  */
 const ESPN_SLUG_BY_NAME: Record<string, string> = Object.fromEntries(
-  [...Object.entries(ESPN_SOCCER_LEAGUES), ...Object.entries(ESPN_BASKETBALL_LEAGUES)].map(
-    ([slug, name]) => [name.toLowerCase(), slug]
-  )
+  Object.entries(ESPN_SOCCER_LEAGUES).map(([slug, name]) => [name.toLowerCase(), slug])
 );
 
 /**
@@ -870,9 +868,8 @@ async function mapLimit<T, R>(items: readonly T[], limit: number, run: (item: T)
  * looks exactly like not finding it at all.
  */
 async function espnScoreboard(slug: string, sport: string, day: string, timeoutMs = 8000): Promise<NormalizedMatch[]> {
-  const sportPath = sport === "basketball" ? "basketball" : "soccer";
   const res = await fetch(
-    `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/${slug}/scoreboard?dates=${day}&limit=100`,
+    `https://site.api.espn.com/apis/site/v2/sports/${ESPN_SPORT_PATH}/${slug}/scoreboard?dates=${day}&limit=100`,
     { signal: AbortSignal.timeout(timeoutMs), cache: "no-store" }
   );
   if (!res.ok) throw new Error(`espn ${slug} HTTP ${res.status}`);
@@ -890,8 +887,9 @@ const espnProvider: SportsProvider = {
   supportsDate: true,
   async fetchMatches({ date, sport }) {
     const day = espnDay(date);
-    const leagues = sport === "basketball" ? ESPN_BASKETBALL_LEAGUES : ESPN_SOCCER_LEAGUES;
-    const slugs = Object.keys(leagues);
+    // One league map, one sport. This used to be a ternary on the request's
+    // `sport`, which is how a football board could come back with NBA games.
+    const slugs = Object.keys(ESPN_SOCCER_LEAGUES);
 
     const settled = await mapLimit(slugs, ESPN_FETCH_CONCURRENCY, async (slug) => {
       try {
@@ -973,8 +971,7 @@ const openLigaProvider: SportsProvider = {
   priority: 4,
   keyless: true,
   supportsDate: false,
-  async fetchMatches({ date, sport }) {
-    if (sport === "basketball") return [];
+  async fetchMatches({ date }) {
     const day = date.toISOString().slice(0, 10);
     const res = await fetch("https://api.openligadb.de/getmatchdata/bl1", {
       headers: { "User-Agent": "connectPlus-Sports/1.0" },
@@ -1194,12 +1191,11 @@ interface LeagueEntry {
 }
 
 const LEAGUE_REGISTRY_TTL_MS = 12 * 60 * 60 * 1000;
-let leagueRegistry: { at: number; soccer: LeagueEntry[]; basketball: LeagueEntry[] } | null = null;
+let leagueRegistry: { at: number; soccer: LeagueEntry[] } | null = null;
 
-/** The hand-written lists, shaped as a registry, for when the lookup fails. */
-function fallbackRegistry(sport: string): LeagueEntry[] {
-  const source = sport === "basketball" ? ESPN_BASKETBALL_LEAGUES : ESPN_SOCCER_LEAGUES;
-  return Object.entries(source).map(([slug, name]) => ({ slug, name }));
+/** The hand-written list, shaped as a registry, for when the lookup fails. */
+function fallbackRegistry(): LeagueEntry[] {
+  return Object.entries(ESPN_SOCCER_LEAGUES).map(([slug, name]) => ({ slug, name }));
 }
 
 /**
@@ -1212,16 +1208,15 @@ function fallbackRegistry(sport: string): LeagueEntry[] {
  * to the hand-written lists so a lookup failure degrades to today's behaviour
  * rather than to no odds at all.
  */
-async function espnLeagueRegistry(sport: string): Promise<LeagueEntry[]> {
+async function espnLeagueRegistry(): Promise<LeagueEntry[]> {
   const now = Date.now();
   if (leagueRegistry && now - leagueRegistry.at < LEAGUE_REGISTRY_TTL_MS) {
-    return sport === "basketball" ? leagueRegistry.basketball : leagueRegistry.soccer;
+    return leagueRegistry.soccer;
   }
 
-  const path = sport === "basketball" ? "basketball" : "soccer";
   try {
     const res = await fetch(
-      `https://site.web.api.espn.com/apis/site/v2/leagues/dropdown?sport=${path}&limit=400`,
+      `https://site.web.api.espn.com/apis/site/v2/leagues/dropdown?sport=${ESPN_SPORT_PATH}&limit=400`,
       { signal: AbortSignal.timeout(6000), cache: "no-store" }
     );
     if (!res.ok) throw new Error(`registry HTTP ${res.status}`);
@@ -1231,18 +1226,13 @@ async function espnLeagueRegistry(sport: string): Promise<LeagueEntry[]> {
       .filter((l) => l.slug && l.name);
     if (entries.length === 0) throw new Error("registry empty");
 
-    leagueRegistry = {
-      at: now,
-      soccer: path === "soccer" ? entries : (leagueRegistry?.soccer ?? []),
-      basketball: path === "basketball" ? entries : (leagueRegistry?.basketball ?? []),
-    };
+    leagueRegistry = { at: now, soccer: entries };
     return entries;
   } catch (err) {
     log.warn("espn league registry lookup failed", {
-      sport,
       error: err instanceof Error ? err.message : String(err),
     });
-    return fallbackRegistry(sport);
+    return fallbackRegistry();
   }
 }
 
@@ -1328,17 +1318,17 @@ export async function backfillOdds(
 ): Promise<{ matches: NormalizedMatch[]; priced: number; leagues: string[] }> {
   const unchanged = { matches, priced: 0, leagues: [] as string[] };
   if (matches.length === 0) return unchanged;
-  if (ctx.sport !== "football" && ctx.sport !== "basketball") return unchanged;
+  if (ctx.sport !== SPORTS_SCOPE) return unchanged;
 
   const already = new Set(
-    Object.keys(ctx.sport === "basketball" ? ESPN_BASKETBALL_LEAGUES : ESPN_SOCCER_LEAGUES)
+    Object.keys(ESPN_SOCCER_LEAGUES)
   );
   const unpriced = matches.filter(
     (m) => m.oddsHome == null || m.oddsDraw == null || m.oddsAway == null
   );
   if (unpriced.length === 0) return unchanged;
 
-  const registry = await espnLeagueRegistry(ctx.sport);
+  const registry = await espnLeagueRegistry();
   const wanted = new Map<string, LeagueEntry>();
   for (const match of unpriced) {
     if (already.has(match.competitionId ?? "")) continue;
@@ -1562,15 +1552,17 @@ export async function resolveEspnEventId(input: {
   // A native ESPN fixture already has its id; there is nothing to resolve.
   if (/^espn:[^:]+:/.test(input.externalId)) return input.externalId;
 
-  const sport = input.sport === "basketball" ? "basketball" : "football";
-  const path = sport === "basketball" ? "basketball" : "soccer";
+  // The desk resolves ESPN ids for football only, so the request's `sport` is
+  // deliberately not read: there is no second product to address.
+  const sport = SPORTS_SCOPE;
+  const path = ESPN_SPORT_PATH;
 
   const kickoff = input.kickoff ? new Date(input.kickoff) : null;
   const day = kickoff && !Number.isNaN(kickoff.getTime()) ? espnDay(kickoff) : null;
   const pair = `${teamSlug(input.homeTeam)}|${teamSlug(input.awayTeam)}`;
   if (!pair.replace(/\|/g, "")) return null;
 
-  const registry = await espnLeagueRegistry(sport);
+  const registry = await espnLeagueRegistry();
   const entry = resolveLeague(input.competition ?? "", input.competitionId, registry);
   if (!entry) return null;
 
@@ -1645,7 +1637,9 @@ function mapSportsDbEvent(row: unknown, fallbackDay?: string): NormalizedMatch |
   return {
     externalId: String(e.idEvent),
     provider: "sportsdb",
-    sport: String(e.strSport ?? "Soccer").toLowerCase() === "basketball" ? "basketball" : "football",
+    // The desk serves one sport, whatever the feed's own `strSport` says: an
+    // event that reached this mapper did so through a football-only request.
+    sport: SPORTS_SCOPE,
     competition: String(e.strLeague ?? "Unknown competition"),
     competitionId: e.idLeague != null ? String(e.idLeague) : null,
     country: e.strCountry != null ? String(e.strCountry) : null,
@@ -1858,8 +1852,9 @@ function round2(n: number): number {
 
 const PROVIDERS: SportsProvider[] = [
   // The credentialed feed, and the only source that carries the FKF Premier
-  // League with live minutes + basketball in one shape — first in the array so
-  // it wins the priority-1 tie with football-data.
+  // The credentialed feed: the FKF Premier League with live minutes, in the same
+  // shape as everything else — first in the array so it wins the priority-1 tie
+  // with football-data.
   apiSportsProvider,
   footballDataProvider,
   sportsDbProvider,
@@ -1922,7 +1917,7 @@ export function providerInfo(): ProviderInfo[] {
     contributed: lastSourceReport.find((r) => r.id === p.id)?.contributed ?? 0,
     hint:
       p.id === "apisports"
-        ? "API-Sports key (APISPORTS_API_KEY) — FKF Premier League, live minutes and basketball; budget-governed at 100 calls/day on the Free plan."
+        ? "API-Sports key (APISPORTS_API_KEY) — FKF Premier League and live minutes; budget-governed at 100 calls/day on the Free plan."
         : p.id === "football-data"
           ? "Set SPORTS_API_KEY to a free football-data.org token (highest priority when present)."
           : p.id === "sportsdb"

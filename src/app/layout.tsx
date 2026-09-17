@@ -12,7 +12,7 @@ import { getSiteConfig, buildIntegrationScripts } from "@/lib/settings";
 
 const DEFAULT_TITLE = "connectPlus — East African stories, live radio & real-time sports";
 const DEFAULT_DESCRIPTION =
-  "East Africa's home for homegrown stories, live radio, and real-time football and basketball livescores — with model-generated betting analysis and tips for every fixture. Read, write, listen, and follow the games from Nairobi to Dar es Salaam.";
+  "East Africa's home for homegrown stories, live radio, and real-time football livescores — with model-generated betting analysis and tips for every fixture. Read, write, listen, and follow the games from Nairobi to Dar es Salaam.";
 
 /**
  * Default keyword set. It has to describe the product as it is now — a

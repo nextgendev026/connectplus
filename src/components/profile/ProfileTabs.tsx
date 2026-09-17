@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { Fragment, useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import AdSlotClient from "@/components/ads/AdSlotClient";
+import { formatCompact } from "@/lib/format-views";
 import {
   Eye,
   FileText,
@@ -472,13 +474,22 @@ function PostsPanel({
           )}
         >
           {posts.map((post, i) => (
-            <div
-              key={post.id}
-              className="animate-fade-in-up"
-              style={{ animationDelay: `${Math.min(i, 8) * 50}ms` }}
-            >
-              <ProfilePostCard post={post} layout={isGrid ? "grid" : "list"} />
-            </div>
+            <Fragment key={post.id}>
+              <div
+                className="animate-fade-in-up"
+                style={{ animationDelay: `${Math.min(i, 8) * 50}ms` }}
+              >
+                <ProfilePostCard post={post} layout={isGrid ? "grid" : "list"} />
+              </div>
+              {/* Between posts, after the reader has seen a screenful of what
+                  this writer publishes. Client component, so it uses the client
+                  placement component. */}
+              {i === 3 ? (
+                <div className={isGrid ? "sm:col-span-2 xl:col-span-3" : undefined}>
+                  <AdSlotClient slot="profile-inline" />
+                </div>
+              ) : null}
+            </Fragment>
           ))}
         </div>
       ) : loading ? (
@@ -618,10 +629,11 @@ function InsightsPanelLite({
             className="rounded-2xl border border-surface-800/70 bg-surface-900/50 p-3 transition-colors hover:border-surface-700 sm:p-4"
           >
             <m.icon className="mb-1.5 h-3.5 w-3.5 text-brand-400 sm:mb-2 sm:h-4 sm:w-4" />
-            <p className="text-lg font-bold tabular-nums text-surface-50 sm:text-xl md:text-2xl">
-              {typeof m.value === "number" && m.label === "Engagement"
-                ? `${m.value}%`
-                : m.value.toLocaleString()}
+            <p
+              className="text-lg font-bold tabular-nums text-surface-50 sm:text-xl md:text-2xl"
+              title={m.label === "Engagement" ? undefined : Number(m.value).toLocaleString()}
+            >
+              {m.label === "Engagement" ? `${m.value}%` : formatCompact(Number(m.value))}
             </p>
             <p className="mt-0.5 text-[10px] font-medium text-surface-500 sm:text-[11px]">
               {m.label}

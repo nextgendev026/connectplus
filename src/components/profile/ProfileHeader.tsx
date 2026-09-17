@@ -3,10 +3,10 @@
 import { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { ViewCount } from "@/components/ui/ViewCount";
 import {
   MapPin,
   Calendar,
-  Eye,
   Settings,
   ChevronLeft,
   Heart,
@@ -191,10 +191,7 @@ export function ProfileHeader({
                         <Calendar className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
                         Joined {formatDate(user.createdAt)}
                       </span>
-                      <span className="inline-flex items-center gap-1">
-                        <Eye className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
-                        {totalViews.toLocaleString()} views
-                      </span>
+                      <ViewCount value={totalViews} />
                     </div>
                   </div>
                 </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import {
   Search,
   Star,
@@ -324,10 +325,15 @@ export default function AdminContentPage() {
                 </button>
 
                 {post.coverImage ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
+                  // Through the optimizer, not a raw <img>: the stored cover is a
+                  // full-width JPEG (or a proxied publisher image) and this slot
+                  // is 64×44, so 40 rows of originals is megabytes of mobile data
+                  // for a row of stamps.
+                  <Image
                     src={post.coverImage}
                     alt=""
+                    width={64}
+                    height={44}
                     className="h-11 w-16 shrink-0 rounded-lg border border-surface-800 object-cover"
                   />
                 ) : (

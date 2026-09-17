@@ -1,7 +1,6 @@
 import Link from "next/link";
 import Image from "next/image";
 import {
-  Eye,
   Clock,
   Heart,
   MessageCircle,
@@ -10,6 +9,7 @@ import {
 } from "lucide-react";
 import { cn, timeAgo, estimateReadTime } from "@/lib/utils";
 import { coverSrc } from "@/lib/thumb";
+import { ViewCount } from "@/components/ui/ViewCount";
 
 export interface ProfileTabPost {
   id: string;
@@ -124,10 +124,7 @@ export function ProfilePostCard({
               {post.authorName}
             </span>
           )}
-          <span className="inline-flex items-center gap-1">
-            <Eye className="h-3 w-3" />
-            {post.viewCount.toLocaleString()}
-          </span>
+          <ViewCount value={post.viewCount} />
           <span className="inline-flex items-center gap-1">
             <Heart className="h-3 w-3" />
             {post.likeCount ?? 0}

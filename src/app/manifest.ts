@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "connectPlus — East African stories, live radio & real-time sports",
     short_name: "connectPlus",
     description:
-      "Homegrown stories from East Africa's Silicon Savanna, live radio, and real-time football and basketball livescores with model-generated betting analysis.",
+      "Homegrown stories from East Africa's Silicon Savanna, live radio, and real-time football livescores with model-generated betting analysis.",
     lang: "en",
     dir: "ltr",
     start_url: "/",
