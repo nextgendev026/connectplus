@@ -5,6 +5,7 @@ import { SessionProvider } from "next-auth/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Activity,
   LayoutDashboard,
   BrainCircuit,
   ShieldCheck,
@@ -76,6 +77,11 @@ const NAV_GROUPS: { title: string; links: { href: string; label: string; icon: t
     title: "Platform",
     links: [
       { href: "/admin/users", label: "Users & Nodes", icon: Users },
+      // Health sits beside Integrations on purpose: that page reports whether a
+      // service is configured and reachable, this one reports when each pipeline
+      // last actually did its job. Reading the first as the second is how a
+      // stalled fold stays invisible for two weeks.
+      { href: "/admin/health", label: "Pipeline Health", icon: Activity },
       { href: "/admin/integrations", label: "Integrations", icon: Plug },
       { href: "/admin/settings", label: "Settings", icon: Settings2 },
     ],

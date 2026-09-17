@@ -69,6 +69,19 @@ export interface PickInsight {
 
 const pct = (fraction: number) => Math.round(fraction * 100);
 
+/**
+ * The model's stored confidence (a 0–1 fraction) as the whole number every
+ * surface prints.
+ *
+ * Exported because the share card has to agree with the board: the card is the
+ * only part of a pick most recipients ever see, and "1%" on a card for a pick
+ * the board calls "61%" is worse than showing nothing at all. Clamped to 1–99
+ * so no pick can be advertised as a certainty or a non-event.
+ */
+export function beliefPercent(confidence: number): number {
+  return Math.max(1, Math.min(99, pct(confidence)));
+}
+
 function tierOf(belief: number): PickInsight["tier"] {
   if (belief >= 68) return { label: "Strong call", tone: "strong" };
   if (belief >= 56) return { label: "Good call", tone: "good" };
@@ -222,7 +235,7 @@ function cautionFor(pick: PickInsightInput, belief: number): string {
  * then why — likelihood, goals, the price, the bookies, the form, the record.
  */
 export function explainPick(pick: PickInsightInput): PickInsight {
-  const belief = Math.max(1, Math.min(99, pct(pick.confidence)));
+  const belief = beliefPercent(pick.confidence);
   const reasons = [
     winReason(pick),
     goalsReason(pick),

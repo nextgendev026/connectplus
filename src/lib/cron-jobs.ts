@@ -133,26 +133,13 @@ export async function runHiveSweep(): Promise<{
   const { neuralMind } = await import("@/lib/neural-mind");
   await neuralMind.learnFromRssArticles();
 
-  const { convexPendingViews, convexMarkViewsSynced } = await import("@/lib/convex");
-  const deltas = await convexPendingViews(500);
-  let views = 0;
-  const applied: string[] = [];
-  for (const d of deltas) {
-    const ok = await prisma.post
-      .update({ where: { id: d.postId }, data: { viewCount: { increment: d.delta } } })
-      .then(() => true)
-      .catch(() => false);
-    if (ok) {
-      applied.push(d.postId);
-      views += d.delta;
-    }
-  }
-  const synced = await convexMarkViewsSynced(applied);
+  const { foldConvexViews } = await import("@/lib/view-sync");
+  const folded = await foldConvexViews(500);
 
   return {
     ok: true,
     sweep,
-    viewSync: { posts: synced, views },
+    viewSync: { posts: folded.posts, views: folded.views },
     retention: {
       totalBefore: retention?.totalBefore ?? 0,
       totalAfter: retention?.totalAfter ?? 0,

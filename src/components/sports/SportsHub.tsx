@@ -69,8 +69,20 @@ export default function SportsHub({
   const [tab, setTab] = useState<Tab>("scores");
   const navRef = useRef<HTMLElement | null>(null);
   const tabRefs = useRef(new Map<Tab, HTMLButtonElement | null>());
-  /** The travelling highlight's geometry, in the bar's own coordinate space. */
-  const [indicator, setIndicator] = useState<{ left: number; width: number } | null>(null);
+  /**
+   * The travelling highlight's geometry, in the bar's own coordinate space.
+   *
+   * Height and top are measured, not stretched. The highlight used to be pinned
+   * with `top-0 bottom-0`, which made it the height of the BAR — padding
+   * included — while the buttons are inset by that padding. On desktop the
+   * switcher carries `sm:py-1.5`, so the highlight stood taller than the tab it
+   * was highlighting and the label sat visibly off-centre in it. Measuring the
+   * button's own box means the highlight is the tab, at any padding, any
+   * breakpoint, either type scale.
+   */
+  const [indicator, setIndicator] = useState<{ left: number; top: number; width: number; height: number } | null>(
+    null
+  );
 
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("tab");
@@ -122,7 +134,12 @@ export default function SportsHub({
     if (!nav || !button) return;
     const navBox = nav.getBoundingClientRect();
     const box = button.getBoundingClientRect();
-    setIndicator({ left: box.left - navBox.left, width: box.width });
+    setIndicator({
+      left: box.left - navBox.left,
+      top: box.top - navBox.top,
+      width: box.width,
+      height: box.height,
+    });
   }, [tab]);
 
   useEffect(() => {
@@ -294,8 +311,14 @@ export default function SportsHub({
           {indicator ? (
             <span
               aria-hidden="true"
-              className="pointer-events-none absolute top-0 bottom-0 rounded-xl bg-brand-500 shadow-lg shadow-brand-500/20 transition-[transform,width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-              style={{ width: indicator.width, transform: `translateX(${indicator.left}px)`, left: 0 }}
+              className="pointer-events-none absolute rounded-xl bg-brand-500 shadow-lg shadow-brand-500/20 transition-[transform,width,height] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+              style={{
+                top: indicator.top,
+                height: indicator.height,
+                width: indicator.width,
+                transform: `translateX(${indicator.left}px)`,
+                left: 0,
+              }}
             />
           ) : null}
           {TABS.map((id) => (
@@ -395,7 +418,11 @@ function TabButton({
       aria-label={`${meta.label} — ${meta.hint}`}
       tabIndex={active ? 0 : -1}
       className={cn(
-        "group relative z-10 flex flex-1 flex-col items-center justify-center gap-1 rounded-xl px-1 py-2 text-center transition duration-200 sm:flex-none sm:flex-row sm:gap-2.5 sm:px-3 sm:text-left",
+        // Equal shares at every width. From `sm` up the four used to size to
+        // their own content (`sm:flex-none`), so on a desktop the switcher ended
+        // two-thirds of the way across a left-aligned row and read as a bar that
+        // had come loose from the page it belongs to.
+        "group relative z-10 flex flex-1 flex-col items-center justify-center gap-1 rounded-xl px-1 py-2 text-center transition duration-200 sm:flex-row sm:gap-2.5 sm:px-3 sm:text-left",
         active
           ? "text-white"
           : "text-surface-400 hover:bg-surface-900/70 hover:text-surface-50 active:scale-[0.97]"
@@ -412,7 +439,7 @@ function TabButton({
         <Icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
       </span>
       <span className="min-w-0">
-        <span className="flex items-center justify-center gap-1.5 text-[11px] font-semibold sm:justify-start sm:text-sm">
+        <span className="flex min-w-0 items-center justify-center gap-1.5 text-[11px] font-semibold sm:text-sm">
           {meta.label}
         </span>
         <span

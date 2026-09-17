@@ -1,4 +1,5 @@
 import { getSiteConfig } from "./settings";
+import type { TipsShareSummary } from "./sports-share";
 
 /**
  * Share cards and structured data.
@@ -101,7 +102,8 @@ export interface ShareCard {
   author: string | null;
   publishedTime: string | null;
   tags: string[];
-  type: "article";
+  /** `article` for a story, `website` for a hub or a board. */
+  type: "article" | "website";
 }
 
 /** Compose the share card for a stored post. */
@@ -134,6 +136,77 @@ export async function articleShareCard(post: ShareCardInput): Promise<ShareCard>
     publishedTime: post.publishedAt?.toISOString() ?? null,
     tags: (post.tags ?? []).map((t) => t.name).slice(0, 8),
     type: "article",
+  };
+}
+
+/**
+ * The card a shared tips link should render as.
+ *
+ * A board link used to fall through to the generic site card, so the most-shared
+ * URL on the sports desk — the one that travels through WhatsApp groups —
+ * advertised nothing about picks. This describes what is actually behind the
+ * link: the fixture and pick when the URL names one, the model's published
+ * record otherwise, and the sports card artwork rather than the site default.
+ *
+ * Deliberately says "not financial advice" in the description: a card is read by
+ * people who never load the page, so the disclaimer cannot be page-only.
+ */
+export async function sportsShareCard(
+  summary: TipsShareSummary,
+  opts: { matchId?: string | null } = {}
+): Promise<ShareCard> {
+  const origin = await resolveSiteOrigin();
+  let siteName = "connectPlus";
+  try {
+    siteName = (await getSiteConfig()).siteName;
+  } catch {
+    // keep the default
+  }
+
+  const suffix = opts.matchId ? `&match=${encodeURIComponent(opts.matchId)}` : "";
+  const canonical = `${origin}/sports?tab=tips${suffix}`;
+  const pick = summary.pick;
+
+  const title = pick
+    ? `${pick.fixture}: ${pick.selection} — ${pick.confidence}% from the model`
+    : "Today's football picks, with the reasoning";
+
+  const recordLine =
+    summary.accuracy !== null
+      ? `The model has been right ${summary.accuracy}% across ${summary.settled} settled picks.`
+      : null;
+
+  const description = pick
+    ? [
+        // The competition is omitted, not faked, when the provider only gave us
+        // a code (`rus.1`) — a card that names a database key reads as a bug.
+        pick.competition ? `${pick.competition}.` : null,
+        "Every pick arrives with the reasons behind it — only picks you can still act on.",
+        recordLine,
+        "18+ — not financial advice.",
+      ]
+        .filter(Boolean)
+        .join(" ")
+    : [
+        summary.livePicks > 0 ? `${summary.livePicks} actionable picks on the board right now.` : null,
+        "Model-generated football picks, each with the reasoning behind it.",
+        recordLine,
+        "18+ — not financial advice.",
+      ]
+        .filter(Boolean)
+        .join(" ");
+
+  return {
+    url: canonical,
+    canonical,
+    title,
+    description,
+    image: `${origin}/og-tips.png`,
+    siteName,
+    author: null,
+    publishedTime: null,
+    tags: ["Football", "Predictions", "Livescores", "Betting tips"],
+    type: "website",
   };
 }
 

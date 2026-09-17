@@ -110,7 +110,10 @@ export async function generateMetadata(): Promise<Metadata> {
   const title = cfg ? `${siteName} - ${cfg.siteTagline}` : DEFAULT_TITLE;
   const description = cfg?.siteDescription ?? DEFAULT_DESCRIPTION;
   const url = cfg?.siteUrl ?? process.env.AUTH_URL ?? "https://connectplusapp.vercel.app";
-  const ogImage = cfg?.ogImage ?? "/pwa-512.png";
+  // The landscape share card, not the square icon: `openGraph.images` below
+  // declares 1200×630, and a square image declared as landscape is cropped or
+  // ignored by every platform that reads it.
+  const ogImage = cfg?.ogImage ?? "/og-default.png";
   const ogImageUrl = ogImage.startsWith("http") ? ogImage : `${url}${ogImage}`;
   const twitterHandle = (cfg?.twitterHandle ?? "@connectplus").replace(/^@/, "");
   const keywords = cfg?.seoKeywords?.length ? cfg.seoKeywords : DEFAULT_KEYWORDS;

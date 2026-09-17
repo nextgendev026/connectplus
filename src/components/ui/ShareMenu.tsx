@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Share2,
@@ -10,8 +10,16 @@ import {
   Mail,
   MessageCircle,
   Send,
+  Target,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { BRAND_NAME } from "@/lib/brand";
+import {
+  createShareTargets,
+  shareImage,
+  withAttribution,
+  type ShareTargetId,
+} from "@/lib/share";
 
 /* Brand marks — lucide dropped brand icons, so we ship tiny inline SVGs. */
 function XBrand({ className }: { className?: string }) {
@@ -44,6 +52,10 @@ interface ShareMenuProps {
   description?: string;
   image?: string | null;
   hashtags?: string[];
+  /** Which surface invited the share — becomes `utm_campaign`. */
+  campaign?: string;
+  /** The specific object being shared — becomes `utm_content`. */
+  content?: string;
   align?: "left" | "right";
   /**
    * The button's accessible name. The default assumes a story, which is wrong on
@@ -55,26 +67,16 @@ interface ShareMenuProps {
   compact?: boolean;
 }
 
-interface ShareTarget {
-  label: string;
-  href: string;
-  icon: React.ComponentType<{ className?: string }>;
-  color: string;
-  hover: string;
-}
-
-function buildAbsolute(url: string): string {
-  if (typeof window === "undefined") return url;
-  return new URL(url, window.location.origin).href;
-}
-
-function domainOf(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return "";
-  }
-}
+/** Per-channel presentation. The behaviour lives in lib/share, not here. */
+const TARGET_STYLE: Record<ShareTargetId, { icon: React.ComponentType<{ className?: string }>; color: string; hover: string }> = {
+  x: { icon: XBrand, color: "text-surface-100", hover: "hover:bg-surface-100 hover:text-black" },
+  facebook: { icon: FacebookBrand, color: "text-[#1877F2]", hover: "hover:bg-[#1877F2]/15" },
+  linkedin: { icon: LinkedInBrand, color: "text-[#0A66C2]", hover: "hover:bg-[#0A66C2]/15" },
+  whatsapp: { icon: MessageCircle, color: "text-[#25D366]", hover: "hover:bg-[#25D366]/15" },
+  telegram: { icon: Send, color: "text-[#229ED9]", hover: "hover:bg-[#229ED9]/15" },
+  email: { icon: Mail, color: "text-accent-amber", hover: "hover:bg-accent-amber/15" },
+  copy: { icon: Link2, color: "text-brand-400", hover: "hover:bg-brand-500/15" },
+};
 
 /** True on phones — the menu becomes a bottom sheet there instead of a popover. */
 function useIsMobile(): boolean {
@@ -89,12 +91,22 @@ function useIsMobile(): boolean {
   return isMobile;
 }
 
+function domainOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
 export function ShareMenu({
   url,
   title,
   description,
   image,
   hashtags = [],
+  campaign,
+  content,
   align = "right",
   ariaLabel = "Share this story",
   compact = false,
@@ -107,11 +119,25 @@ export function ShareMenu({
   // portal below can never run during SSR — no extra mounted flag needed.
   const isMobile = useIsMobile();
 
-  const absoluteUrl = buildAbsolute(url);
-  const text = `${title}${hashtags.length ? " " + hashtags.slice(0, 2).map((h) => `#${h.replace(/^#/, "")}`).join(" ") : ""}`;
-  const encodedText = encodeURIComponent(text);
-  const encodedUrl = encodeURIComponent(absoluteUrl);
-  const shareDescription = description || "Read this story on connectPlus";
+  /**
+   * Every channel gets its own attributed URL and its own fitted message.
+   *
+   * This is the whole point of routing sharing through lib/share: the menu shows
+   * one list, but what a channel receives is per-channel — a message short
+   * enough for X, the link in the same field for WhatsApp, and a `utm_source`
+   * that names the app it travelled through so shared traffic is measurable
+   * instead of landing in "direct".
+   */
+  const shares = useMemo(
+    () => createShareTargets({ url, title, description, hashtags, campaign, content }),
+    [url, title, description, hashtags, campaign, content]
+  );
+
+  const previewImage = useMemo(() => shareImage(image), [image]);
+  const previewUrl = useMemo(() => shares[0]?.url ?? url, [shares, url]);
+  const previewMessage = useMemo(() => shares.find((s) => s.target.id === "copy")?.message ?? title, [shares, title]);
+  const copyShare = shares.find((s) => s.target.id === "copy");
+  const channelShares = shares.filter((s) => s.target.id !== "copy");
 
   // Close on outside click / Escape (desktop popover only; the sheet has its own scrim).
   useEffect(() => {
@@ -146,11 +172,14 @@ export function ShareMenu({
   }, [open, isMobile]);
 
   const copy = useCallback(async () => {
+    const value = copyShare?.url ?? url;
     try {
-      await navigator.clipboard.writeText(absoluteUrl);
+      await navigator.clipboard.writeText(value);
     } catch {
+      // Older/insecure contexts have no async clipboard. A textarea selection is
+      // ugly and it works, which is what matters on the device that needs it.
       const ta = document.createElement("textarea");
-      ta.value = absoluteUrl;
+      ta.value = value;
       document.body.appendChild(ta);
       ta.select();
       document.execCommand("copy");
@@ -158,12 +187,15 @@ export function ShareMenu({
     }
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }, [absoluteUrl]);
+  }, [copyShare?.url, url]);
 
   const nativeShare = async () => {
+    const nativeUrl = withAttribution(url, { source: "share_sheet", campaign, content });
     if (typeof navigator !== "undefined" && navigator.share) {
       try {
-        await navigator.share({ title, text: shareDescription, url: absoluteUrl });
+        // The OS sheet is where a reader on a phone actually sends things, so it
+        // gets the composed message too — not just a bare link.
+        await navigator.share({ title, text: previewMessage, url: nativeUrl });
         setOpen(false);
       } catch {
         // user cancelled — keep the menu open
@@ -188,98 +220,54 @@ export function ShareMenu({
     setTimeout(() => setOpen(false), 150);
   }, []);
 
-  const targets: ShareTarget[] = [
-    {
-      label: "Post to X",
-      href: `https://x.com/intent/post?text=${encodedText}&url=${encodedUrl}`,
-      icon: XBrand,
-      color: "text-surface-100",
-      hover: "hover:bg-surface-100 hover:text-black",
-    },
-    {
-      label: "Share on Facebook",
-      href: `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}&quote=${encodedText}&display=popup`,
-      icon: FacebookBrand,
-      color: "text-[#1877F2]",
-      hover: "hover:bg-[#1877F2]/15",
-    },
-    {
-      label: "Share on LinkedIn",
-      href: `https://www.linkedin.com/sharing/share-offsite/?url=${encodedUrl}`,
-      icon: LinkedInBrand,
-      color: "text-[#0A66C2]",
-      hover: "hover:bg-[#0A66C2]/15",
-    },
-    {
-      label: "Share on WhatsApp",
-      href: `https://wa.me/?text=${encodedText}%20${encodedUrl}`,
-      icon: MessageCircle,
-      color: "text-[#25D366]",
-      hover: "hover:bg-[#25D366]/15",
-    },
-    {
-      label: "Share on Telegram",
-      href: `https://t.me/share/url?url=${encodedUrl}&text=${encodedText}`,
-      icon: Send,
-      color: "text-[#229ED9]",
-      hover: "hover:bg-[#229ED9]/15",
-    },
-    {
-      label: "Share by email",
-      href: `mailto:?subject=${encodeURIComponent(title)}&body=${encodeURIComponent(`${shareDescription}\n\n${absoluteUrl}`)}`,
-      icon: Mail,
-      color: "text-accent-amber",
-      hover: "hover:bg-accent-amber/15",
-    },
-  ];
-
   const panelBody = (
     <>
-      {/* SEO preview card — the exact components crawlers read */}
+      {/* The card a crawler renders — image, title, description, domain. */}
       <div className="border-b border-surface-800 bg-surface-900/70 p-4">
         <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-surface-500">
           <Link2 className="h-3 w-3 text-brand-400" />
           Link preview
           <span className="ml-auto rounded-full bg-surface-800 px-2 py-0.5 normal-case tracking-normal text-surface-400">
-            {domainOf(absoluteUrl)}
+            {domainOf(previewUrl) || BRAND_NAME}
           </span>
         </div>
         <div className="mt-3 flex gap-3">
-          {image ? (
-            <div className="h-16 w-24 shrink-0 overflow-hidden rounded-lg border border-surface-700">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={image} alt="" className="h-full w-full object-cover" />
-            </div>
-          ) : (
-            <div className="flex h-16 w-24 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-brand-600/40 via-brand-500/20 to-accent-coral/30 text-2xl">
-              🦁
-            </div>
-          )}
+          <div className="h-16 w-24 shrink-0 overflow-hidden rounded-lg border border-surface-700 bg-surface-800">
+            {/* The generated 1200×630 card renders here at 96×64 — the same
+                picture the recipient sees, instead of a placeholder emoji. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={previewImage} alt="" className="h-full w-full object-cover" loading="lazy" />
+          </div>
           <div className="min-w-0">
             <p className="line-clamp-2 text-xs font-semibold leading-snug text-surface-50">{title}</p>
-            <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-surface-400">{shareDescription}</p>
+            <p className="mt-1 line-clamp-3 text-[11px] leading-snug text-surface-400">
+              {description || previewMessage}
+            </p>
           </div>
         </div>
       </div>
 
       {/* Share targets */}
       <div className="grid grid-cols-2 gap-1 p-2">
-        {targets.map((t) => (
-          <a
-            key={t.label}
-            href={t.href}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => go(t.href, e)}
-            className={cn(
-              "flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-medium text-surface-300 transition-colors",
-              t.hover
-            )}
-          >
-            <t.icon className={cn("h-4 w-4", t.color)} />
-            {t.label}
-          </a>
-        ))}
+        {channelShares.map((share) => {
+          const style = TARGET_STYLE[share.target.id];
+          return (
+            <a
+              key={share.target.id}
+              href={share.href ?? "#"}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => (share.href ? go(share.href, e) : e.preventDefault())}
+              className={cn(
+                "flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-medium text-surface-300 transition-colors",
+                style.hover
+              )}
+            >
+              <style.icon className={cn("h-4 w-4", style.color)} />
+              {share.target.label}
+            </a>
+          );
+        })}
         <button
           onClick={copy}
           className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-medium text-surface-300 transition-colors hover:bg-brand-500/15"
@@ -315,6 +303,16 @@ export function ShareMenu({
           </button>
         ) : null}
       </div>
+
+      {/*
+        Says out loud what the recipient's card will show and that each channel
+        gets its own attributed link — an operator reading a share menu should not
+        have to guess whether shared traffic is measurable.
+      */}
+      <p className="flex items-start gap-1.5 border-t border-surface-800/70 px-4 py-2 text-[10px] leading-relaxed text-surface-500">
+        <Target className="mt-px h-3 w-3 shrink-0 text-brand-400" />
+        Every link carries a campaign tag, so you can see which platform brought the reader back.
+      </p>
     </>
   );
 

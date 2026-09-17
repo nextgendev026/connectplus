@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { MessageCircle, Link2, Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { createShareTargets } from "@/lib/share";
 import { ShareMenu } from "./ShareMenu";
 
 interface ArticleActionsProps {
@@ -19,10 +20,22 @@ export function ArticleActions({ url, title, description, image }: ArticleAction
   const router = useRouter();
   const [copied, setCopied] = useState(false);
 
-  const absoluteUrl = (() => {
-    if (typeof window !== "undefined") return new URL(url, window.location.origin).href;
-    return url;
-  })();
+  /**
+   * The story's own share targets, so the toolbar's messenger button and copy
+   * action carry the same campaign attribution as the share menu. They used to
+   * send a bare, unattributed link, which meant the two buttons sitting next to
+   * each other produced differently measurable traffic from the same story.
+   */
+  const shares = createShareTargets({
+    url,
+    title,
+    description,
+    hashtags: ["Stories"],
+    campaign: "article",
+    content: "story",
+  });
+  const absoluteUrl = shares.find((s) => s.target.id === "copy")?.url ?? url;
+  const whatsappHref = shares.find((s) => s.target.id === "whatsapp")?.href ?? null;
 
   const copy = async () => {
     try {
@@ -54,12 +67,13 @@ export function ArticleActions({ url, title, description, image }: ArticleAction
 
   const openMessenger = () => {
     if (!requireAuth()) return;
-    const text = encodeURIComponent(`${title}\n${absoluteUrl}`);
-    window.open(
-      `https://wa.me/?text=${text}`,
-      "_blank",
-      "noopener,noreferrer"
-    );
+    // The composed message comes from the pipeline, so the recipient sees the
+    // headline and the reasons to read it rather than a bare URL.
+    if (!whatsappHref) {
+      window.open(`https://wa.me/?text=${encodeURIComponent(absoluteUrl)}`, "_blank", "noopener,noreferrer");
+      return;
+    }
+    window.open(whatsappHref, "_blank", "noopener,noreferrer");
   };
 
   return (
@@ -85,6 +99,9 @@ export function ArticleActions({ url, title, description, image }: ArticleAction
         title={title}
         description={description}
         image={image}
+        hashtags={["Stories"]}
+        campaign="article"
+        content="story"
         align="right"
       />
       <button

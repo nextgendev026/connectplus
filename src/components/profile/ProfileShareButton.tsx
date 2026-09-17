@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { Share2, Check, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { BRAND_HASHTAG, BRAND_NAME } from "@/lib/brand";
+import { withAttribution } from "@/lib/share";
 
 export function ProfileShareButton({
   username,
@@ -16,11 +18,21 @@ export function ProfileShareButton({
   const [state, setState] = useState<"idle" | "loading" | "copied">("idle");
 
   async function share() {
-    const url = `${window.location.origin}/profile/${username}`;
+    // Attributed like every other share path: a profile link that travels is
+    // still traffic, and without a campaign tag it lands in "direct" and cannot
+    // be told apart from someone typing the address in.
+    const url = withAttribution(`${window.location.origin}/profile/${username}`, {
+      source: "share_sheet",
+      campaign: "profile",
+    });
     setState("loading");
     try {
       if (typeof navigator.share === "function") {
-        await navigator.share({ title: displayName, url });
+        await navigator.share({
+          title: displayName,
+          text: `Follow ${displayName} on ${BRAND_NAME} #${BRAND_HASHTAG}`,
+          url,
+        });
         setState("idle");
         return;
       }

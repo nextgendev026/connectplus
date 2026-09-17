@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSiteConfig } from "@/lib/settings";
-import { articleShareCard, resolveSiteOrigin } from "@/lib/seo";
+import { articleShareCard, resolveSiteOrigin, sportsShareCard } from "@/lib/seo";
+import { tipsShareSummary } from "@/lib/sports-share";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +57,22 @@ export async function GET(request: NextRequest) {
       }
     } catch {
       slug = null;
+    }
+
+    // The sports desk. `/sports` (and its tips tab) is the most-shared surface
+    // on the platform, and it used to answer with the generic site card — a link
+    // whose whole subject is a football pick rendered as a tagline and an icon.
+    // A `?match=<id>` link now describes that fixture's lead pick and the model's
+    // published record, which is what a reader judging the link needs.
+    try {
+      const parsed = new URL(absolute);
+      if (parsed.origin === origin && /^\/sports\/?$/.test(parsed.pathname)) {
+        const matchId = parsed.searchParams.get("match");
+        const summary = await tipsShareSummary(matchId);
+        return NextResponse.json(await sportsShareCard(summary, { matchId }));
+      }
+    } catch {
+      // Not a URL we can parse — fall through to the article lookup.
     }
 
     if (slug) {

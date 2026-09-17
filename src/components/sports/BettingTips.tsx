@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   ChevronDown,
@@ -126,6 +126,18 @@ export default function BettingTips({
   const [ageMinutes, setAgeMinutes] = useState<number | null>(null);
 
   /**
+   * The fixture a shared link points at (`?match=`).
+   *
+   * A share used to carry the board and nothing else, so a message claiming
+   * "Over 2.5 at 61%" dropped its recipient on twelve cards and left them to
+   * find the one being talked about. The pick's own card is the landing target
+   * now: scrolled to and ringed once, on arrival, and never again — re-scrolling
+   * on the 60-second refresh would hijack a reader who had already moved on.
+   */
+  const [focusMatch, setFocusMatch] = useState<string | null>(null);
+  const scrolledToFocus = useRef(false);
+
+  /**
    * `silent` is the background refresh: it must not blank the board or flash the
    * spinner, because the reader is mid-read and the data on screen is still
    * valid — it is a second old, not wrong.
@@ -200,6 +212,23 @@ export default function BettingTips({
       window.removeEventListener("focus", onVisible);
     };
   }, [load]);
+
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get("match");
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read of the ?match= deep link a shared pick carries
+    if (requested) setFocusMatch(requested);
+  }, []);
+
+  useEffect(() => {
+    if (!focusMatch || !data || scrolledToFocus.current) return;
+    // Quote the value the same way the selector does, so an id containing a
+    // quote cannot break out of the attribute selector.
+    const escaped = focusMatch.replace(/["\\]/g, "\\$&");
+    const target = document.querySelector(`[data-match="${escaped}"]`);
+    if (!target) return;
+    scrolledToFocus.current = true;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [focusMatch, data]);
 
   const record = data?.record;
   const freshness =
@@ -276,13 +305,16 @@ export default function BettingTips({
           */}
           <ShareMenu
             url="/sports?tab=tips"
-            title="Today's tips from the connectPlus model"
+            title="Today's football picks, with the reasoning"
             description={
               record && record.settled > 0
-                ? `${data?.picks.length ?? 0} picks today, from a model running at ${record.accuracy}% across ${record.settled} settled tips.`
-                : `${data?.picks.length ?? 0} picks today from the connectPlus model, each with the reasoning behind it.`
+                ? `${data?.picks.length ?? 0} picks today from a model running at ${record.accuracy}% across ${record.settled} settled tips — each with why.`
+                : `${data?.picks.length ?? 0} picks today, each with the reasoning behind it. Only picks you can still act on.`
             }
-            hashtags={["connectPlus", "Sports", "BettingTips"]}
+            hashtags={["Sports", "BettingTips", "Kenya"]}
+            image="/og-tips.png"
+            campaign="tips"
+            content="board"
             ariaLabel="Share today's tips"
             align="left"
           />
@@ -392,7 +424,7 @@ export default function BettingTips({
           */
           <div className="mt-5 grid auto-rows-fr gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
             {groups.map((group) => (
-              <FixtureTipsCard key={group.key} group={group} />
+              <FixtureTipsCard key={group.key} group={group} focus={focusMatch === group.match.id} />
             ))}
           </div>
         )}
@@ -460,7 +492,7 @@ const kickoffPill = (kickoff: { text: string; live: boolean }) =>
  * and the model's own audit trail is available in a disclosure for anyone who
  * wants the working.
  */
-function FixtureTipsCard({ group }: { group: FixtureGroup }) {
+function FixtureTipsCard({ group, focus = false }: { group: FixtureGroup; focus?: boolean }) {
   const { match, tips } = group;
   const kickoff = kickoffLabel(match);
   // The fixture's headline pick is its most confident one; the rest sit beneath
@@ -489,7 +521,13 @@ function FixtureTipsCard({ group }: { group: FixtureGroup }) {
   });
 
   return (
-    <article className="group relative flex h-full flex-col overflow-hidden rounded-2xl border border-surface-800/70 bg-gradient-to-b from-surface-900/70 to-surface-950/60 transition duration-300 hover:border-emerald-500/40 hover:shadow-[0_0_0_1px_rgba(16,185,129,0.1)] motion-safe:animate-rise">
+    <article
+      data-match={match.id}
+      className={cn(
+        "group relative flex h-full flex-col overflow-hidden rounded-2xl border bg-gradient-to-b from-surface-900/70 to-surface-950/60 transition duration-300 hover:border-emerald-500/40 hover:shadow-[0_0_0_1px_rgba(16,185,129,0.1)] motion-safe:animate-rise",
+        focus ? "border-emerald-500/60 shadow-[0_0_0_1px_rgba(16,185,129,0.28)]" : "border-surface-800/70"
+      )}
+    >
       <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-emerald-500/60 via-brand-500/40 to-transparent" />
 
       <div className="flex items-center justify-between gap-2 border-b border-surface-800/60 px-4 py-2.5">
@@ -507,10 +545,16 @@ function FixtureTipsCard({ group }: { group: FixtureGroup }) {
             argument is that the reasoning is the product.
           */}
           <ShareMenu
-            url="/sports?tab=tips"
-            title={`${match.homeTeam} vs ${match.awayTeam}: ${lead.selection} (${insight.belief}%)`}
-            description={`${insight.marketPlain} — the connectPlus model's pick for ${match.competition}.`}
-            hashtags={["connectPlus", "Sports"]}
+            // The fixture's own deep link, not the board: whoever receives this
+            // lands on this card, highlighted, which is the difference between
+            // "here is a claim" and "here is the claim, verified".
+            url={`/sports?tab=tips&match=${encodeURIComponent(match.id)}`}
+            title={`${match.homeTeam} vs ${match.awayTeam}: ${lead.selection}`}
+            description={`${insight.belief}% from the model — ${insight.marketPlain.toLowerCase()} in ${match.competition}${kickoff.live ? ", in play now" : ""}.`}
+            hashtags={["Sports", match.competition]}
+            image="/og-tips.png"
+            campaign="tips"
+            content="pick"
             ariaLabel={`Share the ${match.homeTeam} vs ${match.awayTeam} pick`}
             compact
             align="right"

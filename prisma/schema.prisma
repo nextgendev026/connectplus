@@ -951,3 +951,73 @@ model CreatorPayout {
   @@index([status])
   @@index([createdAt])
 }
+
+/// One piece of marketing the brain produced — a publishable article draft, a
+/// social post, a story card caption, or a suggested topic to write about.
+///
+/// The copy is stored, not regenerated per view: a campaign is an editorial
+/// artefact an operator approves, so it has to hold still between the moment it
+/// is read and the moment it is published or shared.
+model MarketingCampaign {
+  id        String   @id @default(cuid())
+  /// article | social | story | topic
+  kind      String   @default("social")
+  /// blog | facebook | whatsapp | story | x — where it is meant to go.
+  channel   String   @default("facebook")
+  title     String
+  body      String   @db.Text
+  /// JSON array: the topic suggestions carried by a `topic` campaign.
+  topics    String?  @db.Text
+  /// Why the brain produced this, in one line, for the operator.
+  rationale String?  @db.Text
+  /// JSON snapshot of the signals it was written from (trends, hive standing,
+  /// live counts) so a campaign can be explained after the numbers move.
+  signals   String?  @db.Text
+  /// JSON array of hashtags.
+  hashtags  String?  @db.Text
+  /// DRAFT | APPROVED | PUBLISHED | REJECTED | FAILED
+  status    String   @default("DRAFT")
+  /// hive | ai | hybrid | manual
+  source    String   @default("hybrid")
+  /// 0-100 editorial score: how well the copy matches the brief it was given.
+  score     Int      @default(0)
+  /// External URL once published (an article slug, a Facebook post permalink).
+  url       String?
+  scheduledFor DateTime?
+  publishedAt  DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  shares MarketingShare[]
+
+  @@index([status, createdAt])
+  @@index([channel, status])
+}
+
+/// One attempt to put a campaign on a channel.
+///
+/// A row per attempt, never an update-in-place: "we tried Facebook three times
+/// and it failed three times" is the diagnosis, and overwriting the previous
+/// failure is how an integration looks healthy while nothing is being sent.
+model MarketingShare {
+  id         String            @id @default(cuid())
+  campaignId String
+  campaign   MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  /// facebook | whatsapp | story | x | copy
+  channel    String
+  /// QUEUED | SENT | FAILED | SKIPPED | MANUAL
+  status     String            @default("QUEUED")
+  /// Page id, broadcast number, or the deep link handed to the operator.
+  target     String?
+  /// The provider's own id for the sent item, when it gave one.
+  externalId String?
+  /// Permalink, story-card image, or share link produced by the attempt.
+  url        String?
+  error      String?  @db.Text
+  /// Set when a reader arriving from this share was seen (click/landing ping).
+  clickedAt  DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([campaignId, createdAt])
+  @@index([channel, status])
+}
