@@ -11,7 +11,7 @@
  * previous build's JS, so the page renders copy that no longer exists in the
  * source. Only content-hashed asset URLs are cached; everything else under
  * /_next/ is network-first and never stored. */
-const CACHE_VERSION = "connectplus-v9";
+const CACHE_VERSION = "connectplus-v10";
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 const IMAGE_CACHE = `${CACHE_VERSION}-images`;
@@ -22,9 +22,12 @@ const PRECACHE = [
   "/manifest.webmanifest",
   "/icon-32.png",
   "/icon-48.png",
-  // The official mark, so the offline shell and the install screens show the
-  // real emblem rather than a hole where a logo should be.
+  // The official mark and transparent lockups, so the offline shell and the
+  // install screens show the real emblem rather than a hole where a logo should be.
   "/brand/mark.png",
+  "/brand/mark-transparent.png",
+  "/brand/lockup-transparent-dark.png",
+  "/brand/lockup-transparent-light.png",
   "/favicon.ico",
 ];
 
