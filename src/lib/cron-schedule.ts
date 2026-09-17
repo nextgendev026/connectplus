@@ -9,6 +9,7 @@ import {
 import {
   runEmbedPosts,
   runHiveSweep,
+  runMarketingSweep,
   runPaymentsLifecycle,
   runPlatformPulse,
   runPublishScheduled,
@@ -187,6 +188,24 @@ export const CRON_JOBS: readonly CronJobDef[] = [
     everyMinutes: 1440,
     essential: false,
     run: () => runStatusWatchdog(),
+  },
+  {
+    id: "marketing-sweep",
+    name: "Self-marketing sweep",
+    description:
+      "Drafts campaigns and topic suggestions from live trends, shares newly published stories, and sends anything approved.",
+    // Every fifteen minutes because the freshness that matters here is a
+    // *story*, not a campaign: a piece published at 09:04 should be on the
+    // Facebook Page at 09:15, and the sweep is the only path that does that
+    // without a human. Each pass is cheap and idempotent — drafting is skipped
+    // while four drafts are already waiting, and a story is shared by its URL at
+    // most once — so running often costs reads, not duplicates.
+    cron: "*/15 * * * *",
+    everyMinutes: 15,
+    // Not in the daily safety net, for the same reason as sports-notify: silence
+    // here is measured in minutes and a once-a-day recovery would be a day late.
+    essential: false,
+    run: () => runMarketingSweep(),
   },
   {
     id: "platform-pulse",

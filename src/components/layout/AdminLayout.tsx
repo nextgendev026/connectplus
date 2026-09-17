@@ -76,6 +76,11 @@ const NAV_GROUPS: { title: string; links: { href: string; label: string; icon: t
   {
     title: "Platform",
     links: [
+      // Marketing belongs here rather than under Monetization: it is not a
+      // revenue surface, it is the platform's own mouth, and what it needs from
+      // an operator is the same thing the health console needs — a glance that
+      // says whether it ran, not another settings form.
+      { href: "/admin/marketing", label: "Marketing", icon: Megaphone },
       { href: "/admin/users", label: "Users & Nodes", icon: Users },
       // Health sits beside Integrations on purpose: that page reports whether a
       // service is configured and reachable, this one reports when each pipeline

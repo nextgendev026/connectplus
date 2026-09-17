@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { redisIncr } from "@/lib/redis";
@@ -114,6 +114,28 @@ export async function PUT(request: NextRequest) {
           postId,
         })
       );
+
+      // Marketing sees an approval the moment it happens, rather than on the
+      // next fifteen-minute sweep. `after()` keeps the Graph call off the
+      // reviewer's critical path — a slow Facebook response must never make an
+      // approval feel broken, and a failed share is retried by the sweep.
+      after(async () => {
+        try {
+          const { shareNewStory } = await import("@/lib/marketing");
+          const category = post.categoryId
+            ? await prisma.category.findUnique({ where: { id: post.categoryId }, select: { name: true } })
+            : null;
+          await shareNewStory({
+            id: postId,
+            title: post.title,
+            slug: post.slug,
+            excerpt: post.excerpt,
+            categoryName: category?.name ?? null,
+          });
+        } catch {
+          // the sweep is the retry path
+        }
+      });
     }
 
     return NextResponse.json({ post: updatedPost });

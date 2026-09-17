@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { slugify } from "@/lib/utils";
@@ -366,6 +366,23 @@ export async function POST(request: NextRequest) {
     if (postStatus === "PUBLISHED" && moderationStatus === "APPROVED") {
       embedPost(post).catch(() => {});
       autoTagPost(post.id, `${post.title} ${post.excerpt ?? ""}`).catch(() => {});
+      // A story that just went live is the one moment its share is worth
+      // anything, so the share goes out with it rather than waiting for the
+      // marketing sweep. `after()` keeps the Graph call off the writer's path.
+      after(async () => {
+        try {
+          const { shareNewStory } = await import("@/lib/marketing");
+          await shareNewStory({
+            id: post.id,
+            title: post.title,
+            slug: post.slug,
+            excerpt: post.excerpt,
+            categoryName: post.category?.name ?? null,
+          });
+        } catch {
+          // the sweep is the retry path
+        }
+      });
     }
     await hiveBrain.ingestPost(post).catch(() => {});
 

@@ -6,6 +6,7 @@ import { autoTagPost } from "@/lib/auto-tag";
 import { createPublishNotifications } from "@/lib/notifications";
 import { redisIncr } from "@/lib/redis";
 import { createLogger } from "@/lib/logger";
+import { shareNewStory, runMarketingSweep as runMarketingEngine } from "@/lib/marketing";
 
 const log = createLogger("cron-jobs");
 
@@ -94,6 +95,19 @@ export async function runPublishScheduled(): Promise<{ published: number }> {
     const tags = await autoTagPost(live.id, `${live.title} ${live.excerpt ?? ""}`);
     await embedPost({ id: post.id, title: post.title, excerpt: post.excerpt, content: post.content });
     log.info("ingested published post", { postId: live.id, memories, tags: tags.length });
+
+    // Scheduled stories reach marketing here — and only here, because this is
+    // where they become public. A story that published but never got shared is
+    // the quietest kind of failure this platform can have.
+    if (live.moderationStatus === "APPROVED") {
+      await shareNewStory({
+        id: live.id,
+        title: live.title,
+        slug: live.slug,
+        excerpt: live.excerpt,
+        categoryName: live.category?.name ?? null,
+      }).catch((error) => log.warn("could not queue scheduled-story share", { error: String(error) }));
+    }
 
     publishedCount++;
   }
@@ -428,6 +442,18 @@ export async function runStatusWatchdog(): Promise<{
  * Never rethrows: a pulse that cannot be written must not stop the rest of the
  * schedule, and the next run picks up where this one left off.
  */
+/**
+ * Self-marketing sweep.
+ *
+ * A thin wrapper on purpose: the engine (src/lib/marketing.ts) records its own
+ * heartbeat and swallows its own failures, because a scheduling runner and a
+ * publishing engine have different ideas about what "failed" means — a sweep
+ * that shared nothing because there was nothing new is a success.
+ */
+export async function runMarketingSweep(): Promise<import("@/lib/marketing").MarketingSweep> {
+  return runMarketingEngine();
+}
+
 export async function runPlatformPulse(): Promise<{ day: string; deltas: number; memoryId: string } | { error: string }> {
   try {
     const { platformIntelligence } = await import("@/lib/platform-intelligence");

@@ -40,6 +40,10 @@ const STATIC_ROUTES: {
   { path: "/pricing", changeFrequency: "weekly", priority: 0.6 },
   { path: "/monetize", changeFrequency: "weekly", priority: 0.6 },
   { path: "/about", changeFrequency: "monthly", priority: 0.6 },
+  // The platform's own marketing page, indexed because it is written around the
+  // subjects the platform actually covers — the terms someone searching for
+  // "East Africa news platform" or "live football scores Kenya" would use.
+  { path: "/marketing", changeFrequency: "daily", priority: 0.7 },
   { path: "/contact", changeFrequency: "monthly", priority: 0.5 },
   { path: "/help", changeFrequency: "monthly", priority: 0.5 },
   { path: "/guidelines", changeFrequency: "yearly", priority: 0.4, lastModified: LEGAL_UPDATED },

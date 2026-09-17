@@ -64,6 +64,7 @@ const FOOTER_LINKS = {
   ],
   legal: [
     { label: "About", href: "/about" },
+    { label: "Why connectPlus", href: "/marketing" },
     { label: "Contact", href: "/contact" },
     { label: "Help Center", href: "/help" },
     { label: "Pricing", href: "/pricing" },

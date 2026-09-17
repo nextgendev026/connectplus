@@ -644,6 +644,33 @@ export const sportsNotify = inngest.createFunction(
 );
 
 /**
+ * Self-marketing sweep.
+ *
+ * Every fifteen minutes: draft campaigns from live trends when the queue is
+ * empty, share stories published in the last day, and send whatever is approved.
+ * The engine is idempotent (a story is shared by its article URL at most once,
+ * and drafting is skipped while drafts are waiting), which is what makes a
+ * frequency this high safe — its output is a heartbeat either way, so the
+ * console can show marketing going quiet as easily as a stalled feed.
+ */
+export const marketingSweep = inngest.createFunction(
+  {
+    id: "marketing-sweep",
+    name: "Self-marketing sweep",
+    triggers: [{ event: "marketing-sweep" }, { cron: "*/15 * * * *" }],
+    concurrency: 1,
+    retries: 1,
+  },
+  async ({ step }) => {
+    await step.run("heartbeat", () => recordHeartbeat("marketing-sweep"));
+    return step.run("sweep", async () => {
+      const { runMarketingSweep } = await import("@/lib/marketing");
+      return runMarketingSweep();
+    });
+  }
+);
+
+/**
  * Manual deep-learning trigger exposed to admins.
  */
 export const neuralLearn = inngest.createFunction(
@@ -682,4 +709,5 @@ export const functions = [
   statusDailySnapshot,
   paymentsLifecycle,
   platformPulse,
+  marketingSweep,
 ];
