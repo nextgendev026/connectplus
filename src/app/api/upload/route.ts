@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { checkStorageQuota, QuotaError } from "@/lib/plans";
 import { storeMediaBytes, extensionFor } from "@/lib/media-storage";
+import { optimizeImage, presetForKind } from "@/lib/image-optimizer";
 
 const KINDS = new Set(["avatar", "cover", "post"]);
 
@@ -82,7 +83,14 @@ export async function POST(request: NextRequest) {
 
     // Storage lives in lib/media-storage so generated assets take the identical
     // path — Supabase when configured, local ./public/uploads otherwise.
-    const buffer = Buffer.from(await file.arrayBuffer());
+    const rawBuffer = Buffer.from(await file.arrayBuffer());
+
+    // Optimise before storing: the engine resizes, compresses and converts to
+    // WebP in one pass, so the stored file is already at its best size. GIFs
+    // pass through unchanged (sharp's WebP encoder does not support animation).
+    const buffer = file.type === "image/gif"
+      ? rawBuffer
+      : (await optimizeImage(rawBuffer, presetForKind(kindParam))).buffer;
 
     try {
       const stored = await storeMediaBytes({

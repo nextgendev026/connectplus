@@ -1,20 +1,26 @@
 "use client";
 
 import Link from "next/link";
+import { useTheme } from "@/components/providers/ThemeContext";
 import { cn } from "@/lib/utils";
-import ConnectPlusMark from "@/components/ui/ConnectPlusMark";
 
 /**
- * The wordmark, set in the app's type.
+ * The connectPlus logo, theme-aware with transparent background.
  *
- * The supplied lockups stack this under the emblem, so using the whole lockup in
- * a 32px header would render "CONNECTPLUS" about five pixels tall. The header is
- * the same logo, arranged horizontally: the official emblem plus the wordmark in
- * the artwork's own treatment — uppercase, extra-bold, tight tracking, and in
- * the ink the artwork uses (near-black on light, cream on dark). The palette
- * tokens flip with the theme, so this matches the artwork in both modes without
- * a `dark:` variant, and without the gradient the artwork does not have.
+ * The lockups are rendered on a fully transparent canvas — the circular emblem
+ * plus the wordmark, with no rectangular plate behind them. The wordmark color
+ * switches with the theme (dark text on light surfaces, cream text on dark
+ * surfaces) so contrast is always correct.
+ *
+ * Rounded corners match the app's card language (`rounded-xl`) so the lockup
+ * sits naturally beside the rounded nav buttons and search input.
  */
+
+const LOCKUPS = {
+  dark: "/brand/lockup-transparent-dark.png",   // cream wordmark — pops on dark surface
+  light: "/brand/lockup-transparent-light.png",  // dark wordmark — pops on light surface
+} as const;
+
 export default function Logo({
   size = "md",
   showBadge = false,
@@ -22,35 +28,34 @@ export default function Logo({
   size?: "sm" | "md" | "lg";
   showBadge?: boolean;
 }) {
+  const { theme } = useTheme();
+
   const sizes = {
-    sm: { icon: "h-6 w-6", text: "text-[13px]" },
-    md: { icon: "h-8 w-8", text: "text-base" },
-    lg: { icon: "h-10 w-10", text: "text-xl" },
+    sm: { img: "h-8 w-auto", badge: "ml-0.5" },
+    md: { img: "h-10 w-auto", badge: "ml-0.5" },
+    lg: { img: "h-14 w-auto", badge: "ml-1" },
   };
 
   const s = sizes[size];
+  const src = LOCKUPS[theme] ?? LOCKUPS.dark;
 
   return (
     <Link href="/" className="group flex shrink-0 items-center gap-2" aria-label="connectPlus — home">
-      <span
+      {/* eslint-disable-next-line @next/next/no-img-element -- raster lockup on transparent canvas, pre-cached by the service worker */}
+      <img
+        src={src}
+        alt=""
+        aria-hidden="true"
+        width={400}
+        height={308}
+        decoding="async"
         className={cn(
-          "relative flex shrink-0 items-center justify-center transition-transform duration-300 group-hover:scale-105",
-          s.icon
+          "block object-contain rounded-xl transition-all duration-300 group-hover:scale-105 group-hover:shadow-lg group-hover:shadow-brand-500/20",
+          s.img
         )}
-      >
-        {/* Decorative: the wordmark beside it already names the link. */}
-        <ConnectPlusMark label="" />
-      </span>
-      <span
-        className={cn(
-          "font-extrabold uppercase leading-none tracking-tight text-surface-50",
-          s.text
-        )}
-      >
-        connectplus
-      </span>
+      />
       {showBadge && (
-        <span className="ml-0.5 rounded-md bg-gradient-to-r from-brand-500 to-accent-coral/80 px-1.5 py-0.5 text-[9px] font-bold text-white shadow-glow">
+        <span className={cn("rounded-md bg-gradient-to-r from-brand-500 to-accent-coral/80 px-1.5 py-0.5 text-[9px] font-bold text-white shadow-glow", s.badge)}>
           BETA
         </span>
       )}
