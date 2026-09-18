@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { cacheGet, cacheSet, redisDel } from "./redis";
 import { DEFAULT_OG_IMAGE } from "./brand";
+import { buildAnalyticsSnippet, sanitizeIntegrationHtml } from "./integration-scripts";
 
 /**
  * Platform settings store — the backbone of the Admin "Settings & Integrations"
@@ -309,7 +310,7 @@ export const SETTINGS_CATALOG: SettingDef[] = [
     defaultValue: "",
     group: "integrations",
     label: "Custom head scripts",
-    hint: "Raw <script> snippets injected into <head> on every page — Google Analytics, Meta Pixel, Plausible, Hotjar, Intercom, etc.",
+    hint: "Advanced. External <script src> tags from allowlisted analytics/chat hosts only — inline JavaScript, event handlers and other tags are refused (a snippet is code, so it is sanitized and super-admin-only). For Google Analytics, Plausible, Fathom or Umami, use the provider selector instead of pasting code.",
     type: "textarea",
     isSecret: true,
   },
@@ -351,7 +352,7 @@ export const SETTINGS_CATALOG: SettingDef[] = [
     defaultValue: "",
     group: "integrations",
     label: "Chat widget snippet",
-    hint: "Paste the full embed script (Intercom, Crisp, Tawk.to…).",
+    hint: "Advanced. The vendor's external loader <script src> only — inline bootstrap code is refused. Super-admin only.",
     type: "textarea",
     isSecret: true,
   },
@@ -787,6 +788,9 @@ export type SiteConfig = {
   };
   headScripts: string;
   chatWidgetScript: string;
+  /** Which analytics provider to generate a vetted snippet for. */
+  analyticsProvider: string;
+  analyticsId: string;
 };
 
 /** Derived, typed config for the live site (public-safe subset). */
@@ -826,17 +830,35 @@ export async function getSiteConfig(): Promise<SiteConfig> {
     },
     headScripts: s.headScripts || "",
     chatWidgetScript: s.chatWidgetScript || "",
+    analyticsProvider: s.analyticsProvider || "none",
+    analyticsId: s.analyticsId || "",
   };
 }
 
-/** Build the actual <script> tags to inject for enabled integrations. */
+/**
+ * Build the actual <script> tags to inject for enabled integrations.
+ *
+ * Nothing here is rendered verbatim any more. Analytics comes from a vetted
+ * provider template, and any custom snippet is reduced to the safe subset by
+ * `sanitizeIntegrationHtml` — so a setting can no longer carry arbitrary
+ * JavaScript into every page. See lib/integration-scripts for the rules.
+ */
 export function buildIntegrationScripts(cfg: SiteConfig): string {
   const parts: string[] = [];
-  if (cfg.features.analytics && cfg.headScripts.trim()) {
-    parts.push(cfg.headScripts.trim());
+
+  if (cfg.features.analytics) {
+    const provider = buildAnalyticsSnippet(cfg.analyticsProvider, cfg.analyticsId);
+    if (provider) parts.push(provider);
+    if (cfg.headScripts.trim()) {
+      const safe = sanitizeIntegrationHtml(cfg.headScripts);
+      if (safe.html.trim()) parts.push(safe.html);
+    }
   }
+
   if (cfg.features.chatWidget && cfg.chatWidgetScript.trim()) {
-    parts.push(cfg.chatWidgetScript.trim());
+    const safe = sanitizeIntegrationHtml(cfg.chatWidgetScript);
+    if (safe.html.trim()) parts.push(safe.html);
   }
+
   return parts.join("\n");
 }
