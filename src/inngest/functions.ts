@@ -692,6 +692,27 @@ export const neuralLearn = inngest.createFunction(
   }
 );
 
+/**
+ * Outbound feed health: verifies the feeds we publish still fetch, parse and
+ * link out correctly, and alerts when one breaks. See lib/feed-health.
+ */
+export const feedHealth = inngest.createFunction(
+  {
+    id: "feed-health",
+    name: "Outbound feed health",
+    triggers: [{ event: "feed-health" }, { cron: "30 * * * *" }],
+    concurrency: 1,
+    retries: 2,
+  },
+  async ({ step }) => {
+    await step.run("heartbeat", () => recordHeartbeat("feed-health"));
+    return step.run("check-feeds", async () => {
+      const { runFeedHealth } = await import("@/lib/cron-jobs");
+      return runFeedHealth();
+    });
+  }
+);
+
 export const functions = [
   publishScheduled,
   rssPoll,
@@ -710,4 +731,5 @@ export const functions = [
   paymentsLifecycle,
   platformPulse,
   marketingSweep,
+  feedHealth,
 ];

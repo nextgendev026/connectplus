@@ -454,6 +454,68 @@ export async function runMarketingSweep(): Promise<import("@/lib/marketing").Mar
   return runMarketingEngine();
 }
 
+/**
+ * Outbound feed health.
+ *
+ * Checks the feeds we publish — RSS, the JSON twin, and a category feed — the
+ * way a partner network would: do they fetch, do they parse, do their item links
+ * resolve. When one breaks it raises the same alert as the status watchdog, once
+ * per episode and again if it escalates, so a silently 500-ing feed reaches a
+ * human instead of a shrinking traffic chart.
+ */
+export async function runFeedHealth(): Promise<{
+  overall: "ok" | "warn" | "critical";
+  alerted: number;
+  checks: { id: string; state: string; detail: string }[];
+}> {
+  const { checkFeedHealth } = await import("@/lib/feed-health");
+  const report = await checkFeedHealth();
+  const summary = report.checks.map((c) => ({ id: c.id, state: c.state, detail: c.detail }));
+
+  const bad = report.checks.filter((c) => c.state !== "ok");
+  if (bad.length === 0) return { overall: report.overall, alerted: 0, checks: summary };
+
+  // One alert per episode, keyed by feed and state: a warn that escalates to a
+  // critical is a new fact worth sending, the same state repeating is not.
+  const { redisGetRaw, redisSetEx } = await import("@/lib/redis");
+  const sendable: typeof bad = [];
+  for (const c of bad) {
+    const key = `status:alert:feed:${c.id}`;
+    const last = await redisGetRaw(key).catch(() => null);
+    if (last === c.state) continue;
+    await redisSetEx(key, 6 * 60 * 60, c.state);
+    sendable.push(c);
+  }
+  if (sendable.length === 0) return { overall: report.overall, alerted: 0, checks: summary };
+
+  const { alertRecipients, alertWebhookUrl } = await import("@/lib/status-alerts");
+  const recipients = await alertRecipients();
+  const lines = sendable.map((c) => `• ${c.label} (${c.url}): ${c.state.toUpperCase()} — ${c.detail}`);
+  const subject = `[connectPlus] ${sendable.length} feed${sendable.length === 1 ? "" : "s"} broken`;
+  const text = `connectPlus feed health (${report.generatedAt})\n\n${lines.join("\n")}\n\n— connectPlus feed health`;
+
+  if (recipients.length > 0) {
+    const { sendEmail } = await import("@/lib/mailer");
+    await Promise.allSettled(recipients.map((to) => sendEmail({ to, subject, text })));
+  }
+
+  const webhook = await alertWebhookUrl();
+  if (webhook) {
+    await fetch(webhook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: `${subject}\n${lines.join("\n")}`,
+        content: `${subject}\n${lines.join("\n")}`,
+        feeds: sendable.map((c) => ({ feed: c.id, url: c.url, state: c.state, detail: c.detail })),
+      }),
+      signal: AbortSignal.timeout(8000),
+    }).catch(() => {});
+  }
+
+  return { overall: report.overall, alerted: sendable.length, checks: summary };
+}
+
 export async function runPlatformPulse(): Promise<{ day: string; deltas: number; memoryId: string } | { error: string }> {
   try {
     const { platformIntelligence } = await import("@/lib/platform-intelligence");

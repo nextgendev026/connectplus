@@ -8,6 +8,7 @@ import {
 } from "./job-heartbeat";
 import {
   runEmbedPosts,
+  runFeedHealth,
   runHiveSweep,
   runMarketingSweep,
   runPaymentsLifecycle,
@@ -206,6 +207,19 @@ export const CRON_JOBS: readonly CronJobDef[] = [
     // here is measured in minutes and a once-a-day recovery would be a day late.
     essential: false,
     run: () => runMarketingSweep(),
+  },
+  {
+    id: "feed-health",
+    name: "Outbound feed health",
+    description:
+      "Fetches our own RSS, JSON and category feeds and verifies they parse and that their item links resolve, alerting when a feed a partner depends on breaks.",
+    // Hourly. Three small fetches, and the cadence that matters is how quickly a
+    // partner's feed going dark reaches a human. The alert is deduped per
+    // episode, so running often costs a check, not a stream of email.
+    cron: "30 * * * *",
+    everyMinutes: 60,
+    essential: false,
+    run: () => runFeedHealth(),
   },
   {
     id: "platform-pulse",
