@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import Image from "next/image";
+import OptimizedImage from "@/components/ui/OptimizedImage";
+import { avatarSrc } from "@/lib/image-src";
 import {
   TrendingUp,
   Heart,
@@ -120,7 +121,7 @@ export default async function TrendingPage() {
                     i === 0 && "md:col-span-3"
                   )}
                 >
-                  <Image
+                  <OptimizedImage
                     src={coverSrc(post.coverImage, {
                       title: post.title,
                       category: post.category?.name,
@@ -128,7 +129,8 @@ export default async function TrendingPage() {
                     })}
                     alt={post.title}
                     fill
-                    className="object-cover opacity-30 transition-transform duration-700 group-hover:scale-105"
+                    preset="cover"
+                    className="opacity-30 transition-transform duration-700 group-hover:scale-105"
                   />
                   <div
                     className={cn(
@@ -157,20 +159,15 @@ export default async function TrendingPage() {
                     </div>
 
                     <div className="flex items-center gap-3 mb-4">
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-brand-500 to-accent-cyan flex items-center justify-center text-sm font-bold text-white overflow-hidden shrink-0">
-                        {post.author.avatar ? (
-                          <Image
-                            src={post.author.avatar}
-                            alt={post.author.name ?? post.author.username}
-                            width={40}
-                            height={40}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          (post.author.name ?? post.author.username)
-                            .charAt(0)
-                            .toUpperCase()
-                        )}
+                      <div className="relative w-10 h-10 rounded-full overflow-hidden shrink-0">
+                        <OptimizedImage
+                          src={avatarSrc(post.author.avatar, post.author.name ?? post.author.username)}
+                          alt={post.author.name ?? post.author.username}
+                          fill
+                          preset="avatar"
+                          width={80}
+                          height={80}
+                        />
                       </div>
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-surface-50 truncate">

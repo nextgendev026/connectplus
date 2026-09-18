@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import Link from "next/link";
-import Image from "next/image";
+import OptimizedImage from "@/components/ui/OptimizedImage";
+import { avatarSrc } from "@/lib/image-src";
 import Script from "next/script";
 import nextDynamic from "next/dynamic";
 import { prisma } from "@/lib/prisma";
@@ -226,7 +227,7 @@ function PostCard({
             featured ? "h-56 md:h-72" : "h-40 md:h-48"
           )}
         >
-          <Image
+          <OptimizedImage
             src={coverSrc(post.coverImage, {
               title: post.title,
               category: post.category?.name,
@@ -234,7 +235,8 @@ function PostCard({
             })}
             alt={post.title}
             fill
-            className="object-cover transition-transform duration-700 group-hover:scale-105"
+            preset="cover"
+            className="transition-transform duration-700 group-hover:scale-105"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
           <div className="absolute top-4 left-4">
@@ -270,20 +272,15 @@ function PostCard({
 
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-brand-500 to-accent-cyan flex items-center justify-center text-xs font-bold text-white overflow-hidden shrink-0">
-                {post.author.avatar ? (
-                  <Image
-                    src={post.author.avatar}
-                    alt={post.author.name ?? post.author.username}
-                    width={28}
-                    height={28}
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  (post.author.name ?? post.author.username)
-                    .charAt(0)
-                    .toUpperCase()
-                )}
+              <div className="relative w-7 h-7 rounded-full overflow-hidden shrink-0">
+                <OptimizedImage
+                  src={avatarSrc(post.author.avatar, post.author.name ?? post.author.username)}
+                  alt={post.author.name ?? post.author.username}
+                  fill
+                  preset="avatar"
+                  width={56}
+                  height={56}
+                />
               </div>
               <div>
                 <p className="text-xs font-medium text-surface-300">
@@ -382,7 +379,7 @@ function FeaturedStoryBanner({ post }: { post: PostData }) {
         className="group relative block rounded-2xl overflow-hidden bg-gradient-to-br from-brand-500/10 via-surface-900 to-accent-cyan/5 border border-surface-800/50 hover:border-brand-500/30 transition-all duration-500 hover:shadow-glow-lg"
       >
         <div className="relative h-64 sm:h-80 md:h-96 overflow-hidden">
-          <Image
+          <OptimizedImage
             src={coverSrc(post.coverImage, {
               title: post.title,
               category: post.category?.name,
@@ -390,8 +387,9 @@ function FeaturedStoryBanner({ post }: { post: PostData }) {
             })}
             alt={post.title}
             fill
-            className="object-cover transition-transform duration-700 group-hover:scale-105"
+            preset="cover"
             priority
+            className="transition-transform duration-700 group-hover:scale-105"
           />
           {/* Gradient overlay */}
           <div className="absolute inset-0 bg-gradient-to-br from-brand-500/20 via-transparent to-accent-cyan/10" />
@@ -422,20 +420,15 @@ function FeaturedStoryBanner({ post }: { post: PostData }) {
             </p>
             <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-brand-500 to-accent-cyan flex items-center justify-center text-sm font-bold text-white overflow-hidden">
-                  {post.author.avatar ? (
-                    <Image
-                      src={post.author.avatar}
-                      alt={post.author.name ?? post.author.username}
-                      width={40}
-                      height={40}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    (post.author.name ?? post.author.username)
-                      .charAt(0)
-                      .toUpperCase()
-                  )}
+                <div className="relative w-10 h-10 rounded-full overflow-hidden">
+                  <OptimizedImage
+                    src={avatarSrc(post.author.avatar, post.author.name ?? post.author.username)}
+                    alt={post.author.name ?? post.author.username}
+                    fill
+                    preset="avatar"
+                    width={80}
+                    height={80}
+                  />
                 </div>
                 <div>
                   <p className="text-sm font-medium text-white">
@@ -539,20 +532,15 @@ function TrendingSidebar({
                   href={`/profile/${writer.username}`}
                   className="flex items-center gap-3 group"
                 >
-                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-brand-500 to-accent-violet flex items-center justify-center text-xs font-bold text-white shrink-0 overflow-hidden">
-                    {writer.avatar ? (
-                      <Image
-                        src={writer.avatar}
-                        alt={writer.name ?? writer.username}
-                        width={36}
-                        height={36}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      (writer.name ?? writer.username)
-                        .charAt(0)
-                        .toUpperCase()
-                    )}
+                  <div className="relative w-9 h-9 rounded-full shrink-0 overflow-hidden">
+                    <OptimizedImage
+                      src={avatarSrc(writer.avatar, writer.name ?? writer.username)}
+                      alt={writer.name ?? writer.username}
+                      fill
+                      preset="avatar"
+                      width={72}
+                      height={72}
+                    />
                   </div>
                   <div className="min-w-0">
                     <p className="text-xs font-medium text-surface-300 group-hover:text-brand-400 transition-colors truncate">

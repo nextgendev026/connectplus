@@ -178,9 +178,12 @@ export async function optimizeImage(
       });
     }
 
-    // Strip metadata unless told otherwise — with no fields set, sharp drops EXIF and ICC.
-    if (p.stripMetadata) {
-      pipeline = pipeline.withMetadata({});
+    // Sharp drops EXIF and ICC profiles unless told to keep them, so stripping
+    // is the default path and keeping is the opt-in. (Calling `withMetadata()`
+    // when stripping — as this once did — does the opposite: it re-attaches the
+    // source metadata, which is the largest invisible cost in a shared image.)
+    if (!p.stripMetadata) {
+      pipeline = pipeline.withMetadata();
     }
 
     // Mild sharpening when we actually downscaled — unsharp mask with gentle

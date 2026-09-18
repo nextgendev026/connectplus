@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
-import Image from "next/image";
+import OptimizedImage from "@/components/ui/OptimizedImage";
 import { cn, timeAgo } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, ArrowRight } from "lucide-react";
 import { coverSrc } from "@/lib/thumb";
@@ -205,14 +205,13 @@ export function HeroSlideshow({ slides, stats }: HeroSlideshowProps) {
               i === active ? "opacity-100" : "opacity-0"
             )}
           >
-            <Image
+            <OptimizedImage
               src={s.coverImage ?? coverSrc(null, { title: s.title, category: s.category?.name, seed: s.slug })}
               alt=""
               fill
-              sizes="100vw"
+              preset="cover"
               priority={i === active}
-              loading={i === active ? "eager" : "lazy"}
-              className="w-full h-full object-cover"
+              className="w-full h-full"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-black via-black/75 to-black/40" />
             <div className="absolute inset-0 bg-black/20" />

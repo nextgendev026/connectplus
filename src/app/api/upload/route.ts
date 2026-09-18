@@ -88,14 +88,24 @@ export async function POST(request: NextRequest) {
     // Optimise before storing: the engine resizes, compresses and converts to
     // WebP in one pass, so the stored file is already at its best size. GIFs
     // pass through unchanged (sharp's WebP encoder does not support animation).
-    const buffer = file.type === "image/gif"
-      ? rawBuffer
-      : (await optimizeImage(rawBuffer, presetForKind(kindParam))).buffer;
+    const optimized =
+      file.type === "image/gif" ? null : await optimizeImage(rawBuffer, presetForKind(kindParam));
+    const buffer = optimized ? optimized.buffer : rawBuffer;
+
+    // The bytes may now be WebP while the browser sent a JPEG or PNG, so store
+    // the type the optimiser actually produced. Passing the original type here
+    // is what made a stored object claim `image/jpeg` while holding WebP bytes —
+    // the extension and the Supabase Content-Type both followed the lie, and a
+    // browser could refuse to render the image it was told was a JPEG.
+    const storedMime =
+      optimized && optimized.format !== "unknown" && extensionFor(optimized.contentType)
+        ? optimized.contentType
+        : file.type;
 
     try {
       const stored = await storeMediaBytes({
         bytes: buffer,
-        mimeType: file.type,
+        mimeType: storedMime,
         kind: kindParam as "avatar" | "cover" | "post",
         ownerId: session.user.id,
       });

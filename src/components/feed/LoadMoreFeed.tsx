@@ -6,6 +6,8 @@ import { ChevronRight, Heart, Loader2, MessageCircle, Newspaper, Infinity as Inf
 import { cn, estimateReadTime } from "@/lib/utils";
 import { coverSrc } from "@/lib/thumb";
 import { ViewCount } from "@/components/ui/ViewCount";
+import { avatarSrc } from "@/lib/image-src";
+import OptimizedImage from "@/components/ui/OptimizedImage";
 
 interface LoadedPost {
   id: string;
@@ -100,11 +102,12 @@ export function LoadMoreFeed({
               className="group relative rounded-2xl bg-surface-900/60 border border-surface-800/50 overflow-hidden transition-all duration-300 hover:border-brand-500/30 hover:shadow-glow block"
             >
               <div className="relative h-40 md:h-48 bg-gradient-to-br from-surface-800 to-surface-900 overflow-hidden">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
+                <OptimizedImage
                   src={post.coverImage ?? coverSrc(null, { title: post.title, category: post.category?.name, seed: post.slug })}
                   alt={post.title}
-                  className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                  fill
+                  preset="cover"
+                  className="transition-transform duration-700 group-hover:scale-105"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
                 <div className="absolute top-4 left-4">
@@ -122,19 +125,15 @@ export function LoadMoreFeed({
                 </p>
                 <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
                   <div className="flex items-center gap-2 min-w-0">
-                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-brand-500 to-accent-cyan flex items-center justify-center text-xs font-bold text-white overflow-hidden shrink-0">
-                      {post.author.avatar ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={post.author.avatar}
-                          alt={post.author.name ?? post.author.username}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        (post.author.name ?? post.author.username)
-                          .charAt(0)
-                          .toUpperCase()
-                      )}
+                    <div className="relative w-7 h-7 rounded-full overflow-hidden shrink-0">
+                      <OptimizedImage
+                        src={avatarSrc(post.author.avatar, post.author.name ?? post.author.username)}
+                        alt={post.author.name ?? post.author.username}
+                        fill
+                        preset="avatar"
+                        width={56}
+                        height={56}
+                      />
                     </div>
                     <p className="text-xs font-medium text-surface-300 truncate">
                       {post.author.name ?? post.author.username}

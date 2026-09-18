@@ -1,5 +1,4 @@
 import Link from "next/link";
-import Image from "next/image";
 import {
   Clock,
   Heart,
@@ -10,6 +9,7 @@ import {
 import { cn, timeAgo, estimateReadTime } from "@/lib/utils";
 import { coverSrc } from "@/lib/thumb";
 import { ViewCount } from "@/components/ui/ViewCount";
+import OptimizedImage from "@/components/ui/OptimizedImage";
 
 export interface ProfileTabPost {
   id: string;
@@ -55,7 +55,7 @@ export function ProfilePostCard({
           isList ? "h-auto w-24 sm:w-32 md:w-36" : "h-32 sm:h-36"
         )}
       >
-        <Image
+        <OptimizedImage
           src={coverSrc(post.coverImage, {
             title: post.title,
             category: post.category?.name,
@@ -63,8 +63,8 @@ export function ProfilePostCard({
           })}
           alt={post.title}
           fill
-          sizes={isList ? "144px" : "(max-width: 640px) 100vw, 33vw"}
-          className="object-cover transition-transform duration-700 group-hover:scale-105"
+          preset="cover"
+          className="transition-transform duration-700 group-hover:scale-105"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
         {post.featured && (

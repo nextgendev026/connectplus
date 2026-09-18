@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { optimizeImage, cacheHeaders, negotiatedFormat, PRESETS } from "@/lib/image-optimizer";
+import { allowedHostsFromEnv, isPrivateHost, resolveImageTarget } from "@/lib/image-proxy";
 import { createLogger } from "@/lib/logger";
 
 export const runtime = "nodejs";
@@ -23,12 +24,60 @@ const log = createLogger("optimize");
  * Why this exists alongside the upload-time optimisation:
  *   - RSS-imported images were not optimised at upload time.
  *   - Covers uploaded before the engine was deployed are still at full size.
- *   - Social crawlers hit /api/og and /api/thumb routes that need optimised
- *     output on demand.
  *
- * Security: the `url` parameter is restricted to http(s) URLs to prevent SSRF.
- * The route does not follow redirects beyond the first hop.
+ * Security: the `url` parameter is user-chosen, so every fetch passes the SSRF
+ * guard in `lib/image-proxy` — http(s) only, no private/loopback/link-local
+ * targets, sane ports, and the redirect target is re-checked (a public host
+ * must not be able to bounce us to `169.254.169.254`). The response body is
+ * capped so a hostile URL cannot exhaust memory. `IMAGE_PROXY_ALLOWED_HOSTS`
+ * narrows the reachable set to an explicit allowlist where a deployment wants
+ * it.
  */
+
+/** Hard ceiling on the bytes we will pull through the optimizer. */
+const MAX_SOURCE_BYTES = 8 * 1024 * 1024;
+
+/** Preset name → the cache policy that suits that surface. */
+function cacheKindFor(preset: string): Parameters<typeof cacheHeaders>[0] {
+  switch (preset) {
+    case "avatar":
+      return "avatar";
+    case "thumbnail":
+    case "adminThumb":
+      return "thumbnail";
+    case "og":
+      return "og";
+    case "story":
+      return "story";
+    default:
+      return "cover";
+  }
+}
+
+async function readCapped(res: Response, cap: number): Promise<Buffer | null> {
+  const declared = Number(res.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > cap) return null;
+  if (!res.body) {
+    const buf = Buffer.from(await res.arrayBuffer());
+    return buf.length > cap ? null : buf;
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > cap) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks);
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
 
@@ -37,18 +86,25 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Missing url parameter" }, { status: 400 });
   }
 
-  // SSRF protection: only allow http(s) URLs.
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return NextResponse.json({ error: "Only http(s) URLs are allowed" }, { status: 400 });
-    }
-  } catch {
-    return NextResponse.json({ error: "Invalid URL" }, { status: 400 });
+  const origin = request.nextUrl.origin;
+  const allowedHosts = allowedHostsFromEnv(process.env.IMAGE_PROXY_ALLOWED_HOSTS);
+  const target = resolveImageTarget(url, { origin, allowedHosts });
+  if (!target.ok) {
+    log.warn("rejected image proxy target", { url, reason: target.reason });
+    return NextResponse.json({ error: `Refused to fetch image: ${target.reason}` }, { status: 400 });
   }
 
   const presetName = searchParams.get("preset") ?? "cover";
-  const preset = PRESETS[presetName] ?? PRESETS.cover ?? { maxWidth: 1200, maxHeight: 630, quality: 82, sharpen: true, format: "webp" as const, stripMetadata: true };
+  const preset =
+    PRESETS[presetName] ??
+    PRESETS.cover ?? {
+      maxWidth: 1200,
+      maxHeight: 630,
+      quality: 82,
+      sharpen: true,
+      format: "webp" as const,
+      stripMetadata: true,
+    };
 
   // Allow explicit overrides for one-off optimisation.
   const maxWidth = searchParams.get("w") ? parseInt(searchParams.get("w")!, 10) : preset.maxWidth;
@@ -65,12 +121,25 @@ export async function GET(request: NextRequest) {
   };
 
   try {
-    // Fetch the source image.
-    const res = await fetch(url, {
+    const res = await fetch(target.url, {
       headers: { "User-Agent": "connectPlus-image-optimizer/1.0" },
       signal: AbortSignal.timeout(10_000),
       redirect: "follow",
     });
+
+    // A public URL can redirect anywhere — including the cloud metadata
+    // endpoint. Re-check where we actually landed before trusting the body.
+    const finalHost = (() => {
+      try {
+        return new URL(res.url).hostname.toLowerCase();
+      } catch {
+        return target.host;
+      }
+    })();
+    if (finalHost !== target.host && isPrivateHost(finalHost)) {
+      log.warn("rejected image proxy redirect", { url, redirectedTo: finalHost });
+      return NextResponse.json({ error: "Refused to fetch image" }, { status: 400 });
+    }
 
     if (!res.ok) {
       log.warn("failed to fetch source image", { url, status: res.status });
@@ -82,16 +151,25 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "URL does not point to an image" }, { status: 400 });
     }
 
-    const inputBuffer = Buffer.from(await res.arrayBuffer());
+    const inputBuffer = await readCapped(res, MAX_SOURCE_BYTES);
+    if (!inputBuffer) {
+      return NextResponse.json({ error: "Source image is too large" }, { status: 413 });
+    }
+
     const result = await optimizeImage(inputBuffer, customPreset);
 
     const headers: Record<string, string> = {
-      ...cacheHeaders("cover"),
+      ...cacheHeaders(cacheKindFor(presetName)),
       "Content-Type": result.contentType,
       "Content-Length": String(result.bytes),
+      // The response format depends on the Accept header, so shared caches must
+      // key on it — otherwise a WebP could be handed to a client that asked for
+      // JPEG.
+      Vary: "Accept",
       "X-Original-Size": String(inputBuffer.length),
       "X-Optimized-Size": String(result.bytes),
-      "X-Compression-Ratio": inputBuffer.length > 0 ? `${Math.round((1 - result.bytes / inputBuffer.length) * 100)}%` : "0%",
+      "X-Compression-Ratio":
+        inputBuffer.length > 0 ? `${Math.round((1 - result.bytes / inputBuffer.length) * 100)}%` : "0%",
     };
 
     return new NextResponse(new Uint8Array(result.buffer), { status: 200, headers });

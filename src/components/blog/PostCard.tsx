@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import {
   MessageCircle,
   Clock,
@@ -13,6 +12,8 @@ import type { PostWithAuthor } from "@/types";
 import { TagBadge } from "./TagBadge";
 import { BookmarkButton } from "@/components/ui/BookmarkButton";
 import { coverSrc } from "@/lib/thumb";
+import { avatarSrc } from "@/lib/image-src";
+import OptimizedImage from "@/components/ui/OptimizedImage";
 
 interface PostCardProps {
   post: PostWithAuthor;
@@ -69,11 +70,14 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
           )}
         >
           <div className="relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-lg">
-            <Image
+            <OptimizedImage
               src={postCover(post)}
               alt={post.title}
               fill
-              className="object-cover transition-transform duration-500 group-hover:scale-110"
+              preset="thumbnail"
+              width={160}
+              height={160}
+              className="transition-transform duration-500 group-hover:scale-110"
             />
           </div>
           <div className="flex flex-1 flex-col justify-center gap-1 min-w-0">
@@ -103,20 +107,22 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
           )}
         >
           <div className="relative h-64 w-2/5 flex-shrink-0 overflow-hidden">
-            <Image
+            <OptimizedImage
               src={postCover(post)}
               alt={post.title}
               fill
-              className="object-cover transition-transform duration-700 group-hover:scale-105"
+              preset="cover"
+              className="transition-transform duration-700 group-hover:scale-105"
             />
             <div className="absolute inset-0 bg-gradient-to-r from-transparent to-surface-900/80" />
           </div>
           <div className="flex flex-1 flex-col justify-between p-6">
             <div>
               <div className="mb-3 flex items-center gap-3">
-                <Image
-                  src={post.author.avatar || "https://i.pravatar.cc/300?img=0"}
+                <OptimizedImage
+                  src={avatarSrc(post.author.avatar, post.author.name || post.author.username)}
                   alt={post.author.name || post.author.username}
+                  preset="avatar"
                   width={28}
                   height={28}
                   className="rounded-full ring-2 ring-surface-700"
@@ -175,12 +181,13 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
           )}
         >
 <div className="absolute inset-0">
-            <Image
+            <OptimizedImage
               src={postCover(post)}
               alt={post.title}
               fill
               priority
-              className="object-cover transition-transform duration-700 group-hover:scale-105"
+              preset="cover"
+              className="transition-transform duration-700 group-hover:scale-105"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent" />
             <div className="absolute inset-0 bg-gradient-to-r from-black/40 to-transparent" />
@@ -206,11 +213,13 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
             <div className="mt-5 flex items-center gap-4">
               <div className="flex items-center gap-2.5">
                 <div className="relative h-10 w-10 overflow-hidden rounded-full ring-2 ring-brand-500/30">
-                  <Image
-                    src={post.author.avatar || "https://i.pravatar.cc/300?img=0"}
+                  <OptimizedImage
+                    src={avatarSrc(post.author.avatar, post.author.name || post.author.username)}
                     alt={post.author.name || post.author.username}
                     fill
-                    className="object-cover"
+                    preset="avatar"
+                    width={80}
+                    height={80}
                   />
                 </div>
                 <div>
@@ -271,11 +280,12 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
         )}
       >
         <div className="relative aspect-[16/10] overflow-hidden">
-          <Image
+          <OptimizedImage
             src={postCover(post)}
             alt={post.title}
             fill
-            className="object-cover transition-transform duration-700 group-hover:scale-110"
+            preset="cover"
+            className="transition-transform duration-700 group-hover:scale-110"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
 
@@ -294,11 +304,13 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
         <div className="flex flex-1 flex-col p-5">
           <div className="mb-3 flex items-center gap-2.5">
             <div className="relative h-8 w-8 overflow-hidden rounded-full ring-1 ring-surface-700">
-              <Image
-                src={post.author.avatar || "https://i.pravatar.cc/300?img=0"}
+              <OptimizedImage
+                src={avatarSrc(post.author.avatar, post.author.name || post.author.username)}
                 alt={post.author.name || post.author.username}
                 fill
-                className="object-cover"
+                preset="avatar"
+                width={64}
+                height={64}
               />
             </div>
             <div className="flex items-center gap-2">
