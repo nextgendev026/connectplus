@@ -46,6 +46,9 @@ const STATIC_ROUTES: {
   { path: "/marketing", changeFrequency: "daily", priority: 0.7 },
   { path: "/contact", changeFrequency: "monthly", priority: 0.5 },
   { path: "/help", changeFrequency: "monthly", priority: 0.5 },
+  // The syndication document. Indexed because a publisher deciding whether to
+  // carry our stories is exactly the audience that arrives via search.
+  { path: "/feeds", changeFrequency: "monthly", priority: 0.5 },
   { path: "/guidelines", changeFrequency: "yearly", priority: 0.4, lastModified: LEGAL_UPDATED },
   { path: "/privacy", changeFrequency: "yearly", priority: 0.4, lastModified: LEGAL_UPDATED },
   { path: "/cookies", changeFrequency: "yearly", priority: 0.4, lastModified: LEGAL_UPDATED },

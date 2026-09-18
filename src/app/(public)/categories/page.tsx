@@ -15,13 +15,46 @@ import { ViewCount } from "@/components/ui/ViewCount";
  */
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  // The brand comes from the root title template — see about/page.tsx.
-  title: "Categories",
-  description: "Browse stories by category — technology, culture, business, lifestyle and more from East Africa.",
-  alternates: { canonical: "/categories" },
-  robots: { index: true, follow: true },
-};
+/**
+ * Advertise the feeds to crawlers and readers from the page that indexes them.
+ *
+ * `rel="alternate"` is how a feed reader — or a crawler deciding whether a site
+ * is worth syndicating — discovers the endpoints without being told them by
+ * hand. The main feed and its JSON twin are always listed, and every category
+ * gets its own `<link>` so a partner that only wants technology can subscribe
+ * directly instead of pulling the firehose and filtering.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  let categoryFeeds: { url: string; title: string }[] = [];
+  try {
+    const cats = await prisma.category.findMany({
+      select: { slug: true, name: true, _count: { select: { posts: true } } },
+      orderBy: { name: "asc" },
+    });
+    categoryFeeds = cats
+      .filter((c) => c._count.posts > 0)
+      .map((c) => ({ url: `/feed/${c.slug}`, title: `${c.name} feed` }));
+  } catch {
+    // A feed directory must still render when the database is unavailable.
+  }
+
+  return {
+    // The brand comes from the root title template — see about/page.tsx.
+    title: "Categories",
+    description: "Browse stories by category — technology, culture, business, lifestyle and more from East Africa.",
+    alternates: {
+      canonical: "/categories",
+      types: {
+        "application/rss+xml": [
+          { url: "/feed.xml", title: "All stories" },
+          ...categoryFeeds,
+        ],
+        "application/feed+json": [{ url: "/feed.xml?format=json", title: "JSON feed" }],
+      },
+    },
+    robots: { index: true, follow: true },
+  };
+}
 
 const CATEGORY_EMOJI: Record<string, string> = {
   technology: "💻",

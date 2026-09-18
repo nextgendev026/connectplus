@@ -168,6 +168,9 @@ export async function generateMetadata(): Promise<Metadata> {
       canonical: "/",
       types: {
         "application/rss+xml": [{ url: "/feed.xml", title: `${siteName} feed` }],
+        // JSON Feed is offered alongside RSS so a modern aggregator can pick the
+        // machine-friendly form without having to parse XML.
+        "application/feed+json": [{ url: "/feed.xml?format=json", title: `${siteName} JSON feed` }],
       },
     },
     icons: {
