@@ -35,7 +35,8 @@ import {
   adminBtnPrimary,
   adminInput,
 } from "@/components/admin/AdminUI";
-import { readableSubject, type CampaignRow, type MarketingReport } from "@/lib/marketing";
+import { readableSubject } from "@/lib/marketing-copy";
+import type { CampaignRow, MarketingReport } from "@/lib/marketing";
 import { BRAND_HASHTAG } from "@/lib/brand";
 
 /**

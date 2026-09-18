@@ -6,6 +6,7 @@ import { hiveBrain } from "./hive-brain";
 import { neuralTrends } from "./neural-trends";
 import { resolveSiteOrigin } from "./seo";
 import { BRAND_HASHTAG, BRAND_NAME, DEFAULT_OG_IMAGE } from "./brand";
+import { readableSubject } from "./marketing-copy";
 import { normalizeHashtags } from "./share";
 import { recordHeartbeat } from "./job-heartbeat";
 import {
@@ -18,6 +19,10 @@ import {
 } from "./social-publish";
 
 const log = createLogger("marketing");
+
+// Re-exported so server callers keep one import site; the client console imports
+// it from `marketing-copy` directly, which is the whole point of the split.
+export { readableSubject } from "./marketing-copy";
 
 /**
  * The self-marketing engine.
@@ -125,18 +130,6 @@ export async function gatherMarketingSignals(): Promise<MarketingSignals> {
     sports: { settled, accuracy: settled > 0 ? Math.round((won / settled) * 100) : null },
     gaps: categoryCounts,
   };
-}
-
-/**
- * Trend subjects are extracted keywords, so they arrive lower-cased: a headline
- * that opens with "‘nairobi’ is what the region is talking about" reads like a
- * bug. Capitalising is not cosmetic here — it is the difference between copy an
- * operator will approve and copy they will delete.
- */
-export function readableSubject(subject: string): string {
-  const trimmed = subject.trim();
-  if (!trimmed) return trimmed;
-  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
 }
 
 /* ── The brief (pure) ────────────────────────────────────────────────────── */
