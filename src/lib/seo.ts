@@ -20,7 +20,7 @@ const FALLBACK_ORIGIN = "https://connectplusapp.vercel.app";
  * almost always lead straight to the origin's URL, so the trailer goes with it.
  */
 const PROMO_TRAILER =
-  /\b(?:read|see|view|continue|full)\s+(?:the\s+)?(?:more|story|article|post|details)\b[\s\S]*$/i;
+  /\b(?:(?:read|see|view|continue|full)\s+(?:the\s+)?(?:more|story|article|post|details)|the\s+post\s+[\s\S]{1,200}?\s+appeared\s+first\s+on\b)[\s\S]*$/i;
 
 /** Absolute URLs, with or without a scheme. */
 const URL_PATTERN = /\b(?:https?:\/\/|www\.)[^\s<>"']+/gi;
@@ -251,6 +251,37 @@ export function webPageJsonLd(params: {
         ],
       },
     ],
+  };
+  return JSON.stringify(graph).replace(/</g, "\\u003c");
+}
+
+export interface FaqEntry {
+  question: string;
+  answer: string;
+}
+
+/**
+ * `FAQPage` structured data for the questions a public page actually answers.
+ *
+ * Handing search engines the question/answer pairs verbatim is what lets a page
+ * appear as an expandable result, and it is also what keeps the copy honest:
+ * Google will not surface an answer that is not on the page, so the markup and
+ * the prose have to agree. Only pass questions the page genuinely answers — a
+ * mismatched FAQ is treated as spam, not as extra reach.
+ *
+ * Returns a JSON string, escaped the same way as `webPageJsonLd`.
+ */
+export function faqJsonLd(params: { url: string; questions: readonly FaqEntry[] }): string {
+  const graph = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "@id": `${params.url}#faq`,
+    url: params.url,
+    mainEntity: params.questions.map((entry) => ({
+      "@type": "Question",
+      name: entry.question,
+      acceptedAnswer: { "@type": "Answer", text: entry.answer },
+    })),
   };
   return JSON.stringify(graph).replace(/</g, "\\u003c");
 }

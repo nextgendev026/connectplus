@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ChevronRight, Globe2, PenLine, Radio, Search, Shield, Sparkles, Trophy, Users } from "lucide-react";
-import { prisma } from "@/lib/prisma";
-import { cn } from "@/lib/utils";
 import { formatCompact } from "@/lib/format-views";
 import { resolveSiteOrigin } from "@/lib/seo";
 import { BRAND_NAME } from "@/lib/brand";
+import { getPlatformFacts } from "@/lib/platform-facts";
+import { StatGrid } from "@/components/ui/StatGrid";
 
 export const dynamic = "force-dynamic";
 
@@ -18,17 +18,8 @@ export const metadata: Metadata = {
 };
 
 export default async function AboutPage() {
-  const [origin, published, writers, views, categories, settled, won] = await Promise.all([
-    resolveSiteOrigin(),
-    prisma.post.count({ where: { status: "PUBLISHED" } }).catch(() => 0),
-    prisma.user.count().catch(() => 0),
-    prisma.post.aggregate({ _sum: { viewCount: true }, where: { status: "PUBLISHED" } }).then((r) => r._sum.viewCount ?? 0).catch(() => 0),
-    prisma.category.count().catch(() => 0),
-    prisma.sportsPrediction.count({ where: { status: { in: ["WON", "LOST"] } } }).catch(() => 0),
-    prisma.sportsPrediction.count({ where: { status: "WON" } }).catch(() => 0),
-  ]);
-
-  const accuracy = settled > 0 ? Math.round((won / settled) * 100) : null;
+  const [origin, facts] = await Promise.all([resolveSiteOrigin(), getPlatformFacts()]);
+  const { publishedStories, writers, reads, categories, accuracy } = facts;
 
   const jsonLd = JSON.stringify({
     "@context": "https://schema.org",
@@ -40,13 +31,17 @@ export default async function AboutPage() {
     sameAs: [],
   }).replace(/</g, "\\u003c");
 
+  // A fact that could not be read is omitted rather than rendered as zero, so
+  // the page never claims "0 writers" because a query was briefly unavailable.
   const stats = [
-    { label: "Stories published", value: formatCompact(published), icon: PenLine },
-    { label: "Writers", value: formatCompact(writers), icon: Users },
-    { label: "Reads", value: formatCompact(views), icon: Globe2 },
+    { label: "Stories published", value: publishedStories, icon: PenLine },
+    { label: "Writers", value: writers, icon: Users },
+    { label: "Reads", value: reads, icon: Globe2 },
     { label: "Categories", value: categories, icon: Shield },
-    ...(accuracy !== null ? [{ label: "Model accuracy", value: `${accuracy}%`, icon: Trophy }] : []),
-  ];
+    { label: "Model accuracy", value: accuracy, suffix: "%", icon: Trophy },
+  ]
+    .filter((s) => s.value !== null)
+    .map((s) => ({ label: s.label, value: `${formatCompact(s.value as number)}${s.suffix ?? ""}`, icon: s.icon }));
 
   return (
     <div className="min-h-screen bg-surface-950">
@@ -79,17 +74,7 @@ export default async function AboutPage() {
 
       {/* Live stats */}
       <div className="max-w-4xl mx-auto px-4 sm:px-6 -mt-4">
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          {stats.map((stat) => (
-            <div key={stat.label} className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
-              <div className="flex items-center gap-2 mb-1">
-                <stat.icon className="h-3.5 w-3.5 text-brand-400" />
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-surface-400">{stat.label}</span>
-              </div>
-              <div className="text-2xl font-bold tracking-tight text-white">{stat.value}</div>
-            </div>
-          ))}
-        </div>
+        <StatGrid stats={stats} columns={5} />
       </div>
 
       {/* Content */}

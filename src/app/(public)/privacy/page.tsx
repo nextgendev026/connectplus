@@ -1,7 +1,13 @@
 import type { Metadata } from "next";
-import { ShieldCheck } from "lucide-react";
+import { Layers, Radio, Rss, ShieldCheck, Users } from "lucide-react";
 import { StaticPage } from "@/components/ui/StaticPage";
+import { StatGrid } from "@/components/ui/StatGrid";
 import { PageJsonLd } from "@/components/seo/PageJsonLd";
+import { FaqJsonLd } from "@/components/seo/FaqJsonLd";
+import { getPlatformFacts } from "@/lib/platform-facts";
+import { formatCompact } from "@/lib/format-views";
+
+export const dynamic = "force-dynamic";
 
 const DESCRIPTION =
   "How connectPlus collects, uses, stores and protects your data — what we hold, the lawful basis for each purpose, every processor we use, how long we keep things, and how to exercise your rights under the Kenya Data Protection Act, 2019.";
@@ -35,7 +41,42 @@ export const metadata: Metadata = {
   },
 };
 
-export default function PrivacyPage() {
+export default async function PrivacyPage() {
+  const facts = await getPlatformFacts();
+  const { writers, activeMembers, activeFeeds, radioStations } = facts;
+
+  const stats = [
+    { label: "Accounts held", value: writers !== null ? formatCompact(writers) : null, icon: Users },
+    { label: "Active members", value: activeMembers !== null ? formatCompact(activeMembers) : null, icon: Layers },
+    { label: "Publisher feeds", value: activeFeeds, icon: Rss },
+    { label: "Radio stations", value: radioStations, icon: Radio },
+  ]
+    .filter((s) => s.value !== null)
+    .map((s) => ({ label: s.label, value: String(s.value), icon: s.icon }));
+
+  const faq = [
+    {
+      question: "Who is responsible for my data?",
+      answer:
+        "connectPlus is the data controller for the personal data described on this page — we decide why it is collected and how it is used. Privacy requests go to privacy@connectplus.io and are answered within 30 days as the Kenya Data Protection Act, 2019 requires.",
+    },
+    {
+      question: "Do you sell my data or run advertising trackers?",
+      answer:
+        "No. We do not sell data, we do not run advertising or cross-site tracking cookies, and no cookie we set follows you to another website. Our processors act only on our instructions and none of them receives your payment credentials.",
+    },
+    {
+      question: "How do I get a copy of my data or delete my account?",
+      answer:
+        "Under the Kenya Data Protection Act, 2019 you may ask for a copy of your data, have it corrected, erased, ported, or withdraw consent. Most of this is available from your profile settings; anything else goes to privacy@connectplus.io. Deleting your account does not cancel a subscription, so cancel it first.",
+    },
+    {
+      question: "Do you train AI models on my drafts?",
+      answer:
+        "No. Drafts stay private and are only processed when you invoke an assistant on them. We do not use your private drafts to train third-party models, and we ask our provider the same thing contractually.",
+    },
+  ];
+
   return (
     <>
       <PageJsonLd
@@ -44,10 +85,13 @@ export default function PrivacyPage() {
         description={DESCRIPTION}
         updated={UPDATED_ISO}
       />
+      <FaqJsonLd path="/privacy" questions={faq} />
       <StaticPage
         icon={<ShieldCheck className="w-3.5 h-3.5 text-brand-400" />}
         title="Privacy Policy"
         subtitle="Your data belongs to you. Here's exactly what we collect, why we need it, who touches it, and how to take it back."
+        stats={<StatGrid stats={stats} columns={4} />}
+        faq={faq}
         updatedAt={UPDATED_LABEL}
         sections={[
           {

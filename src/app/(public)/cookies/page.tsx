@@ -1,7 +1,13 @@
 import type { Metadata } from "next";
-import { Cookie } from "lucide-react";
+import { Cookie, Radio, Rss, Tags, Users } from "lucide-react";
 import { StaticPage } from "@/components/ui/StaticPage";
+import { StatGrid } from "@/components/ui/StatGrid";
 import { PageJsonLd } from "@/components/seo/PageJsonLd";
+import { FaqJsonLd } from "@/components/seo/FaqJsonLd";
+import { getPlatformFacts } from "@/lib/platform-facts";
+import { formatCompact } from "@/lib/format-views";
+
+export const dynamic = "force-dynamic";
 
 const DESCRIPTION =
   "Every cookie and browser storage key connectPlus uses, what each one holds, how long it lasts, and how to allow, refuse or clear them — including the optional anonymous analytics and the ways you can withdraw consent.";
@@ -35,7 +41,42 @@ export const metadata: Metadata = {
   },
 };
 
-export default function CookiesPage() {
+export default async function CookiesPage() {
+  const facts = await getPlatformFacts();
+  const { writers, activeFeeds, categories, radioStations } = facts;
+
+  const stats = [
+    { label: "Accounts held", value: writers !== null ? formatCompact(writers) : null, icon: Users },
+    { label: "Publisher feeds", value: activeFeeds, icon: Rss },
+    { label: "Radio stations", value: radioStations, icon: Radio },
+    { label: "Categories", value: categories, icon: Tags },
+  ]
+    .filter((s) => s.value !== null)
+    .map((s) => ({ label: s.label, value: String(s.value), icon: s.icon }));
+
+  const faq = [
+    {
+      question: "Do you use advertising or tracking cookies?",
+      answer:
+        "No. We do not run advertising or cross-site tracking cookies, we do not sell data, and no cookie we set follows you to another website. The cookies we use keep you signed in, remember your preferences, and — only with your consent — count anonymous visits.",
+    },
+    {
+      question: "Can I use connectPlus without analytics cookies?",
+      answer:
+        "Yes. Choosing \"essential only\" leaves anonymous analytics off and keeps every page and feature working exactly the same. Refusing analytics costs you nothing.",
+    },
+    {
+      question: "How do I change or withdraw my consent?",
+      answer:
+        "Delete the connectplus-cookie-consent key — or all site data — in your browser's settings, and the consent card returns so you can decide again. Every major browser can also block or delete cookies entirely.",
+    },
+    {
+      question: "What do you store in my browser that isn't a cookie?",
+      answer:
+        "Your theme choice, your radio station and playback position, your starred stations, and the location you gave the weather widget. These live in your browser and are never sent to us until you use the feature that needs them.",
+    },
+  ];
+
   return (
     <>
       <PageJsonLd
@@ -44,10 +85,13 @@ export default function CookiesPage() {
         description={DESCRIPTION}
         updated={UPDATED_ISO}
       />
+      <FaqJsonLd path="/cookies" questions={faq} />
       <StaticPage
         icon={<Cookie className="w-3.5 h-3.5 text-brand-400" />}
         title="Cookies Policy"
         subtitle="A short list, written out in full. No advertising trackers, no cross-site profiling, and nothing that follows you off connectPlus."
+        stats={<StatGrid stats={stats} columns={4} />}
+        faq={faq}
         updatedAt={UPDATED_LABEL}
         sections={[
           {

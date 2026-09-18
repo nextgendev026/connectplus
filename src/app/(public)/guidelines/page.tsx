@@ -1,7 +1,13 @@
 import type { Metadata } from "next";
-import { Sparkles } from "lucide-react";
+import { BookOpen, FileText, Rss, Sparkles, Tags, Zap } from "lucide-react";
 import { StaticPage } from "@/components/ui/StaticPage";
+import { StatGrid } from "@/components/ui/StatGrid";
 import { PageJsonLd } from "@/components/seo/PageJsonLd";
+import { FaqJsonLd } from "@/components/seo/FaqJsonLd";
+import { getPlatformFacts } from "@/lib/platform-facts";
+import { formatCompact } from "@/lib/format-views";
+
+export const dynamic = "force-dynamic";
 
 const DESCRIPTION =
   "How to write stories that thrive on connectPlus: structure that holds a reader, original work and proper attribution, corrections, images and headlines, plus the community standards our moderators apply.";
@@ -34,7 +40,44 @@ export const metadata: Metadata = {
   },
 };
 
-export default function GuidelinesPage() {
+export default async function GuidelinesPage() {
+  const facts = await getPlatformFacts();
+  const { publishedStories, categories, tags, syndicatedStories, activeFeeds } = facts;
+
+  const stats = [
+    { label: "Stories on the platform", value: publishedStories !== null ? formatCompact(publishedStories) : null, icon: BookOpen },
+    { label: "Writer-submitted", value: syndicatedStories !== null && publishedStories !== null ? formatCompact(Math.max(publishedStories - syndicatedStories, 0)) : null, icon: FileText },
+    { label: "Syndicated", value: syndicatedStories !== null ? formatCompact(syndicatedStories) : null, icon: Rss },
+    { label: "Categories", value: categories, icon: Tags },
+    { label: "Tags in use", value: tags !== null ? formatCompact(tags) : null, icon: Zap },
+    { label: "Publisher feeds", value: activeFeeds, icon: Rss },
+  ]
+    .filter((s) => s.value !== null)
+    .map((s) => ({ label: s.label, value: String(s.value), icon: s.icon }));
+
+  const faq = [
+    {
+      question: "Can I use an AI assistant to help me write?",
+      answer:
+        "Using an assistant to draft, tighten or translate is welcome. Publishing its output unread is not — the judgement in the finished piece has to be yours, and content generated without meaningful editorial input is removed.",
+    },
+    {
+      question: "How should I handle a correction?",
+      answer:
+        "When a fact changes or an error is pointed out, edit the story and add a short, dated note at the end saying what changed and when. We do not silently rewrite published pieces.",
+    },
+    {
+      question: "Can I republish an article from another publication?",
+      answer:
+        "Only where the source permits it. Name the publication, keep the publisher's credit and the link back, and never present syndicated material as your own reporting. Do not remove a source's watermark or byline.",
+    },
+    {
+      question: "What gets a story removed?",
+      answer:
+        "Plagiarism, unauthorised reposts, hate speech, harassment, doxxing, and misinformation all breach our standards and are removed. Our AI flags likely violations, but a human reviews the outcome of every report.",
+    },
+  ];
+
   return (
     <>
       <PageJsonLd
@@ -43,10 +86,13 @@ export default function GuidelinesPage() {
         description={DESCRIPTION}
         updated={UPDATED_ISO}
       />
+      <FaqJsonLd path="/guidelines" questions={faq} />
       <StaticPage
         icon={<Sparkles className="w-3.5 h-3.5 text-brand-400" />}
         title="Writing Guidelines"
         subtitle="A few simple rules keep connectPlus sharp, safe and worth reading — here is what our editors look for and what our moderators act on."
+        stats={<StatGrid stats={stats} columns={6} />}
+        faq={faq}
         updatedAt={UPDATED_LABEL}
         sections={[
           {

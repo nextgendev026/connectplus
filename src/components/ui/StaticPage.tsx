@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { FaqEntry } from "@/lib/seo";
 
 interface Section {
   heading: string;
@@ -15,6 +16,18 @@ interface StaticPageProps {
   sections: Section[];
   updatedAt?: string;
   className?: string;
+  /**
+   * A live-stats row shown above the content card, overlapping the hero — the
+   * same treatment the About page uses. Kept as a slot so a page owns which
+   * facts it quotes while every page shares the placement.
+   */
+  stats?: React.ReactNode;
+  /**
+   * Questions the page answers, rendered as a visible Q&A section. The caller is
+   * responsible for emitting the matching `FAQPage` markup via `FaqJsonLd`, so
+   * the structured data and the prose stay in step.
+   */
+  faq?: readonly FaqEntry[];
 }
 
 export function StaticPage({
@@ -24,6 +37,8 @@ export function StaticPage({
   sections,
   updatedAt,
   className,
+  stats,
+  faq,
 }: StaticPageProps) {
   return (
     <div className="min-h-screen bg-surface-950">
@@ -66,6 +81,7 @@ export function StaticPage({
           className
         )}
       >
+        {stats && <div className="mb-8">{stats}</div>}
         <div className="rounded-3xl border border-surface-800/60 bg-surface-900/50 p-6 sm:p-10 shadow-card-hover">
           {sections.map((section, i) => (
             <section
@@ -90,6 +106,27 @@ export function StaticPage({
               </div>
             </section>
           ))}
+
+          {faq && faq.length > 0 && (
+            <section className="mt-10 border-t border-surface-800/60 pt-10">
+              <h2 className="font-display text-xl sm:text-2xl font-bold text-surface-50 mb-5 flex items-center gap-2.5">
+                <span className="flex items-center justify-center w-7 h-7 rounded-lg bg-brand-500/10 border border-brand-500/20 shrink-0">
+                  <span className="w-2 h-2 rounded-full bg-brand-400" />
+                </span>
+                Common questions
+              </h2>
+              <dl className="space-y-5">
+                {faq.map((entry) => (
+                  <div key={entry.question}>
+                    <dt className="text-sm font-semibold text-surface-100">{entry.question}</dt>
+                    <dd className="mt-1 prose prose-sm max-w-none">
+                      <p>{entry.answer}</p>
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          )}
 
           {updatedAt && (
             <p className="mt-10 pt-6 border-t border-surface-800/60 text-xs text-surface-500">

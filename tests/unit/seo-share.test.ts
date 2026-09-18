@@ -10,7 +10,7 @@ vi.mock("@/lib/settings", () => ({
   })),
 }));
 
-const { articleShareCard, stripSourcePromo, webPageJsonLd } = await import("@/lib/seo");
+const { articleShareCard, faqJsonLd, stripSourcePromo, webPageJsonLd } = await import("@/lib/seo");
 
 describe("share descriptions never carry the origin's URL", () => {
   it("drops a full URL and the trailer wrapped around it", () => {
@@ -24,6 +24,14 @@ describe("share descriptions never carry the origin's URL", () => {
   it("drops a bare domain and any path hanging off it", () => {
     const clean = stripSourcePromo("Full results at nation.africa/kenya/sports or kbc.co.ke");
     expect(clean).not.toMatch(/nation\.africa|kbc\.co\.ke/);
+  });
+
+  it("drops the WordPress-style 'appeared first on' trailer", () => {
+    const clean = stripSourcePromo(
+      "Kenya's mobile money volume rose 12% this quarter. The post Mobile money rises appeared first on Business Daily."
+    );
+    expect(clean).toContain("rose 12%");
+    expect(clean).not.toMatch(/appeared first on|Business Daily/i);
   });
 
   it("leaves ordinary prose alone", () => {
@@ -120,5 +128,35 @@ describe("static page structured data", () => {
     expect(page.url).toBe("https://connectplus.test/cookies");
     expect(breadcrumb["@type"]).toBe("BreadcrumbList");
     expect(breadcrumb.itemListElement).toHaveLength(2);
+  });
+});
+
+describe("FAQ structured data", () => {
+  const questions = [
+    { question: "How do I start writing?", answer: "Create an account and open the Studio." },
+    { question: "Are my drafts private?", answer: "Yes — until you publish." },
+  ];
+
+  it("emits one Question per entry with an accepted answer", () => {
+    const json = JSON.parse(faqJsonLd({ url: "https://connectplus.test/help", questions })) as {
+      "@type": string;
+      "@id": string;
+      mainEntity: { "@type": string; name: string; acceptedAnswer: { text: string } }[];
+    };
+    expect(json["@type"]).toBe("FAQPage");
+    expect(json["@id"]).toBe("https://connectplus.test/help#faq");
+    expect(json.mainEntity).toHaveLength(2);
+    expect(json.mainEntity[0]!["@type"]).toBe("Question");
+    expect(json.mainEntity[0]!.name).toBe(questions[0]!.question);
+    expect(json.mainEntity[0]!.acceptedAnswer.text).toBe(questions[0]!.answer);
+  });
+
+  it("escapes a payload that would otherwise close the script tag", () => {
+    const json = faqJsonLd({
+      url: "https://connectplus.test/help",
+      questions: [{ question: "Q", answer: "</script><script>alert(1)</script>" }],
+    });
+    expect(json).not.toContain("</script>");
+    expect(json).toContain("\\u003c/script>");
   });
 });

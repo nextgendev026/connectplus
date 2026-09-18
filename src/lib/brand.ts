@@ -11,6 +11,15 @@
 export const BRAND_NAME = "connectPlus";
 
 /**
+ * Where support mail goes.
+ *
+ * The public pages each spelled this address out by hand, which is one rename
+ * away from a page pointing at a mailbox that no longer exists. One constant,
+ * quoted everywhere.
+ */
+export const BRAND_SUPPORT_EMAIL = "support@connectplus.io";
+
+/**
  * The landscape social card in /public (see scripts/generate-og.mjs).
  *
  * Every share card, preview panel and Open Graph fallback starts here: a

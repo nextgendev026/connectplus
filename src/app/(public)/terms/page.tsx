@@ -1,7 +1,13 @@
 import type { Metadata } from "next";
-import { ScrollText } from "lucide-react";
+import { BookOpen, Layers, ScrollText, Users } from "lucide-react";
 import { StaticPage } from "@/components/ui/StaticPage";
+import { StatGrid } from "@/components/ui/StatGrid";
 import { PageJsonLd } from "@/components/seo/PageJsonLd";
+import { FaqJsonLd } from "@/components/seo/FaqJsonLd";
+import { getPlatformFacts } from "@/lib/platform-facts";
+import { formatCompact } from "@/lib/format-views";
+
+export const dynamic = "force-dynamic";
 
 const DESCRIPTION =
   "The terms that govern your connectPlus account: what you may publish, how M-Pesa and PayPal memberships bill and renew, how cancellation and refunds work, moderation, AI features, and the law that applies to our agreement.";
@@ -35,7 +41,47 @@ export const metadata: Metadata = {
   },
 };
 
-export default function TermsPage() {
+export default async function TermsPage() {
+  const facts = await getPlatformFacts();
+  const { publishedStories, activeMembers, plans, syndicatedStories } = facts;
+
+  const stats = [
+    { label: "Stories published", value: publishedStories !== null ? formatCompact(publishedStories) : null, icon: BookOpen },
+    { label: "Active members", value: activeMembers !== null ? formatCompact(activeMembers) : null, icon: Users },
+    { label: "Plan tiers", value: plans, icon: Layers },
+    { label: "Syndicated stories", value: syndicatedStories !== null ? formatCompact(syndicatedStories) : null, icon: ScrollText },
+  ]
+    .filter((s) => s.value !== null)
+    .map((s) => ({ label: s.label, value: String(s.value), icon: s.icon }));
+
+  const faq = [
+    {
+      question: "Who owns the stories I publish?",
+      answer:
+        "You retain ownership of the stories you write and the images you upload. By publishing you grant connectPlus a worldwide, non-exclusive, royalty-free licence to host, display and distribute that content so readers can reach it. The licence ends when you delete the content.",
+    },
+    {
+      question: "Do M-Pesa memberships auto-renew?",
+      answer:
+        "No. M-Pesa memberships are bought one period at a time and do not auto-renew — nothing is deducted from your wallet again unless you deliberately buy another period. PayPal memberships renew automatically until you cancel.",
+    },
+    {
+      question: "Can I get a refund?",
+      answer:
+        "Cancelling does not refund the current period, but if a charge was taken in error, you were billed twice, or the service was unavailable for a sustained period, contact billing@connectplus.io within 30 days and we will make it right, including a full refund where that is fair.",
+    },
+    {
+      question: "What happens if a payment fails?",
+      answer:
+        "Your plan is not activated, or a renewal lapses, and you move to the free experience. You will not be charged a penalty, we do not charge reactivation fees, and we do not delete your account because a payment failed.",
+    },
+    {
+      question: "Is the sports betting content advice?",
+      answer:
+        "No. The sports desk publishes probabilistic model output for information and entertainment. It is not financial advice, no prediction is a certainty, and we take no stake in any bet you place with a third party. We do not accept wagers.",
+    },
+  ];
+
   return (
     <>
       <PageJsonLd
@@ -44,10 +90,13 @@ export default function TermsPage() {
         description={DESCRIPTION}
         updated={UPDATED_ISO}
       />
+      <FaqJsonLd path="/terms" questions={faq} />
       <StaticPage
         icon={<ScrollText className="w-3.5 h-3.5 text-brand-400" />}
         title="Terms of Service"
         subtitle="The rules that keep connectPlus fair for readers, writers and the publishers we syndicate — in plain language, with no surprises buried halfway down."
+        stats={<StatGrid stats={stats} columns={4} />}
+        faq={faq}
         updatedAt={UPDATED_LABEL}
         sections={[
           {
