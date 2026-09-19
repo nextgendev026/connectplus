@@ -3,10 +3,12 @@ import {
   applyPilotOps,
   coercePilotOps,
   defaultOpsFor,
+  diffWords,
   extractJsonObject,
   normalizePilotTags,
   parsePilotReply,
   pilotInstruction,
+  reviewPilotEdits,
   PILOT_ACTIONS,
   PILOT_QUICK_ACTIONS,
   type PilotComposerState,
@@ -200,6 +202,114 @@ describe("brain pilot — reading a model reply", () => {
       { kind: "replace-draft", text: "Some rewritten prose." },
     ]);
     expect(defaultOpsFor("ask", "Some rewritten prose.", true)).toEqual([]);
+  });
+});
+
+describe("brain pilot — reviewing edits before they land", () => {
+  const RANGES = range(0, 0);
+
+  it("diffs a rewrite as the phrase that changed, not the whole draft", async () => {
+    const before = "The team shipped it. It was a very really big deal for the readers.";
+    const after = "The team shipped it. It mattered to the readers.";
+    const diff = diffWords(before, after);
+
+    // The unchanged head and tail are shared, so only the rewritten middle is
+    // marked. A diff that reprints the whole paragraph is noise for a writer.
+    expect(diff[0]?.type).toBe("same");
+    expect(diff[0]?.text).toContain("The team shipped it.");
+    expect(diff.some((s) => s.type === "del" && s.text.includes("very really big deal"))).toBe(true);
+    expect(diff.some((s) => s.type === "add" && s.text.includes("mattered"))).toBe(true);
+    expect(diff[diff.length - 1]?.type).toBe("same");
+    // Nothing that survived is marked as changed.
+    for (const seg of diff) {
+      if (seg.type === "same") expect(seg.text).not.toContain("very really big deal");
+    }
+  });
+
+  it("reports no diff for an identical string", async () => {
+    expect(diffWords("same", "same")).toEqual([{ type: "same", text: "same" }]);
+    expect(diffWords("", "")).toEqual([]);
+  });
+
+  it("stays bounded on a draft too large to align exactly", async () => {
+    const big = Array.from({ length: 4_000 }, (_, i) => `word${i}`).join(" ");
+    const other = big.replace("word2000", "CHANGED");
+    const diff = diffWords(big, other);
+
+    // Past the alignment cap the middle is reported as one replaced block rather
+    // than an exact alignment — honest, and cheap enough to run on every reply.
+    expect(diff.some((s) => s.type === "del" && s.text.includes("word2000"))).toBe(true);
+    expect(diff.some((s) => s.type === "add" && s.text.includes("CHANGED"))).toBe(true);
+  });
+
+  it("previews each edit as a field change the writer can read", async () => {
+    const state: PilotComposerState = { content: "We recieve the plan.", title: "", excerpt: "", tags: [] };
+    const reviews = reviewPilotEdits(
+      state,
+      [
+        { kind: "fix", find: "recieve", text: "receive" },
+        { kind: "set-title", text: "A better headline" },
+      ],
+      RANGES
+    );
+
+    expect(reviews).toHaveLength(2);
+    expect(reviews[0]?.field).toBe("content");
+    expect(reviews[0]?.before).toBe("We recieve the plan.");
+    expect(reviews[0]?.after).toBe("We receive the plan.");
+    expect(reviews[0]?.noop).toBe(false);
+    expect(reviews[1]?.field).toBe("title");
+    expect(reviews[1]?.after).toBe("A better headline");
+  });
+
+  it("flags an edit that cannot be applied instead of pretending it changed something", async () => {
+    const state: PilotComposerState = { content: "A short draft.", title: "", excerpt: "", tags: [] };
+    const reviews = reviewPilotEdits(
+      state,
+      [
+        { kind: "fix", find: "calender", text: "calendar" },
+        { kind: "replace-selection", text: "Rewritten." },
+      ],
+      RANGES
+    );
+
+    expect(reviews[0]?.impossible).toBe(true);
+    expect(reviews[1]?.impossible).toBe(true);
+    // An edit that cannot apply shows no change at all: every diff run is
+    // "same", so the panel never implies something moved.
+    expect(reviews[0]?.segments.every((s) => s.type === "same")).toBe(true);
+    expect(reviews[0]?.before).toBe(reviews[0]?.after);
+  });
+
+  it("previews a stack of edits against the state the earlier ones produce", async () => {
+    const state: PilotComposerState = { content: "recieve the plan", title: "", excerpt: "", tags: [] };
+    const reviews = reviewPilotEdits(
+      state,
+      [
+        { kind: "fix", find: "recieve", text: "receive" },
+        { kind: "fix", find: "the plan", text: "the roadmap" },
+      ],
+      RANGES
+    );
+
+    // The second edit reads against the first, so "keep all" is exactly what the
+    // panel showed — no surprise recomputation at apply time.
+    expect(reviews[1]?.before).toBe("receive the plan");
+    expect(reviews[1]?.after).toBe("receive the roadmap");
+  });
+
+  it("labels the field each edit targets", async () => {
+    const state: PilotComposerState = { content: "draft", title: "t", excerpt: "", tags: [] };
+    const reviews = reviewPilotEdits(
+      state,
+      [
+        { kind: "add-tags", text: "tech" },
+        { kind: "set-excerpt", text: "Summary" },
+        { kind: "append", text: "Closing." },
+      ],
+      RANGES
+    );
+    expect(reviews.map((r) => r.field)).toEqual(["tags", "excerpt", "content"]);
   });
 });
 

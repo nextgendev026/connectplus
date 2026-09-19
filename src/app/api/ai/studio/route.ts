@@ -17,6 +17,8 @@ const ACTIONS: StudioAction[] = [
   "optimize",
   "inspect",
   "pilot",
+  "compose",
+  "learn",
 ];
 
 /** Actions that are meaningless without a draft to read. */
@@ -36,7 +38,19 @@ const BURST_LIMIT = 120;
 const BURST_WINDOW_SECONDS = 60;
 
 /** The model-backed actions are expensive; they get a much tighter ceiling. */
-const MODEL_ACTIONS: StudioAction[] = ["rewrite", "continue", "outline", "assist", "curate", "optimize", "plagiarism", "pilot"];
+const MODEL_ACTIONS: StudioAction[] = [
+  "rewrite",
+  "continue",
+  "outline",
+  "assist",
+  "curate",
+  "optimize",
+  "plagiarism",
+  "pilot",
+  // One part of a forged article. Counted with the model actions because each
+  // call is a real completion — an article is several of them by design.
+  "compose",
+];
 const MODEL_LIMIT = 30;
 const MODEL_WINDOW_SECONDS = 60;
 
@@ -124,6 +138,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const promptKind = str(body?.promptKind);
+    const maxTokens = typeof body?.maxTokens === "number" ? body.maxTokens : undefined;
+    const outcomes = Array.isArray(body?.outcomes) ? body.outcomes : undefined;
+
     const result = await runStudioBrain({
       action,
       title,
@@ -134,6 +152,9 @@ export async function POST(request: NextRequest) {
       tags,
       category,
       pilotAction,
+      promptKind,
+      maxTokens,
+      outcomes,
     });
     return NextResponse.json(result, { status: 200 });
   } catch (error) {

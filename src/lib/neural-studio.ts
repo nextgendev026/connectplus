@@ -17,6 +17,15 @@ import { analyzeSeo } from "@/lib/seo-analyzer";
 import { checkPlagiarism } from "@/lib/plagiarism-checker";
 import { optimizeContent } from "@/lib/content-optimizer";
 import { runWritingChecks, type WritingCheckResult, type WritingSuggestion } from "@/lib/writing-checks";
+import {
+  ARTICLE_SYSTEM,
+  isArticleRequest,
+  outlinePrompt,
+  parseArticleOutline,
+  planArticle,
+  type ArticlePlan,
+} from "@/lib/article-forge";
+import { coerceCopilotOutcome, recordCopilotOutcomes } from "@/lib/copilot-skills";
 
 export type StudioAction =
   | "rewrite"
@@ -32,7 +41,15 @@ export type StudioAction =
   | "optimize"
   | "inspect"
   /** The Brain Pilot: structured edits the composer applies in place. */
-  | "pilot";
+  | "pilot"
+  /**
+   * One bounded generation for the Article Forge. The forge itself runs in the
+   * composer and asks for one part at a time, so a long article never depends on
+   * a single request surviving a serverless timeout.
+   */
+  | "compose"
+  /** Record what the writer did with the copilot's suggestions. */
+  | "learn";
 
 export interface StudioRequest {
   action: StudioAction;
@@ -50,6 +67,12 @@ export interface StudioRequest {
    * which falls back to `improve` rather than trusting the wire.
    */
   pilotAction?: string;
+  /** For `compose`: which forge system prompt to use. */
+  promptKind?: string;
+  /** For `compose`: the token ceiling for this one part. */
+  maxTokens?: number;
+  /** For `learn`: the decisions to record. Validated individually. */
+  outcomes?: unknown;
 }
 
 export interface StudioResult {
@@ -90,6 +113,14 @@ export interface StudioResult {
  * one request spend an unbounded amount of provider time. Truncating is
  * reported honestly in the notes rather than pretending the tail was checked.
  */
+/**
+ * The forge's prompt kinds.
+ *
+ * An allowlist rather than a passthrough: the kind selects a server-side system
+ * prompt, and an unknown kind must not be able to reach a more permissive one.
+ */
+const ARTICLE_PROMPT_KINDS = new Set(["article-outline", "article-part", "article-continue"]);
+
 export const MAX_DRAFT_CHARS = 40_000;
 const MAX_TITLE_CHARS = 300;
 const MAX_SELECTION_CHARS = 8_000;
@@ -254,6 +285,59 @@ export async function runStudioBrain(req: StudioRequest): Promise<StudioResult> 
     }
 
     case "assist": {
+      /**
+       * "Write me an article about X" is not an instruction to apply to the
+       * draft — it is a request for a piece, and answering it with one 700-token
+       * completion is exactly how the copilot used to hand back a severed
+       * introduction. The structure is planned here, in one call, and the draft
+       * itself is written section by section by the forge (see
+       * `src/lib/article-forge.ts`), which is the only way a long piece finishes.
+       */
+      const articleRequest = isArticleRequest(prompt);
+      if (articleRequest) {
+        const base = {
+          topic: articleRequest.topic,
+          category,
+          keywords: tags,
+          targetWords: articleRequest.targetWords,
+        };
+        const outline = await generateText({
+          system: ARTICLE_SYSTEM,
+          user: outlinePrompt(base, articleRequest.targetWords),
+          maxTokens: 900,
+        }).catch(() => null);
+        const refined = outline ? parseArticleOutline(outline, base) : null;
+        const plan: ArticlePlan = refined ?? planArticle(base);
+        const lines = [
+          `**${plan.title}**`,
+          "",
+          `_${plan.metaDescription}_`,
+          "",
+          `**Structure — ${plan.sections.length} sections, about ${plan.targetWords} words:**`,
+          ...plan.sections.map((s, i) => `${i + 1}. **${s.heading}** — ${s.goal}`),
+          "",
+          "**Reader questions it will answer:**",
+          ...plan.faq.map((q) => `• ${q}`),
+          "",
+          `**Suggested tags:** ${plan.tags.join(", ")}`,
+          "",
+          "_Open **Write** in the assist panel and I will draft every section in order — finishing each one before moving on — then hand you the finished piece to review._",
+        ];
+        return {
+          action,
+          text: lines.join("\n"),
+          meta: {
+            topic: plan.title,
+            tags: plan.tags,
+            notes: [
+              refined
+                ? "Plan refined by the writing model — review the headings before drafting."
+                : "Plan built from the platform's own structure (no writing model configured).",
+            ],
+          },
+        };
+      }
+
       // Free-form prompt: try the LLM first with the draft (and the rest of the
       // composer) attached, then fall back to the conversational content brain.
       const hasDraft = (content || "").trim().length > 20;
@@ -376,6 +460,57 @@ export async function runStudioBrain(req: StudioRequest): Promise<StudioResult> 
               ? [`${result.ops.length} edit${result.ops.length === 1 ? "" : "s"} ready to apply.`]
               : [],
         },
+      };
+    }
+
+    /**
+     * One bounded generation for the Article Forge.
+     *
+     * The system prompt is chosen *here*, from the kind the forge asked for, and
+     * never sent by the caller — the writer's text goes in as user content, so a
+     * composer cannot repurpose the studio's provider as a general-purpose
+     * chatbot by rewriting our instructions.
+     */
+    case "compose": {
+      const kind = bounded(req.promptKind, 40);
+      const user = bounded(req.prompt, 12_000);
+      if (user.trim().length < 20) return { action, text: "", degraded: true };
+      const maxTokens = Math.max(200, Math.min(1_600, Math.round(req.maxTokens ?? 900)));
+      const text = await generateText({
+        system: ARTICLE_PROMPT_KINDS.has(kind) ? ARTICLE_SYSTEM : studioSystemPrompt("compose"),
+        user,
+        maxTokens,
+      });
+      return {
+        action,
+        text: text ?? "",
+        degraded: !text,
+        meta: {
+          notes: text
+            ? []
+            : ["No writing model is configured, so this part fell back to the platform's own draft."],
+        },
+      };
+    }
+
+    /**
+     * Remember what the writer did with the copilot's suggestions.
+     *
+     * Every kept or discarded edit is a labelled example of what this
+     * publication wants, and the notes distilled from them are fed back into the
+     * pilot's prompt (see `src/lib/copilot-skills.ts`). Writing the rows is the
+     * only thing that happens here — summarising is a read path, so a burst of
+     * edits stays cheap.
+     */
+    case "learn": {
+      const list = Array.isArray(req.outcomes) ? req.outcomes : [];
+      const outcomes = list
+        .map(coerceCopilotOutcome)
+        .filter((outcome): outcome is NonNullable<ReturnType<typeof coerceCopilotOutcome>> => outcome !== null);
+      const stored = await recordCopilotOutcomes(outcomes);
+      return {
+        action,
+        text: stored > 0 ? `Learned from ${stored} decision${stored === 1 ? "" : "s"}.` : "Nothing to learn from that.",
       };
     }
 

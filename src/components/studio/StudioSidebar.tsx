@@ -26,7 +26,6 @@ import {
   Check,
 } from "lucide-react";
 import type { WritingSuggestion } from "@/lib/writing-checks";
-import { PILOT_QUICK_ACTIONS, type PilotAction, type PilotOp } from "@/lib/brain-pilot";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -50,12 +49,9 @@ interface MyPost {
 }
 
 interface CopilotResult {
-  action: "rewrite" | "continue" | "outline" | "summarize" | "headline" | "tags" | "curate" | "assist" | "seo" | "plagiarism" | "optimize" | "pilot";
+  action: "rewrite" | "continue" | "outline" | "summarize" | "headline" | "tags" | "curate" | "assist" | "seo" | "plagiarism" | "optimize";
   text: string;
   alternatives?: string[];
-  /** Structured edits — only the pilot returns these, and they are applied in place. */
-  ops?: PilotOp[];
-  degraded?: boolean;
   meta?: {
     notes?: string[];
     score?: number;
@@ -130,9 +126,6 @@ interface StudioSidebarProps {
   newStory: () => void;
   deletePost: (id: string) => void;
   /* Brain Pilot — structured edits written straight into the composer */
-  pilotBusy: PilotAction | null;
-  runPilot: (action: PilotAction, instruction?: string) => void;
-  hasSelection: boolean;
   /* Copilot */
   copilotBusy: string | null;
   runCopilot: (
@@ -232,7 +225,6 @@ function SidebarContent(props: SidebarContentProps) {
     scheduledFor, setScheduledFor, now, wordCount, readTime,
     myStories, storiesLoading, storiesUnauth,
     editingId, openStory, newStory, deletePost,
-    pilotBusy, runPilot, hasSelection,
     copilotBusy, runCopilot, copilotPrompt, setCopilotPrompt,
     copilotError, setCopilotError, copilotResult, setCopilotResult, applyCopilot,
     writingChecks, checksBusy, applyWritingCheck, applyAllWritingChecks, dismissWritingCheck,
@@ -299,40 +291,15 @@ function SidebarContent(props: SidebarContentProps) {
             </p>
 
             {/*
-              The Brain Pilot row.
+              Reports, not edits.
 
-              These five are the same edits the inline toolbar offers on a
-              selection, surfaced here for a writer who has not highlighted
-              anything yet. They differ from the buttons below in kind, not just
-              in wording: the pilot returns *operations*, so an answer is
-              applied in place rather than pasted in, and a rewrite of the
-              passage you had selected lands back on that passage.
+              The pilot's inline actions moved into the composer's assist widget
+              — the panel the writer is actually looking at while typing — so
+              this column keeps only the actions that return *text*: a rewrite to
+              read, an outline to follow, an SEO report, a plagiarism check. Two
+              rows of the same buttons in two places was the integration problem,
+              not a convenience.
             */}
-            <div className="mb-3">
-              <div className="mb-1.5 flex items-center justify-between">
-                <span className="type-caption font-semibold uppercase tracking-wider text-accent-violet">
-                  Quick edits
-                </span>
-                <span className="type-caption text-surface-500">
-                  {hasSelection ? "on your selection" : "on the whole draft"}
-                </span>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {PILOT_QUICK_ACTIONS.map((a) => (
-                  <button
-                    key={a.id}
-                    onClick={() => runPilot(a.id)}
-                    disabled={pilotBusy !== null || copilotBusy !== null || content.trim().length < 20}
-                    title={a.hint}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-accent-violet/25 bg-accent-violet/10 px-2.5 py-1.5 type-caption font-medium text-accent-violet transition-colors hover:bg-accent-violet/20 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {pilotBusy === a.id ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                    {a.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
             <div className="grid grid-cols-2 gap-2">
               <CopilotButton
                 onClick={() => runCopilot("rewrite")}
@@ -455,7 +422,6 @@ function SidebarContent(props: SidebarContentProps) {
                       : copilotResult.action === "headline" ? "Headline"
                       : copilotResult.action === "tags" ? "Tags"
                       : copilotResult.action === "curate" ? "Curation brief"
-                      : copilotResult.action === "pilot" ? "Pilot edit"
                       : "Brain answer"}
                   </span>
                   <div className="flex items-center gap-1.5">
@@ -508,31 +474,12 @@ function SidebarContent(props: SidebarContentProps) {
                     ))}
                   </div>
                 )}
-                {copilotResult.ops && copilotResult.ops.length > 0 ? (
-                  <ul className="mt-2 space-y-1">
-                    {copilotResult.ops.slice(0, 6).map((op, i) => (
-                      <li
-                        key={i}
-                        className="rounded-md border border-accent-violet/20 bg-surface-900/60 px-2 py-1.5 type-caption text-surface-300"
-                      >
-                        <span className="mr-1.5 font-semibold uppercase tracking-wide text-accent-violet">
-                          {op.kind.replace(/-/g, " ")}
-                        </span>
-                        <span className="text-surface-400">
-                          {(op.kind === "fix" ? op.find : op.text)?.slice(0, 80)}
-                          {(op.kind === "fix" ? op.find : op.text)!.length > 80 ? "…" : ""}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
                 <button
                   onClick={() => applyCopilot(copilotResult)}
                   className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-accent-violet to-brand-500 px-3 py-2 type-meta text-white shadow-glow hover:scale-[1.02] transition-all"
                 >
                   <Wand2 className="h-3 w-3" />
-                  {copilotResult.action === "pilot" ? `Apply ${copilotResult.ops?.length ?? 0} edit${(copilotResult.ops?.length ?? 0) === 1 ? "" : "s"}`
-                    : copilotResult.action === "headline" ? "Use as title"
+                  {copilotResult.action === "headline" ? "Use as title"
                     : copilotResult.action === "summarize" ? "Use as excerpt"
                     : copilotResult.action === "tags" ? "Add tags"
                     : copilotResult.action === "rewrite" ? "Replace draft"

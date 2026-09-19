@@ -13,7 +13,18 @@ import { StudioPreview } from "@/components/studio/StudioPreview";
 import { StudioSidebar } from "@/components/studio/StudioSidebar";
 import { CheckedEditor } from "@/components/studio/CheckedEditor";
 import { applySuggestion, applySuggestions, type WritingSuggestion } from "@/lib/writing-checks";
-import { applyPilotOps, type PilotAction, type PilotOp } from "@/lib/brain-pilot";
+import {
+  applyPilotOps,
+  reviewPilotEdits,
+  PILOT_OP_FIELD,
+  type PilotAction,
+  type PilotComposerState,
+  type PilotEditReview,
+  type PilotOp,
+} from "@/lib/brain-pilot";
+import { PilotReview } from "@/components/studio/PilotReview";
+import { InlineAssist, type AssistArticleState } from "@/components/studio/InlineAssist";
+import { forgeArticle, type ArticleAsk, type ForgedArticle } from "@/lib/article-forge";
 import type { EditorRange } from "@/components/studio/CheckedEditor";
 
 const AUTOSAVE_MS = 4000;
@@ -80,11 +91,43 @@ export default function StudioPage() {
   const [pilotBusy, setPilotBusy] = useState<PilotAction | null>(null);
   const [pilotNotice, setPilotNotice] = useState<{ message: string; undo: (() => void) | null } | null>(null);
   const [selectionRange, setSelectionRange] = useState<EditorRange>({ selectionStart: 0, selectionEnd: 0, cursor: 0, hasSelection: false });
+  /**
+   * The pending proposal under review.
+   *
+   * `base` is the composer as it stands *after* every edit kept so far, which is
+   * what the remaining diffs are computed against; `origin` is where the reply
+   * started, so one undo rewinds the whole reply rather than one increment.
+   */
+  const [pilotReview, setPilotReview] = useState<{
+    action: PilotAction;
+    reply: string;
+    ranges: EditorRange;
+    base: PilotComposerState;
+    origin: PilotComposerState;
+    pending: PilotOp[];
+    reviews: PilotEditReview[];
+  } | null>(null);
+  const reviewRef = useRef<HTMLDivElement | null>(null);
   const [reviewNotice, setReviewNotice] = useState<string | null>(null);
+  /*
+   * The Article Forge.
+   *
+   * The generated piece is held in a ref, not in state: it is a document, not a
+   * view, and nothing renders it until the writer asks to put it in the
+   * composer. Only its summary lives in state, so a 1,200-word draft does not
+   * re-render the page on every progress tick.
+   */
+  const [article, setArticle] = useState<AssistArticleState>({
+    busy: false,
+    progress: null,
+    error: null,
+    summary: null,
+  });
+  const forgedRef = useRef<ForgedArticle | null>(null);
   const [copilotBusy, setCopilotBusy] = useState<string | null>(null);
   const [copilotPrompt, setCopilotPrompt] = useState("");
   const [copilotError, setCopilotError] = useState<string | null>(null);
-  const [copilotResult, setCopilotResult] = useState<{ action: "rewrite" | "continue" | "outline" | "summarize" | "headline" | "tags" | "curate" | "assist" | "seo" | "plagiarism" | "optimize" | "pilot"; text: string; alternatives?: string[]; ops?: PilotOp[]; degraded?: boolean; meta?: { notes?: string[]; score?: number; grade?: string; heading?: string; tags?: string[]; wordsBefore?: number; wordsAfter?: number } } | null>(null);
+  const [copilotResult, setCopilotResult] = useState<{ action: "rewrite" | "continue" | "outline" | "summarize" | "headline" | "tags" | "curate" | "assist" | "seo" | "plagiarism" | "optimize"; text: string; alternatives?: string[]; meta?: { notes?: string[]; score?: number; grade?: string; heading?: string; tags?: string[]; wordsBefore?: number; wordsAfter?: number } } | null>(null);
   const mountedRef = useRef(true);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   /*
@@ -145,18 +188,47 @@ export default function StudioPage() {
     return () => clearTimeout(timer);
   }, [content, title, excerpt, tags, categoryName, showPreview]);
 
+  /**
+   * Tell the brain what the writer decided.
+   *
+   * Fire-and-forget on purpose: the important half of the interaction is the
+   * edit landing in the draft, and a writer must never wait on telemetry — or
+   * see it fail. The outcomes are what the pilot learns from, so they are sent
+   * in one small batch per decision rather than held in a queue that a refresh
+   * would lose.
+   */
+  const recordDecisions = useCallback(
+    (outcomes: { action: string; kind: "kept" | "discarded" | "fix" | "article" | "empty"; field?: string; opKind?: string; edits?: number }[]) => {
+      if (outcomes.length === 0) return;
+      void fetch("/api/ai/studio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ action: "learn", outcomes }),
+      }).catch(() => {});
+    },
+    []
+  );
+
   /** Apply one inline fix to its exact range, then let the debounce re-check. */
   const applyWritingCheck = useCallback((suggestion: WritingSuggestion) => {
     setContent((prev) => applySuggestion(prev, suggestion));
     // Applied fixes shift every later offset, so the remaining suggestions are
     // dropped rather than applied against stale ranges; the debounce refills.
     setWritingChecks((prev) => (prev ? { ...prev, suggestions: [] } : prev));
-  }, []);
+    // The kind of correction a writer accepts in place is the clearest signal
+    // available about what this publication's prose keeps getting wrong.
+    recordDecisions([{ action: "inspect", kind: "fix", field: "content", opKind: suggestion.kind }]);
+  }, [recordDecisions]);
 
   const applyAllWritingChecks = useCallback(() => {
+    const applied = writingChecks?.suggestions.filter((s) => s.replacement !== null) ?? [];
     setContent((prev) => (writingChecks ? applySuggestions(prev, writingChecks.suggestions) : prev));
     setWritingChecks((prev) => (prev ? { ...prev, suggestions: [] } : prev));
-  }, [writingChecks]);
+    recordDecisions(
+      applied.map((s) => ({ action: "inspect", kind: "fix" as const, field: "content", opKind: s.kind }))
+    );
+  }, [writingChecks, recordDecisions]);
 
   const dismissWritingCheck = useCallback((id: string) => {
     setWritingChecks((prev) =>
@@ -240,42 +312,81 @@ export default function StudioPage() {
    * The whole previous state is captured for undo, because a rewrite the writer
    * disagrees with should cost one tap, not a re-type.
    */
-  const applyPilot = useCallback(
-    (ops: PilotOp[], ranges: EditorRange) => {
-      if (ops.length === 0) return;
-      const before = { title, content, excerpt, tags };
-      const next = applyPilotOps(before, ops, ranges);
-      if (next.applied.length === 0) {
-        setPilotNotice({ message: "Nothing needed changing there.", undo: null });
-        return;
-      }
+  /**
+   * Write a resolved composer state back into the four fields, with one-tap undo.
+   *
+   * Every pilot path goes through here, so the undo is the same gesture whether
+   * the writer kept one edit or all of them: the notice describes what landed and
+   * restores the draft from *before the first edit of that reply*, not from a
+   * snapshot taken per edit — an undo that rewinded one step would leave the
+   * draft in a state the writer never wrote.
+   */
+  const commitComposer = useCallback(
+    (next: { content: string; title: string; excerpt: string; tags: string[] }, origin: PilotComposerState, label: string) => {
       setTitle(next.title);
       setContent(next.content);
       setExcerpt(next.excerpt);
       setTags(next.tags);
       setPilotNotice({
-        message: `Pilot ${next.applied.join(", ")}.`,
+        message: label,
         undo: () => {
-          setTitle(before.title);
-          setContent(before.content);
-          setExcerpt(before.excerpt);
-          setTags(before.tags);
+          setTitle(origin.title);
+          setContent(origin.content);
+          setExcerpt(origin.excerpt);
+          setTags(origin.tags);
           setPilotNotice(null);
+          setPilotReview(null);
         },
       });
     },
-    [content, excerpt, tags, title]
+    []
   );
 
   /**
-   * Ask the pilot for an edit.
+   * Stage a pilot reply for review instead of applying it.
    *
-   * `apply` decides who commits the result: the inline toolbar applies it in
-   * place (the writer asked *at* that passage, so a second confirmation would be
-   * friction), while the sidebar stages it in the copilot panel for review.
+   * This is the parse boundary: whatever the model returned is turned into a
+   * list of *reviewable* edits, each diffed against the composer as it stands. A
+   * reply with nothing to do is reported as such rather than silently leaving a
+   * panel open on an empty list.
+   */
+  const stagePilot = useCallback(
+    (
+      action: PilotAction,
+      reply: string,
+      ops: PilotOp[],
+      ranges: EditorRange,
+      /** The composer the request was made against — decisive for the diff. */
+      requested: { title: string; content: string; excerpt: string; tags: string[] }
+    ) => {
+      const base = { ...requested, tags: [...requested.tags] };
+      const reviews = reviewPilotEdits(base, ops, ranges);
+      if (reviews.length === 0) {
+        setPilotNotice({ message: reply || "The pilot found nothing to change.", undo: null });
+        return;
+      }
+      setPilotReview({ action, reply, ranges, base, origin: base, pending: ops, reviews });
+      // The panel lives under the editor, which on a phone may be a screen away
+      // from the Quick-edits button that opened it. Bringing it into view is the
+      // difference between a proposal and a no-op.
+      requestAnimationFrame(() => {
+        reviewRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      });
+    },
+    []
+  );
+
+  /**
+   * Ask the pilot for an edit, then stage every proposed change for review.
+   *
+   * The inline toolbar stages too, deliberately. It used to apply a selection
+   * rewrite in place, which is fast and is also the one interaction where a
+   * misread costs the writer a paragraph they have to reconstruct. Reviewing the
+   * diff first is worth the extra tap; "Keep" is directly under the sentence it
+   * changes.
    */
   const runPilot = useCallback(
-    async (action: PilotAction, instruction?: string, opts: { apply?: boolean; range?: EditorRange } = {}) => {
+    async (action: PilotAction, instruction?: string, opts: { range?: EditorRange } = {}) => {
       const ta = contentRef.current;
       const ranges: EditorRange =
         opts.range ??
@@ -288,9 +399,14 @@ export default function StudioPage() {
             }
           : selectionRange);
       const selection = ranges.hasSelection ? content.slice(ranges.selectionStart, ranges.selectionEnd) : "";
+      // Snapshot the composer as the model will see it. Reviewing against a
+      // later state would diff the proposal against a draft it was never written
+      // for, which is how a diff starts lying.
+      const requested = { title, content, excerpt, tags };
 
       setPilotBusy(action);
       setPilotNotice(null);
+      setPilotReview(null);
       setError(null);
       try {
         const res = await fetch("/api/ai/studio", {
@@ -312,25 +428,212 @@ export default function StudioPage() {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || "The pilot could not answer.");
         const ops: PilotOp[] = Array.isArray(data.ops) ? data.ops : [];
-        if (opts.apply) {
-          applyPilot(ops, ranges);
-          // The applied edit moved the text under the caret, so the selection
-          // that opened the pilot bar no longer exists. Clearing it hides the
-          // bar rather than leaving it offering to refine a passage that is
-          // gone (the undo notice is deliberately kept — `??` preserves it).
-          setSelectionRange({ selectionStart: 0, selectionEnd: 0, cursor: 0, hasSelection: false });
-          if (data.text) setPilotNotice((prev) => prev ?? { message: data.text, undo: null });
-        } else {
-          setCopilotResult({ action: "pilot", text: data.text ?? "", ops, degraded: data.degraded, meta: data.meta });
-        }
+        stagePilot(action, data.text ?? "", ops, ranges, requested);
       } catch (err) {
         setError(err instanceof Error ? err.message : "The pilot could not answer.");
       } finally {
         setPilotBusy(null);
       }
     },
-    [applyPilot, categoryName, content, excerpt, selectionRange, tags, title]
+    [categoryName, content, excerpt, selectionRange, stagePilot, tags, title]
   );
+
+  /**
+   * Decide one proposed edit.
+   *
+   * Keeping an edit applies it immediately and re-diffs the remainder against
+   * the draft it produced, so the panel always shows edits relative to the text
+   * the writer is actually looking at. Discarding just drops it — the ops are
+   * independent by construction (a `fix` locates its own phrase, field edits are
+   * absolute), so neither choice can make a later one wrong.
+   */
+  const decidePilotEdit = useCallback(
+    (op: PilotOp, keep: boolean) => {
+      if (!pilotReview) return;
+      const { action, pending: pendingAtStart } = pilotReview;
+      const { base, ranges, origin, pending } = pilotReview;
+      let nextBase = base;
+
+      if (keep) {
+        const applied = applyPilotOps(base, [op], ranges);
+        if (applied.applied.length === 0) {
+          // Nothing happened, so do not claim it did — and drop it from the list.
+          const rest = pending.filter((candidate) => candidate !== op);
+          setPilotReview(
+            rest.length === 0
+              ? null
+              : { ...pilotReview, pending: rest, reviews: reviewPilotEdits(base, rest, ranges) }
+          );
+          setPilotNotice({ message: "Nothing needed changing there.", undo: null });
+          return;
+        }
+        nextBase = { content: applied.content, title: applied.title, excerpt: applied.excerpt, tags: applied.tags };
+        commitComposer(nextBase, origin, `Pilot ${applied.applied.join(", ")}.`);
+        recordDecisions([
+          {
+            action,
+            kind: "kept",
+            field: PILOT_OP_FIELD[op.kind],
+            opKind: op.kind,
+            edits: pendingAtStart.length,
+          },
+        ]);
+      } else {
+        // A discarded proposal is as informative as a kept one: it is the half
+        // of the signal that stops the pilot proposing the same thing again.
+        recordDecisions([
+          {
+            action,
+            kind: "discarded",
+            field: PILOT_OP_FIELD[op.kind],
+            opKind: op.kind,
+            edits: pendingAtStart.length,
+          },
+        ]);
+      }
+
+      const rest = pending.filter((candidate) => candidate !== op);
+      if (rest.length === 0) {
+        setPilotReview(null);
+        return;
+      }
+      setPilotReview({ ...pilotReview, base: nextBase, pending: rest, reviews: reviewPilotEdits(nextBase, rest, ranges) });
+    },
+    [commitComposer, pilotReview, recordDecisions]
+  );
+
+  /** Keep every remaining edit at once, in the order the model proposed them. */
+  const keepAllPilotEdits = useCallback(() => {
+    if (!pilotReview) return;
+    const { base, ranges, origin, pending, action } = pilotReview;
+    const applied = applyPilotOps(base, pending, ranges);
+    if (applied.applied.length === 0) {
+      setPilotReview(null);
+      setPilotNotice({ message: "Nothing needed changing there.", undo: null });
+      return;
+    }
+    commitComposer(
+      { content: applied.content, title: applied.title, excerpt: applied.excerpt, tags: applied.tags },
+      origin,
+      `Pilot ${applied.applied.join(", ")}.`
+    );
+    recordDecisions(
+      pending.map((op) => ({
+        action,
+        kind: "kept" as const,
+        field: PILOT_OP_FIELD[op.kind],
+        opKind: op.kind,
+        edits: pending.length,
+      }))
+    );
+    setPilotReview(null);
+  }, [commitComposer, pilotReview, recordDecisions]);
+
+  /** Drop the whole proposal without touching the draft. */
+  const discardPilotEdits = useCallback(() => {
+    setPilotReview(null);
+    setPilotNotice({ message: "Proposed edits discarded — your draft is unchanged.", undo: null });
+  }, []);
+
+  /**
+   * One bounded generation for the Article Forge.
+   *
+   * The forge runs here, in the composer, asking the studio endpoint for one
+   * part at a time. That is what keeps a 1,200-word article from depending on a
+   * single serverless request surviving end to end — the thing that used to cut
+   * the piece off — and it is what lets the panel say which section is being
+   * written instead of showing a spinner for a minute.
+   */
+  const askArticle = useCallback<ArticleAsk>(async ({ kind, prompt, maxTokens }) => {
+    try {
+      const res = await fetch("/api/ai/studio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ action: "compose", promptKind: kind, prompt, maxTokens }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => ({}));
+      return typeof data?.text === "string" && data.text.trim() ? data.text : null;
+    } catch {
+      // A failed part is reported by the forge as a missing section, which is
+      // more useful than an exception in the middle of an article.
+      return null;
+    }
+  }, []);
+
+  /** Write a whole article from the composer's own context. */
+  const writeArticle = useCallback(
+    async (topic: string, targetWords: number) => {
+      setArticle({ busy: true, progress: "Planning the article…", error: null, summary: null });
+      forgedRef.current = null;
+      try {
+        const forged = await forgeArticle(
+          { topic, category: categoryName, keywords: tags, targetWords },
+          askArticle,
+          {
+            onProgress: (p) =>
+              setArticle((prev) => ({
+                ...prev,
+                progress: p.phase === "writing" ? `Section ${p.sectionIndex + 1} of ${p.sections} — ${p.label}` : p.label,
+              })),
+          }
+        );
+        forgedRef.current = forged;
+        setArticle({
+          busy: false,
+          progress: null,
+          error: forged.words === 0 ? "Nothing came back from the writing model." : null,
+          summary: {
+            title: forged.plan.title,
+            words: forged.words,
+            sections: forged.plan.sections.length,
+            repairs: forged.repairs,
+            degraded: forged.degraded,
+          },
+        });
+      } catch (err) {
+        setArticle({
+          busy: false,
+          progress: null,
+          error: err instanceof Error ? err.message : "The article could not be written.",
+          summary: null,
+        });
+      }
+    },
+    [askArticle, categoryName, tags]
+  );
+
+  /**
+   * Put the forged article in front of the writer — as a proposal, not a fait
+   * accompli. Four ops, because an article is four things (the body, the
+   * headline, the excerpt, the tags) and a writer may well want three of them.
+   */
+  const useForgedArticle = useCallback(() => {
+    const forged = forgedRef.current;
+    if (!forged) return;
+    const ops: PilotOp[] = [
+      { kind: "replace-draft", text: forged.markdown },
+      { kind: "set-title", text: forged.plan.title },
+      { kind: "set-excerpt", text: forged.excerpt },
+      { kind: "add-tags", text: forged.tags.join(", ") },
+    ];
+    stagePilot(
+      "article",
+      `Drafted “${forged.plan.title}” — ${forged.words} words in ${forged.plan.sections.length} sections.`,
+      ops,
+      selectionRange,
+      { title, content, excerpt, tags }
+    );
+    recordDecisions([{ action: "article", kind: "article", field: "content", opKind: "replace-draft", edits: ops.length }]);
+    forgedRef.current = null;
+    setArticle((prev) => ({ ...prev, summary: null }));
+  }, [content, excerpt, recordDecisions, selectionRange, stagePilot, tags, title]);
+
+  const discardForgedArticle = useCallback(() => {
+    forgedRef.current = null;
+    setArticle((prev) => ({ ...prev, summary: null }));
+  }, []);
 
   const readSelection = useCallback((): string => { const ta = contentRef.current; if (ta && ta.selectionStart !== ta.selectionEnd) return ta.value.slice(ta.selectionStart, ta.selectionEnd).trim(); return ""; }, []);
 
@@ -344,19 +647,6 @@ export default function StudioPage() {
   const applyCopilot = useCallback((result: NonNullable<typeof copilotResult>) => {
     const ta = contentRef.current; const { action, text, meta } = result;
     const selected = ta && ta.selectionStart !== ta.selectionEnd; const start = ta?.selectionStart ?? 0; const end = ta?.selectionEnd ?? 0;
-    // A staged pilot reply applies through the op vocabulary, against the live
-    // caret — the writer has had a moment to move it, and where it rests now is
-    // where they meant the edit to land.
-    if (action === "pilot") {
-      applyPilot(result.ops ?? [], {
-        selectionStart: start,
-        selectionEnd: end,
-        cursor: end,
-        hasSelection: Boolean(selected),
-      });
-      setCopilotResult(null);
-      return;
-    }
     if (action === "headline") { setTitle(text); setCopilotResult(null); return; }
     if (action === "summarize") { setExcerpt(text); setCopilotResult(null); return; }
     if (action === "tags") { const next = text.split(",").map((t) => t.trim().toLowerCase().replace(/^#/, "").replace(/\s+/g, "-")).filter(Boolean).slice(0, 10); setTags((prev) => [...new Set([...prev, ...next])].slice(0, 10)); setTagInput(""); setCopilotResult(null); return; }
@@ -364,7 +654,7 @@ export default function StudioPage() {
     if (action === "continue") { setContent((prev) => prev.trimEnd() + "\n\n" + (meta?.heading ? meta.heading + "\n\n" : "") + text); setCopilotResult(null); return; }
     if (ta) { if (selected) { setContent(ta.value.slice(0, start) + text + "\n\n" + ta.value.slice(end)); } else { const pos = ta.selectionStart ?? ta.value.length; const suffix = pos > 0 && !/\n$/.test(ta.value.slice(0, pos)) ? "\n\n" : ""; setContent(ta.value.slice(0, pos) + suffix + text + "\n\n" + ta.value.slice(pos)); } requestAnimationFrame(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }); } else { setContent((prev) => prev.trimEnd() + "\n\n" + text); }
     setCopilotResult(null);
-  }, [applyPilot]);
+  }, []);
 
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); }, []);
   const handleDragLeave = useCallback(() => { setIsDragOver(false); }, []);
@@ -519,10 +809,59 @@ export default function StudioPage() {
                   onApply={applyWritingCheck}
                   onDismiss={dismissWritingCheck}
                   onSelectionChange={setSelectionRange}
-                  onPilot={(action, range) => void runPilot(action, undefined, { apply: true, range })}
-                  pilotBusy={pilotBusy}
                   placeholder="Start writing your story... Share your perspective on technology, culture, business, or life in East Africa. Drag an image in to place it inline."
                 />
+                <div ref={reviewRef}>
+                  {pilotReview ? (
+                    <PilotReview
+                      action={pilotReview.action}
+                      reply={pilotReview.reply}
+                      reviews={pilotReview.reviews}
+                      busy={pilotBusy !== null}
+                      onAccept={(index) => {
+                        const op = pilotReview.reviews.find((r) => r.index === index)?.op;
+                        if (op) decidePilotEdit(op, true);
+                      }}
+                      onReject={(index) => {
+                        const op = pilotReview.reviews.find((r) => r.index === index)?.op;
+                        if (op) decidePilotEdit(op, false);
+                      }}
+                      onAcceptAll={keepAllPilotEdits}
+                      onRejectAll={discardPilotEdits}
+                      onDismiss={discardPilotEdits}
+                    />
+                  ) : null}
+                </div>
+
+                {/*
+                  The copilot, in the composer.
+
+                  It sits below the review panel so that a proposal always lands
+                  closest to the text it changes, and it reads the live selection
+                  from the editor itself when an action fires — the pilot's own
+                  ranges are measured at that moment rather than from a state
+                  value that may have moved on.
+                */}
+                <InlineAssist
+                  title={title}
+                  content={content}
+                  excerpt={excerpt}
+                  tags={tags}
+                  selection={selectionRange}
+                  checks={writingChecks}
+                  checksBusy={checksBusy}
+                  pilotBusy={pilotBusy}
+                  onApplySuggestion={applyWritingCheck}
+                  onApplyAllSuggestions={applyAllWritingChecks}
+                  onDismissSuggestion={dismissWritingCheck}
+                  onPilot={(action, instruction) => void runPilot(action, instruction)}
+                  article={article}
+                  defaultTopic={(title.trim() || tags[0] || "").slice(0, 120)}
+                  onWriteArticle={writeArticle}
+                  onUseArticle={useForgedArticle}
+                  onDiscardArticle={discardForgedArticle}
+                />
+
                 <div className="space-y-2">
                   <label className="text-xs font-semibold text-surface-300 flex items-center gap-1.5"><AlignLeft className="w-3 h-3 text-accent-strong" />Excerpt</label>
                   <textarea placeholder="A brief summary of your story (shown in feeds and search results)..." value={excerpt} onChange={(e) => setExcerpt(e.target.value)} rows={3} maxLength={300} className="w-full bg-surface-800/80 border border-surface-700/50 rounded-xl px-4 py-3 text-sm text-editor font-medium placeholder-editor placeholder:font-normal focus:outline-none focus:border-brand-500/40 focus:ring-1 focus:ring-brand-500/20 resize-none leading-relaxed transition-all" />
@@ -532,7 +871,7 @@ export default function StudioPage() {
             )}
           </div>
 
-          <StudioSidebar title={title} content={content} tags={tags} setTags={setTags} tagInput={tagInput} setTagInput={setTagInput} handleAddTag={handleAddTag} handleRemoveTag={handleRemoveTag} handleTagKeyDown={handleTagKeyDown} aiSuggestions={aiSuggestions} setAiSuggestions={setAiSuggestions} assistWithPost={assistWithPost} categoryId={categoryId} setCategoryId={setCategoryId} categoryName={categoryName} setCategoryName={setCategoryName} categoriesList={categoriesList} categoryOpen={categoryOpen} setCategoryOpen={setCategoryOpen} scheduledFor={scheduledFor} setScheduledFor={setScheduledFor} now={now} wordCount={wordCount} readTime={readTime} myStories={myStories} storiesLoading={storiesLoading} storiesUnauth={storiesUnauth} editingId={editingId} openStory={openStory} newStory={newStory} deletePost={deletePost} pilotBusy={pilotBusy} runPilot={runPilot} hasSelection={selectionRange.hasSelection} copilotBusy={copilotBusy} runCopilot={runCopilot} copilotPrompt={copilotPrompt} setCopilotPrompt={setCopilotPrompt} copilotError={copilotError} setCopilotError={setCopilotError} copilotResult={copilotResult} setCopilotResult={setCopilotResult} applyCopilot={applyCopilot} writingChecks={writingChecks} checksBusy={checksBusy} applyWritingCheck={applyWritingCheck} applyAllWritingChecks={applyAllWritingChecks} dismissWritingCheck={dismissWritingCheck} error={error} setError={setError} />
+          <StudioSidebar title={title} content={content} tags={tags} setTags={setTags} tagInput={tagInput} setTagInput={setTagInput} handleAddTag={handleAddTag} handleRemoveTag={handleRemoveTag} handleTagKeyDown={handleTagKeyDown} aiSuggestions={aiSuggestions} setAiSuggestions={setAiSuggestions} assistWithPost={assistWithPost} categoryId={categoryId} setCategoryId={setCategoryId} categoryName={categoryName} setCategoryName={setCategoryName} categoriesList={categoriesList} categoryOpen={categoryOpen} setCategoryOpen={setCategoryOpen} scheduledFor={scheduledFor} setScheduledFor={setScheduledFor} now={now} wordCount={wordCount} readTime={readTime} myStories={myStories} storiesLoading={storiesLoading} storiesUnauth={storiesUnauth} editingId={editingId} openStory={openStory} newStory={newStory} deletePost={deletePost} copilotBusy={copilotBusy} runCopilot={runCopilot} copilotPrompt={copilotPrompt} setCopilotPrompt={setCopilotPrompt} copilotError={copilotError} setCopilotError={setCopilotError} copilotResult={copilotResult} setCopilotResult={setCopilotResult} applyCopilot={applyCopilot} writingChecks={writingChecks} checksBusy={checksBusy} applyWritingCheck={applyWritingCheck} applyAllWritingChecks={applyAllWritingChecks} dismissWritingCheck={dismissWritingCheck} error={error} setError={setError} />
         </div>
       </div>
     </div>

@@ -1,10 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { Check, ImagePlus, Loader2, Sparkles, X } from "lucide-react";
+import { Check, ImagePlus, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { WritingSuggestion } from "@/lib/writing-checks";
-import { PILOT_QUICK_ACTIONS, type PilotAction } from "@/lib/brain-pilot";
 
 /**
  * The composer textarea with the writing checks drawn *on* the text, the Brain
@@ -129,8 +128,6 @@ export function CheckedEditor({
   onApply,
   onDismiss,
   onSelectionChange,
-  onPilot,
-  pilotBusy = null,
   placeholder,
   disabled = false,
 }: {
@@ -140,18 +137,20 @@ export function CheckedEditor({
   suggestions: WritingSuggestion[];
   onApply: (suggestion: WritingSuggestion) => void;
   onDismiss: (id: string) => void;
-  /** Reports the current selection, so the page knows what a pilot action targets. */
+  /**
+   * Reports the current selection.
+   *
+   * The assist widget is what acts on it now: the editor measures the selection
+   * and hands it out, and the widget asks the pilot for an edit against those
+   * same offsets, so an op can never be applied to the wrong words.
+   */
   onSelectionChange?: (range: EditorRange) => void;
-  /** Run a pilot action. The range travels with it so ops apply where they were asked for. */
-  onPilot?: (action: PilotAction, range: EditorRange) => void;
-  pilotBusy?: PilotAction | null;
   placeholder?: string;
   disabled?: boolean;
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const mirrorRef = useRef<HTMLDivElement | null>(null);
   const [active, setActive] = useState<ActiveMark | null>(null);
-  const [range, setRange] = useState<EditorRange>(EMPTY_RANGE);
   const [isDesktop, setIsDesktop] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -197,9 +196,9 @@ export function CheckedEditor({
   }, [textareaRef]);
 
   const publishRange = useCallback(() => {
-    const next = readRange();
-    setRange(next);
-    onSelectionChange?.(next);
+    // The selection is reported, not held: the widget owns what to do with it,
+    // and a copy kept here would only ever be a second opinion about the caret.
+    onSelectionChange?.(readRange());
   }, [readRange, onSelectionChange]);
 
   const close = useCallback(() => setActive(null), []);
@@ -295,8 +294,6 @@ export function CheckedEditor({
     setDragging(false);
     void insertImages(Array.from(event.dataTransfer.files));
   }
-
-  const showPilotBar = !disabled && range.hasSelection && Boolean(onPilot);
 
   return (
     <div
@@ -395,31 +392,6 @@ export function CheckedEditor({
         </div>
       ) : null}
 
-      {/*
-        The pilot bar. Sticky rather than floating: it needs no caret
-        measurement, and on a phone it sits above the keyboard where a thumb is
-        already resting instead of under it.
-      */}
-      {showPilotBar ? (
-        <div className="sticky bottom-2 z-20 mt-2 flex items-center gap-1.5 overflow-x-auto rounded-xl border border-accent-violet/30 bg-surface-900/95 p-1.5 shadow-glow backdrop-blur-xl">
-          <span className="ml-1 hidden shrink-0 items-center gap-1 type-caption font-semibold uppercase tracking-wider text-accent-violet sm:flex">
-            <Sparkles className="h-3 w-3" />
-            Pilot
-          </span>
-          {PILOT_QUICK_ACTIONS.map((a) => (
-            <button
-              key={a.id}
-              onClick={() => onPilot?.(a.id, range)}
-              disabled={pilotBusy !== null}
-              title={a.hint}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-accent-violet/25 bg-accent-violet/10 px-3 py-2 type-caption font-medium text-accent-violet transition-colors hover:bg-accent-violet/20 disabled:opacity-40 sm:px-2.5 sm:py-1.5"
-            >
-              {pilotBusy === a.id ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-              {a.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
 
       {active ? (
         <>
@@ -429,7 +401,9 @@ export function CheckedEditor({
             role="dialog"
             aria-label={active.suggestion.message}
             className={cn(
-              "z-40 border border-surface-700 bg-surface-900 p-3 shadow-xl",
+              // Above the mobile bottom nav, which is z-40: a bottom sheet whose
+              // lower half is a nav bar is a sheet the writer cannot use.
+              "z-50 border border-surface-700 bg-surface-900 p-3 shadow-xl",
               // Phone: a bottom sheet. Desktop: the popover anchored to the mark.
               "fixed inset-x-0 bottom-0 rounded-t-2xl pb-[max(0.75rem,env(safe-area-inset-bottom))]",
               "sm:absolute sm:inset-x-auto sm:bottom-auto sm:w-[17rem] sm:rounded-xl sm:pb-3"

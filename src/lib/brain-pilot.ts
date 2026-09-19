@@ -71,6 +71,15 @@ export const PILOT_ACTIONS = [
   "excerpt",
   "tags",
   "ask",
+  /**
+   * A whole article, staged rather than typed.
+   *
+   * It is not an action the model is asked for (the forge writes the piece)
+   * but it *is* a set of ops from one reply — draft, headline, excerpt, tags —
+   * and everything a writer is handed as ops gets reviewed. Giving it a name of
+   * its own is what lets the review panel say what it is looking at.
+   */
+  "article",
 ] as const;
 
 export type PilotAction = (typeof PILOT_ACTIONS)[number];
@@ -134,6 +143,11 @@ export function pilotInstruction(action: PilotAction, extra?: string): string {
       return focus
         ? `Apply this instruction to the passage: ${focus}`
         : "Improve this passage for clarity and flow. Return only the rewritten passage.";
+    case "article":
+      // The forge never routes through here — it answers with a plan and writes
+      // each section itself — but every action needs an instruction so an
+      // unknown one cannot silently borrow another's shape.
+      return "You are drafting a complete article. Plan it first, then finish every section you start.";
   }
 }
 
@@ -415,3 +429,232 @@ export function defaultOpsFor(
 export function isBodyAction(action: PilotAction): boolean {
   return BODY_ACTIONS.includes(action);
 }
+
+/* ── Reviewing edits before they land ─────────────────────────────────────── */
+
+/**
+ * A writer should not have to *apply* an edit to find out what it does.
+ *
+ * The ops were already data, which is what makes this possible: each one can be
+ * applied to a copy of the composer on its own and diffed, so the proposed
+ * change can be shown before anything is committed. That turns the pilot from an
+ * assistant you supervise into one you review, and it is the difference between
+ * "the AI edited my article" and "the AI suggested this sentence".
+ */
+
+export type DiffSegment = { type: "same" | "add" | "del"; text: string };
+
+/**
+ * Tokenise for diffing, keeping whitespace attached to the preceding word.
+ *
+ * Attaching the space to the word that precedes it keeps the output readable:
+ * splitting on whitespace alone produces a stream of alternating space-and-word
+ * tokens, so a single changed word reads as four segments instead of one.
+ */
+function tokenize(text: string): string[] {
+  return text.split(/(?<=\s)/).filter((t) => t.length > 0);
+}
+
+/** How many tokens either side of the change we are willing to run an LCS over. */
+const DIFF_LCS_CAP = 600;
+
+/**
+ * A word-level diff, as runs of unchanged / added / removed text.
+ *
+ * Built to stay honest on a large input rather than fast on a small one. The
+ * common prefix and suffix are trimmed first, which is what makes the usual case
+ * — one sentence rewritten inside a 5,000-word draft — a diff over tens of
+ * tokens rather than thousands. What remains is capped: past the cap the methods
+ * fall back to reporting the middle as one replaced block, because a visible
+ * "these words changed" is worth more than an exact alignment computed over
+ * half a megabyte of prose.
+ */
+export function diffWords(before: string, after: string): DiffSegment[] {
+  if (before === after) return before ? [{ type: "same", text: before }] : [];
+
+  const a = tokenize(before);
+  const b = tokenize(after);
+
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head += 1;
+  let tail = 0;
+  while (
+    tail < a.length - head &&
+    tail < b.length - head &&
+    a[a.length - 1 - tail] === b[b.length - 1 - tail]
+  ) {
+    tail += 1;
+  }
+
+  const midA = a.slice(head, a.length - tail);
+  const midB = b.slice(head, b.length - tail);
+  const out: DiffSegment[] = [];
+  const headText = a.slice(0, head).join("");
+  const tailText = tail > 0 ? a.slice(a.length - tail).join("") : "";
+  if (headText) out.push({ type: "same", text: headText });
+
+  if (midA.length > DIFF_LCS_CAP || midB.length > DIFF_LCS_CAP) {
+    if (midA.join("").length > 0) out.push({ type: "del", text: midA.join("") });
+    if (midB.join("").length > 0) out.push({ type: "add", text: midB.join("") });
+  } else {
+    out.push(...lcsDiff(midA, midB));
+  }
+
+  if (tailText) out.push({ type: "same", text: tailText });
+  return mergeRuns(out);
+}
+
+/** Classic dynamic-programming LCS over two short token arrays. */
+function lcsDiff(a: string[], b: string[]): DiffSegment[] {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  // A single flat Int32Array keeps this allocation-light; the table is small
+  // because the caller has already trimmed the common prefix and suffix.
+  const table = new Int32Array(rows * cols);
+  for (let i = a.length - 1; i >= 0; i -= 1) {
+    for (let j = b.length - 1; j >= 0; j -= 1) {
+      table[i * cols + j] =
+        a[i] === b[j]
+          ? table[(i + 1) * cols + (j + 1)]! + 1
+          : Math.max(table[(i + 1) * cols + j]!, table[i * cols + (j + 1)]!);
+    }
+  }
+
+  const out: DiffSegment[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      out.push({ type: "same", text: a[i]! });
+      i += 1;
+      j += 1;
+    } else if (table[(i + 1) * cols + j]! >= table[i * cols + (j + 1)]!) {
+      out.push({ type: "del", text: a[i]! });
+      i += 1;
+    } else {
+      out.push({ type: "add", text: b[j]! });
+      j += 1;
+    }
+  }
+  while (i < a.length) out.push({ type: "del", text: a[i++]! });
+  while (j < b.length) out.push({ type: "add", text: b[j++]! });
+  return out;
+}
+
+/** Collapse adjacent runs of the same type so the renderer gets clean segments. */
+function mergeRuns(segments: DiffSegment[]): DiffSegment[] {
+  const out: DiffSegment[] = [];
+  for (const seg of segments) {
+    if (!seg.text) continue;
+    const last = out[out.length - 1];
+    if (last && last.type === seg.type) last.text += seg.text;
+    else out.push({ ...seg });
+  }
+  return out;
+}
+
+export type PilotField = "content" | "title" | "excerpt" | "tags";
+
+/** Which composer field an op writes to. Used by the diff view and the learning log. */
+export const PILOT_OP_FIELD: Record<PilotOpKind, PilotField> = {
+  "replace-selection": "content",
+  "insert-at-cursor": "content",
+  "replace-draft": "content",
+  append: "content",
+  fix: "content",
+  "set-title": "title",
+  "set-excerpt": "excerpt",
+  "add-tags": "tags",
+};
+
+const OP_LABEL: Record<PilotOpKind, string> = {
+  "replace-selection": "Rewrite the selected passage",
+  "insert-at-cursor": "Insert at the cursor",
+  "replace-draft": "Rewrite the whole draft",
+  append: "Add a closing passage",
+  fix: "Correct a phrase",
+  "set-title": "Set the headline",
+  "set-excerpt": "Set the excerpt",
+  "add-tags": "Add tags",
+};
+
+export interface PilotEditReview {
+  /** Position in the reply's op list — what accept/reject addresses. */
+  index: number;
+  op: PilotOp;
+  field: PilotField;
+  label: string;
+  /** The field's value before this edit, assuming earlier edits are kept. */
+  before: string;
+  /** The field's value after it. */
+  after: string;
+  segments: DiffSegment[];
+  /** True when this edit would not change anything — nothing to accept. */
+  noop: boolean;
+  /** True when it cannot be applied at all (an empty reply, a missing target). */
+  impossible: boolean;
+}
+
+/** Read one composer field as displayable text. */
+function fieldValue(state: PilotComposerState, field: PilotField): string {
+  if (field === "tags") return state.tags.join(", ");
+  return state[field];
+}
+
+/**
+ * Build the review list for a pilot reply.
+ *
+ * Each edit is previewed against the state that would exist if every earlier
+ * edit were kept, so the list reads top-to-bottom like a stack of patches and
+ * "keep all" reproduces exactly `applyPilotOps(state, ops)`. Editing one op and
+ * not the others is then a matter of dropping it from the list before applying,
+ * which is why the applier needs no per-op mode of its own.
+ */
+export function reviewPilotEdits(
+  state: PilotComposerState,
+  ops: PilotOp[],
+  ranges: PilotRanges
+): PilotEditReview[] {
+  const reviews: PilotEditReview[] = [];
+  let cursor: PilotComposerState = { ...state, tags: [...state.tags] };
+
+  ops.forEach((op, index) => {
+    const field = PILOT_OP_FIELD[op.kind];
+    const before = fieldValue(cursor, field);
+    const next = applyPilotOps(cursor, [op], ranges);
+    const after = fieldValue(next, field);
+
+    // Nothing changed *and* the applier said so: either it was a no-op, or it
+    // had nothing to act on (no selection, a `find` that is not in the draft).
+    const unchanged = next.applied.length === 0;
+    const impossible =
+      unchanged &&
+      (op.kind === "replace-selection"
+        ? ranges.selectionEnd <= ranges.selectionStart
+        : op.kind === "fix"
+          ? !op.find || !cursor.content.includes(op.find)
+          : !op.text.trim());
+
+    reviews.push({
+      index,
+      op,
+      field,
+      label: OP_LABEL[op.kind],
+      before,
+      after,
+      segments: field === "content" ? diffWords(before, after) : [],
+      noop: unchanged && !impossible,
+      impossible,
+    });
+
+    cursor = {
+      content: next.content,
+      title: next.title,
+      excerpt: next.excerpt,
+      tags: next.tags,
+    };
+  });
+
+  return reviews;
+}
+
