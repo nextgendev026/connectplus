@@ -2,6 +2,8 @@
 
 import { useState, useCallback, useEffect } from "react";
 import Image from "next/image";
+import { avatarSrc } from "@/lib/image-src";
+import OptimizedImage from "@/components/ui/OptimizedImage";
 import { useSession } from "next-auth/react";
 import {
   Heart,
@@ -62,9 +64,12 @@ function CommentItem({
     >
       <div className="flex gap-3">
         <div className="relative h-9 w-9 flex-shrink-0 overflow-hidden rounded-full ring-1 ring-surface-700">
-          <Image
-            src={comment.author.avatar || "https://i.pravatar.cc/300?img=0"}
+          {/* The commenter's own face or an initials plate — never a stranger's
+            * stock portrait fetched from a third-party host. */}
+          <OptimizedImage
+            src={avatarSrc(comment.author.avatar, comment.author.name || comment.author.username)}
             alt={comment.author.name || comment.author.username}
+            preset="avatar"
             fill
             className="object-cover"
           />

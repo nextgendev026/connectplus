@@ -9,6 +9,8 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { formatDate, estimateReadTime } from "@/lib/utils";
 import { postCoverSrc } from "@/lib/thumb";
+import { avatarSrc } from "@/lib/image-src";
+import OptimizedImage from "@/components/ui/OptimizedImage";
 import { getSiteConfig } from "@/lib/settings";
 import { stripSourcePromo } from "@/lib/seo";
 import { BookmarkButton } from "@/components/ui/BookmarkButton";
@@ -288,12 +290,26 @@ export default async function ArticlePage({ params }: ArticleParams) {
           </h1>
           <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
             <Link href={`/profile/${post.author.username}`} className="flex items-center gap-3">
+              {/*
+               * The author's own picture, resolved the way the rest of the app
+               * resolves avatars.
+               *
+               * This was a bare next/image on the stored URL, which failed for
+               * exactly the readers it mattered to: an avatar hosted somewhere
+               * the image config does not allowlist renders as nothing, and a
+               * reader with no avatar at all got a letter instead of a picture.
+               * `avatarSrc` serves the real image when there is one and an
+               * initials plate when there is not, and the optimizer shrinks it.
+               */}
               <div className="h-10 w-10 rounded-full bg-white/20 backdrop-blur-sm border border-white/20 overflow-hidden flex items-center justify-center text-sm font-bold text-white">
-                {post.author.avatar ? (
-                  <Image src={post.author.avatar} alt={post.author.name ?? ""} width={40} height={40} className="w-full h-full object-cover" />
-                ) : (
-                  post.author.name?.charAt(0) ?? "?"
-                )}
+                <OptimizedImage
+                  src={avatarSrc(post.author.avatar, post.author.name)}
+                  alt={post.author.name ?? post.author.username}
+                  preset="avatar"
+                  width={40}
+                  height={40}
+                  className="h-full w-full object-cover"
+                />
               </div>
               <div>
                 <p className="text-sm font-medium text-white">{post.author.name ?? "Anonymous"}</p>

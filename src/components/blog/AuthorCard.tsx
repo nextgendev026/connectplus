@@ -1,6 +1,7 @@
 "use client";
 
-import Image from "next/image";
+import { avatarSrc } from "@/lib/image-src";
+import OptimizedImage from "@/components/ui/OptimizedImage";
 import Link from "next/link";
 import {
   FileText,
@@ -55,9 +56,14 @@ export function AuthorCard({
       <div className="relative px-6 pb-6">
         <div className="-mt-12 flex items-end justify-between">
           <div className="relative h-24 w-24 overflow-hidden rounded-2xl border-4 border-surface-900 ring-2 ring-surface-700">
-            <Image
-              src={author.avatar || "https://i.pravatar.cc/300?img=0"}
+            {/* One picture, resolved once: the author's own if there is one, an
+              * initials plate otherwise — never a stock face from a third-party
+              * server, which is both a privacy leak and a lie about who wrote
+              * this. */}
+            <OptimizedImage
+              src={avatarSrc(author.avatar, author.name || author.username)}
               alt={author.name || author.username}
+              preset="avatar"
               fill
               className="object-cover"
             />
