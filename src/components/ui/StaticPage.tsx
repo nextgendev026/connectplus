@@ -51,8 +51,11 @@ export function StaticPage({
         </div>
 
         <div className="relative max-w-4xl mx-auto px-4 sm:px-6 py-16 md:py-24">
-          <nav className="flex items-center gap-1.5 text-xs text-white/60 mb-8">
-            <Link href="/" className="hover:text-brand-300 transition-colors">
+          <nav className="mb-8 flex items-center gap-1.5 text-xs text-white/60">
+            {/* `py-1.5` on the crumb: this nav is shared by every static page,
+                and at 16px tall the link home was the smallest control on all
+                of them. */}
+            <Link href="/" className="py-1.5 transition-colors hover:text-brand-300">
               Home
             </Link>
             <ChevronRight className="w-3 h-3" />

@@ -235,9 +235,11 @@ export default async function CategoriesPage() {
                       </div>
                     )}
 
+                    {/* `py-1.5` so the card's own call to action is 28px tall
+                        rather than 16 — it is the whole point of the card. */}
                     <Link
                       href={`/?category=${cat.slug}`}
-                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-brand-400 hover:text-brand-300 transition-colors"
+                      className="inline-flex items-center gap-1.5 py-1.5 text-xs font-semibold text-brand-400 transition-colors hover:text-brand-300"
                     >
                       Explore category
                       <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />

@@ -291,8 +291,13 @@ export function HeroSlideshow({ slides, stats }: HeroSlideshowProps) {
         </button>
       </div>
 
-      {/* Dots — the primary slide control on mobile, so the tap targets are a
-          little larger there. */}
+      {/* Dots — the primary slide control on mobile.
+       *
+       * The padding used to be 6px, which made the hit area 18px tall: these are
+       * the only way a phone reader moves between slides, and 18px is below the
+       * 24px minimum a thumb can be expected to hit. `py-[9px]` with `-my-[9px]`
+       * gives a 24×24 target while the negative margin gives the layout back, so
+       * the row still measures exactly the dot's height and nothing shifts. */}
       <div className="absolute bottom-6 sm:bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-2.5 sm:gap-2 z-10">
         {usable.map((s, i) => (
           <button
@@ -300,7 +305,7 @@ export function HeroSlideshow({ slides, stats }: HeroSlideshowProps) {
             onClick={() => setActive(i)}
             aria-label={`Show slide ${i + 1}`}
             aria-current={i === active}
-            className="group p-1.5 -m-0.5"
+            className="group px-1.5 py-[9px] -my-[9px]"
           >
             <span
               className={cn(

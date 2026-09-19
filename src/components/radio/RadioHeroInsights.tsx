@@ -83,10 +83,11 @@ function ForexPanel() {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the initial load of a fetched panel
     load();
     const t = setInterval(() => load(true), 5 * 60_000);
     return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount; `load` is recreated every render
   }, []);
 
   if (loading && !data) {
@@ -169,7 +170,8 @@ function ForexPanel() {
         <button
           onClick={() => load(true)}
           disabled={refreshing}
-          className="inline-flex items-center gap-1 rounded-full border border-surface-800 px-2 py-0.5 text-[9px] font-medium text-surface-400 hover:text-surface-100 transition-colors"
+          // A 20px-tall pill was the only way to refresh the rates by hand.
+          className="inline-flex items-center gap-1 rounded-full border border-surface-800 px-2.5 py-1 text-[10px] font-medium text-surface-400 transition-colors hover:text-surface-100"
         >
           <RefreshCw className={cn("h-2.5 w-2.5", refreshing && "animate-spin")} />
           {refreshing ? "Refreshing" : "Refresh"}

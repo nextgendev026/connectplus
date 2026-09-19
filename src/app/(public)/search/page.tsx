@@ -57,8 +57,13 @@ export default async function SearchPage({
     : [];
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
-      <div className="mb-8">
+    // `max-w-4xl` held one column of results on a 1600px screen, so a desktop
+    // reader scrolled past a third of the viewport on either side. The measure
+    // widens with the results and the list becomes two columns once there is
+    // room — while the header and the form keep the narrower reading width, so
+    // the search field does not stretch into an unreadable bar.
+    <main className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:max-w-6xl lg:px-8">
+      <div className="mb-8 max-w-4xl">
         <h1 className="font-display text-2xl sm:text-3xl font-bold text-surface-50 mb-2">
           Search stories
         </h1>
@@ -70,7 +75,7 @@ export default async function SearchPage({
       <form
         method="GET"
         action="/search"
-        className="mb-8 flex gap-2"
+        className="mb-8 flex max-w-4xl gap-2"
       >
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-surface-500" />
@@ -99,7 +104,7 @@ export default async function SearchPage({
             <span className="text-brand-400 font-medium">&quot;{q}&quot;</span>
           </p>
           {results.length > 0 ? (
-            <div className="grid grid-cols-1 gap-4">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-5">
               {results.map((post, index) => (
                 <Fragment key={post.id}>
                   <PostCard post={post as PostWithAuthor} variant="wide" />

@@ -144,9 +144,17 @@ export default function SignInPage() {
                 <label className="block text-xs font-medium text-surface-400">
                   Password
                 </label>
-                <a href="#" className="text-[10px] text-brand-400 hover:text-brand-300 transition-colors">
-                  Forgot password?
-                </a>
+                {/* Points at the help page, which is real, rather than an href="#"
+                    that looks like a reset flow and goes nowhere. There is no
+                    self-service reset yet, and a dead control is worse than no
+                    control — the reader clicks it, nothing happens, and they
+                    conclude the sign-in is broken. */}
+                <Link
+                  href="/help"
+                  className="inline-block py-1 text-[11px] text-brand-400 transition-colors hover:text-brand-300"
+                >
+                  Trouble signing in?
+                </Link>
               </div>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-600" />
@@ -158,10 +166,15 @@ export default function SignInPage() {
                   autoComplete="current-password"
                   className="w-full rounded-xl bg-surface-800/50 border border-surface-700/50 pl-10 pr-10 py-3 text-sm text-surface-50 placeholder:text-surface-600 focus:outline-none focus:border-brand-500/50 focus:bg-surface-800/80 transition-all"
                 />
+                {/* 16×16 was the whole hit area of the password reveal — an icon
+                    button on the one form every reader has to get through, and
+                    the wrong size for a thumb. `p-1.5 -m-1` makes it 24×24 and
+                    the negative margin leaves the input's padding untouched. */}
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-surface-600 hover:text-surface-400 transition-colors"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  className="absolute right-2 top-1/2 -m-1 -translate-y-1/2 rounded p-1.5 text-surface-600 transition-colors hover:text-surface-400"
                 >
                   {showPassword ? (
                     <EyeOff className="w-4 h-4" />
@@ -203,21 +216,23 @@ export default function SignInPage() {
           </div>
 
           {/* Footer */}
-          <p className="text-center text-xs text-surface-500 mt-6">
+          <p className="mt-6 text-center text-xs text-surface-500">
             Don&apos;t have an account?{" "}
             <Link
               href="/auth/signup"
-              className="text-brand-400 hover:text-brand-300 font-medium transition-colors"
+              className="inline-block px-1 py-2 font-medium text-brand-400 transition-colors hover:text-brand-300"
             >
               Sign up
             </Link>
           </p>
         </div>
 
-        {/* Back link */}
+        {/* Back link — `py-2` so the way out of the form is as easy to hit as
+            the way in. It measured 16px tall, which on a phone meant a reader
+            who wanted to leave the page had to aim. */}
         <Link
           href="/"
-          className="block text-center text-xs text-surface-500 hover:text-surface-300 transition-colors mt-6"
+          className="mt-6 block py-2 text-center text-xs text-surface-500 transition-colors hover:text-surface-300"
         >
           ← Back to home
         </Link>

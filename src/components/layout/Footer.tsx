@@ -125,12 +125,21 @@ export default function Footer() {
               <h3 className="text-xs font-semibold uppercase tracking-wider text-surface-400">
                 {category}
               </h3>
-              <ul className="mt-3 space-y-2">
+              {/*
+               * `inline-block py-1` is a thumb affordance, not decoration. A
+               * bare text link measures ~19px tall, and every page carries
+               * seventeen of these in stacked columns — on a phone that is a
+               * wall of targets a thumb misses, and a missed tap reads as a
+               * broken footer. Two extra pixels each side clears the 24px
+               * minimum without making the footer noticeably taller, because the
+               * `space-y-2` below absorbs the difference.
+               */}
+              <ul className="mt-3 space-y-1.5">
                 {links.map((link) => (
                   <li key={link.href}>
                     <Link
                       href={link.href}
-                      className="text-sm text-surface-500 hover:text-surface-50 transition-colors"
+                      className="inline-block py-1 text-sm text-surface-500 transition-colors hover:text-surface-50"
                     >
                       {link.label}
                     </Link>

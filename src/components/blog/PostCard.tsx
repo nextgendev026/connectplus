@@ -18,6 +18,17 @@ import OptimizedImage from "@/components/ui/OptimizedImage";
 interface PostCardProps {
   post: PostWithAuthor;
   variant?: "default" | "featured" | "compact" | "wide";
+  /**
+   * Load the cover eagerly and at high priority.
+   *
+   * Opt-in, and off by default. The featured card used to hard-code it, which
+   * was right only when the card is the first thing on screen — and it is not:
+   * its one caller renders it in a grid below the podium, so every phone visit
+   * was eagerly fetching a 1280px cover that sat off-screen while competing for
+   * bandwidth with the image the reader could actually see. That is the LCP
+   * metric, spent on a picture nobody had scrolled to yet.
+   */
+  priority?: boolean;
 }
 
 function postCover(post: PostWithAuthor): string {
@@ -55,7 +66,7 @@ function SourceBadge({ post }: { post: PostWithAuthor }) {
   return inner;
 }
 
-export function PostCard({ post, variant = "default" }: PostCardProps) {
+export function PostCard({ post, variant = "default", priority = false }: PostCardProps) {
   const readTime = estimateReadTime(post.content);
   const excerpt = post.excerpt || truncate(post.content.replace(/<[^>]+>/g, "").replace(/[#*_~`]/g, ""), 120);
   const commentCount = post._count?.comments ?? 0;
@@ -185,7 +196,7 @@ export function PostCard({ post, variant = "default" }: PostCardProps) {
               src={postCover(post)}
               alt={post.title}
               fill
-              priority
+              priority={priority}
               preset="cover"
               className="transition-transform duration-700 group-hover:scale-105"
             />

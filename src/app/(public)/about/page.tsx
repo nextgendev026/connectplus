@@ -52,8 +52,12 @@ export default async function AboutPage() {
         <div className="absolute inset-0 bg-mesh-gradient" />
         <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-black/40 to-black/70" />
         <div className="relative max-w-4xl mx-auto px-4 sm:px-6 py-16 md:py-24">
-          <nav className="flex items-center gap-1.5 text-xs text-white/60 mb-8">
-            <Link href="/" className="hover:text-brand-300 transition-colors">Home</Link>
+          <nav className="mb-8 flex items-center gap-1.5 text-xs text-white/60">
+            {/* `py-1.5` on the crumb: a breadcrumb link is a control, and at
+                16px tall it was the smallest thing on the page. */}
+            <Link href="/" className="py-1.5 transition-colors hover:text-brand-300">
+              Home
+            </Link>
             <ChevronRight className="w-3 h-3" />
             <span className="text-white/70">About</span>
           </nav>

@@ -148,6 +148,24 @@ const nextConfig = {
   experimental: {
     optimizeCss: false,
   },
+  /**
+   * The auth URLs people actually type.
+   *
+   * The routes live under `/auth/*`, which is right for the file tree and wrong
+   * for a human: `/signin` is what a reader guesses, what an old link says, and
+   * what the smoke test asserted. Each of these used to 404 — a dead end at the
+   * exact moment someone is trying to sign in, from an email, a bookmark or the
+   * bottom bar. Permanent redirects, so the correction is remembered.
+   */
+  async redirects() {
+    return [
+      { source: "/signin", destination: "/auth/signin", permanent: true },
+      { source: "/login", destination: "/auth/signin", permanent: true },
+      { source: "/signup", destination: "/auth/signup", permanent: true },
+      { source: "/register", destination: "/auth/signup", permanent: true },
+      { source: "/verify-email", destination: "/auth/verify-email", permanent: true },
+    ];
+  },
   async headers() {
     return [
       {

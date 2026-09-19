@@ -7,7 +7,7 @@ import { useSession, signOut } from "next-auth/react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Search, Menu, X, PenLine, Shield, LogOut, User, Settings,
-  Globe, Sun, Moon, Home, Flame, LayoutGrid, Radio, Sparkles, Trophy,
+  Sun, Moon, Home, Flame, LayoutGrid, Radio, Sparkles, Trophy,
   ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -40,7 +40,6 @@ export default function Navbar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [lang, setLang] = useState<"EN" | "SW">("EN");
   const [scrolled, setScrolled] = useState(false);
   const { theme, toggleTheme } = useTheme();
   const siteConfig = useSiteConfig();
@@ -120,14 +119,12 @@ export default function Navbar() {
               {theme === "dark" ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
             </IconButton>
 
-            <button
-              onClick={() => setLang(lang === "EN" ? "SW" : "EN")}
-              className="hidden items-center gap-1 rounded-xl border border-transparent px-2.5 py-2 text-[11px] font-semibold tracking-wide text-surface-400 transition-all duration-200 hover:border-surface-700 hover:bg-surface-800/70 hover:text-surface-50 sm:flex"
-              aria-label={`Language: ${lang}. Switch language`}
-            >
-              <Globe className="h-3.5 w-3.5" />
-              {lang}
-            </button>
+            {/* The EN/SW toggle that used to sit here flipped local state and
+                nothing else — no routing, no dictionary, no persisted choice. A
+                control that promises a language and delivers a label is worse
+                than no control: it is the first thing a Swahili speaker taps.
+                It comes back when there is a translation to switch to, and the
+                mobile sheet carries the honest version of this row. */}
 
             {session ? (
               <div className="hidden items-center gap-1.5 sm:flex">

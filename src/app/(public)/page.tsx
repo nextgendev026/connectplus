@@ -583,20 +583,26 @@ function TrendingSidebar({
           </Link>
         </div>
 
-        {/* Footer Links */}
+        {/* Footer Links — the real routes. These were five `href="#"` anchors,
+            which looked like navigation and were not: every one of the pages
+            exists, so the sidebar's footer was quietly sending readers nowhere. */}
         <div className="text-[10px] text-surface-600 space-y-1 px-1">
           <div className="flex flex-wrap gap-x-3 gap-y-1">
-            {["About", "Help", "Terms", "Privacy", "Guidelines"].map(
-              (link) => (
-                <a
-                  key={link}
-                  href="#"
-                  className="hover:text-surface-400 transition-colors"
-                >
-                  {link}
-                </a>
-              )
-            )}
+            {[
+              { label: "About", href: "/about" },
+              { label: "Help", href: "/help" },
+              { label: "Terms", href: "/terms" },
+              { label: "Privacy", href: "/privacy" },
+              { label: "Guidelines", href: "/guidelines" },
+            ].map(({ label, href }) => (
+              <Link
+                key={label}
+                href={href}
+                className="hover:text-surface-400 transition-colors"
+              >
+                {label}
+              </Link>
+            ))}
           </div>
           <p>&copy; 2026 connectPlus. Made in East Africa.</p>
         </div>

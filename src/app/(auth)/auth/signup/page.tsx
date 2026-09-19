@@ -249,7 +249,8 @@ export default function SignUpPage() {
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-surface-600 hover:text-surface-400 transition-colors"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  className="absolute right-2 top-1/2 -m-1 -translate-y-1/2 rounded p-1.5 text-surface-600 transition-colors hover:text-surface-400"
                 >
                   {showPassword ? (
                     <EyeOff className="w-4 h-4" />
@@ -278,7 +279,8 @@ export default function SignUpPage() {
                 <button
                   type="button"
                   onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-surface-600 hover:text-surface-400 transition-colors"
+                  aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+                  className="absolute right-2 top-1/2 -m-1 -translate-y-1/2 rounded p-1.5 text-surface-600 transition-colors hover:text-surface-400"
                 >
                   {showConfirmPassword ? (
                     <EyeOff className="w-4 h-4" />
@@ -307,13 +309,15 @@ export default function SignUpPage() {
               />
               <p className="text-[11px] text-surface-500 leading-relaxed">
                 I agree to the{" "}
-                <a href="#" className="text-brand-400 hover:text-brand-300 transition-colors">
+                {/* Both pages exist. An agreement you cannot read is not an
+                    agreement, which is why these are the real routes. */}
+                <Link href="/terms" className="text-brand-400 hover:text-brand-300 transition-colors">
                   Terms of Service
-                </a>{" "}
+                </Link>{" "}
                 and{" "}
-                <a href="#" className="text-brand-400 hover:text-brand-300 transition-colors">
+                <Link href="/privacy" className="text-brand-400 hover:text-brand-300 transition-colors">
                   Privacy Policy
-                </a>
+                </Link>
               </p>
             </label>
 
@@ -362,7 +366,7 @@ export default function SignUpPage() {
         {/* Back link */}
         <Link
           href="/"
-          className="block text-center text-xs text-surface-500 hover:text-surface-300 transition-colors mt-6"
+          className="mt-6 block py-2 text-center text-xs text-surface-500 transition-colors hover:text-surface-300"
         >
           ← Back to home
         </Link>

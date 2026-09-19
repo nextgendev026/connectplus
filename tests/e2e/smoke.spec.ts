@@ -5,7 +5,11 @@ test("public pages render without crashing", async ({ page }) => {
   await expect(page.locator("body")).not.toBeEmpty();
 
   await page.goto("/about");
-  await expect(page).toHaveTitle(/About \| connectPlus/);
+  // The separator is not the assertion. This pinned a `|` from before the root
+  // template moved to `·`, so a test about whether the page renders was failing
+  // over a piece of typography. What matters is that the brand is in the title
+  // and the page's own name comes first.
+  await expect(page).toHaveTitle(/^About\s*[·|—-]\s*connectPlus/);
 });
 
 test("sign-in page loads the credentials form", async ({ page }) => {

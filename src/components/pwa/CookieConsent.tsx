@@ -76,21 +76,25 @@ export function CookieConsent() {
               permission we also use anonymous analytics cookies to understand how the
               community reads and listens. You can change your choice anytime.
             </p>
-            <label className="mt-2.5 flex cursor-pointer items-center gap-2 text-xs text-surface-300">
+            {/* The label is the hit area, and it measured 16px tall — a consent
+                control on a phone, where a missed tap means the reader is
+                counted as having declined. `py-1.5` makes both rows 28px and the
+                checkbox itself easier to see against the panel. */}
+            <label className="mt-1.5 flex cursor-pointer items-center gap-2.5 py-1.5 text-xs text-surface-300">
               <input
                 type="checkbox"
                 checked={analytics}
                 onChange={(e) => setAnalytics(e.target.checked)}
-                className="h-3.5 w-3.5 rounded accent-brand-500"
+                className="h-4 w-4 rounded accent-brand-500"
               />
               Allow anonymous analytics cookies
             </label>
-            <label className="mt-1.5 flex cursor-pointer items-center gap-2 text-xs text-surface-300">
+            <label className="flex cursor-pointer items-center gap-2.5 py-1.5 text-xs text-surface-300">
               <input
                 type="checkbox"
                 checked={advertising}
                 onChange={(e) => setAdvertising(e.target.checked)}
-                className="h-3.5 w-3.5 rounded accent-brand-500"
+                className="h-4 w-4 rounded accent-brand-500"
               />
               Allow advertising cookies from partner networks
             </label>

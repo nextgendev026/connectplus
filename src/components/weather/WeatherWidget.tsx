@@ -5,7 +5,6 @@ import {
   MapPin,
   Loader2,
   Sun,
-  Moon,
   Cloud,
   CloudRain,
   CloudSnow,
@@ -473,7 +472,10 @@ export function WeatherWidget({ compact = false }: { compact?: boolean }) {
           onClick={enableLocation}
           disabled={locState === "prompting"}
           className={cn(
-            "flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium backdrop-blur-sm transition-all",
+            // `py-1` rather than `py-0.5`: this is the control that asks for GPS
+            // on a phone, and at 22px tall it was the most important target in
+            // the widget that a thumb could miss.
+            "flex items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-medium backdrop-blur-sm transition-all",
             locState === "granted"
               ? "border-emerald-300/40 bg-emerald-500/20 text-emerald-100"
               : "border-white/30 bg-white/10 text-white/90 hover:border-brand-400/60 hover:text-white"
@@ -547,8 +549,8 @@ export function WeatherWidget({ compact = false }: { compact?: boolean }) {
             <div className="flex items-center justify-between mb-2">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-white/70">Hourly</span>
               <div className="flex gap-1">
-                <button onClick={() => setHourScrollIdx(Math.max(0, hourScrollIdx - 4))} className="p-0.5 rounded text-white/60 hover:text-white"><ChevronLeft className="h-3 w-3" /></button>
-                <button onClick={() => setHourScrollIdx(Math.min(Math.max(0, nextHours.length - 8), hourScrollIdx + 4))} className="p-0.5 rounded text-white/60 hover:text-white"><ChevronRight className="h-3 w-3" /></button>
+                <button onClick={() => setHourScrollIdx(Math.max(0, hourScrollIdx - 4))} className="-m-1 rounded p-1.5 text-white/60 hover:text-white"><ChevronLeft className="h-3 w-3" /></button>
+                <button onClick={() => setHourScrollIdx(Math.min(Math.max(0, nextHours.length - 8), hourScrollIdx + 4))} className="-m-1 rounded p-1.5 text-white/60 hover:text-white"><ChevronRight className="h-3 w-3" /></button>
               </div>
             </div>
             <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
@@ -580,8 +582,8 @@ export function WeatherWidget({ compact = false }: { compact?: boolean }) {
                 14-Day Forecast
               </span>
               <div className="flex gap-1">
-                <button onClick={() => setDayScrollIdx(Math.max(0, dayScrollIdx - 7))} className="p-0.5 rounded text-white/60 hover:text-white"><ChevronLeft className="h-3 w-3" /></button>
-                <button onClick={() => setDayScrollIdx(Math.min(Math.max(0, daily.time.length - 7), dayScrollIdx + 7))} className="p-0.5 rounded text-white/60 hover:text-white"><ChevronRight className="h-3 w-3" /></button>
+                <button onClick={() => setDayScrollIdx(Math.max(0, dayScrollIdx - 7))} className="-m-1 rounded p-1.5 text-white/60 hover:text-white"><ChevronLeft className="h-3 w-3" /></button>
+                <button onClick={() => setDayScrollIdx(Math.min(Math.max(0, daily.time.length - 7), dayScrollIdx + 7))} className="-m-1 rounded p-1.5 text-white/60 hover:text-white"><ChevronRight className="h-3 w-3" /></button>
               </div>
             </div>
             <div className="grid grid-cols-7 gap-1">

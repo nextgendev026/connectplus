@@ -65,6 +65,74 @@ export function optimizedImageSrc(
 }
 
 /**
+ * The widths each preset should offer a browser, smallest first.
+ *
+ * Before this, every caller that did not name a `width` got one URL at the
+ * preset's maximum — so a 360px phone downloaded the same 1200px cover art as a
+ * desktop, and the median page shipped roughly four times the image bytes it
+ * needed. That is the single largest cost on the mobile build, because covers
+ * are the heaviest asset on every feed, article and card.
+ *
+ * The stops are chosen against the app's own layout: a feed card is full width
+ * on a phone, half on a tablet at 640px, and one of two or three columns on a
+ * desktop at 1024px and beyond.
+ */
+const PRESET_WIDTHS: Record<OptimizePresetName, number[]> = {
+  cover: [400, 640, 960, 1280],
+  thumbnail: [160, 240, 320, 480],
+  avatar: [48, 96, 160],
+  og: [],
+  story: [],
+  adminThumb: [96, 160],
+};
+
+/**
+ * The default `sizes` attribute per preset.
+ *
+ * Without it a browser assumes the image is viewport-wide and picks the largest
+ * candidate in the srcset — which is the bug this whole change exists to fix,
+ * in a subtler form. Each string mirrors how the preset is actually laid out.
+ */
+const PRESET_SIZES: Record<OptimizePresetName, string> = {
+  cover: "(min-width: 1024px) 720px, (min-width: 640px) 50vw, 100vw",
+  thumbnail: "(min-width: 1024px) 280px, (min-width: 640px) 45vw, 100vw",
+  avatar: "48px",
+  og: "100vw",
+  story: "100vw",
+  adminThumb: "96px",
+};
+
+/** The candidate widths for a preset, or `[]` when one size is enough. */
+export function widthsForPreset(preset: OptimizePresetName): number[] {
+  return PRESET_WIDTHS[preset] ?? [];
+}
+
+/** The default `sizes` for a preset, so a caller never has to think about it. */
+export function sizesForPreset(preset: OptimizePresetName): string {
+  return PRESET_SIZES[preset] ?? "100vw";
+}
+
+/**
+ * A `srcset` for the optimizer, or `""` when there is nothing to choose from.
+ *
+ * Returns empty for a source the optimizer passes through (generated thumbs,
+ * `data:` URIs) because all candidates would be the same bytes — advertising
+ * four identical entries only makes the browser work harder for the same result.
+ * Callers omit the attribute when this returns empty rather than rendering
+ * `srcset=""`, which is invalid and can defeat the `src` fallback.
+ */
+export function responsiveSrcSet(
+  url: string | null | undefined,
+  widths: number[],
+  opts: OptimizeOptions = {}
+): string {
+  if (!url || !url.trim() || !isOptimizable(url)) return "";
+  const unique = [...new Set(widths.filter((w) => Number.isFinite(w) && w > 0))].sort((a, b) => a - b);
+  if (unique.length < 2) return "";
+  return unique.map((w) => `${optimizedImageSrc(url, { ...opts, width: w })} ${w}w`).join(", ");
+}
+
+/**
  * The `type` attribute for a `<source>` element, guessed from the extension.
  *
  * Used by the feed and the picture element so a WebP cover is not advertised as
