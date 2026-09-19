@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { Check, X } from "lucide-react";
+import { Check, ImagePlus, Loader2, Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { WritingSuggestion } from "@/lib/writing-checks";
+import { PILOT_QUICK_ACTIONS, type PilotAction } from "@/lib/brain-pilot";
 
 /**
- * The composer textarea with the writing checks drawn *on* the text.
+ * The composer textarea with the writing checks drawn *on* the text, the Brain
+ * Pilot on a selection, and inline image drops.
  *
  * A textarea cannot hold styled ranges, so the marks come from a mirror layer:
  * an absolutely-positioned div over the textarea that renders the exact same
@@ -25,9 +27,22 @@ import type { WritingSuggestion } from "@/lib/writing-checks";
  *     the two boxes scroll independently.
  *
  * Only the flagged spans accept pointer events, so typing and text selection go
- * to the textarea while a click on a mark opens its fix card. The authoritative,
- * keyboard-accessible list of findings stays in the sidebar panel — the marks
- * are the at-a-glance layer, not the only way to reach a fix.
+ * to the textarea while a click on a mark opens its fix card.
+ *
+ * Three things were reworked for robustness:
+ *
+ *  • **The fix card is a bottom sheet on phones.** It used to be an absolutely
+ *    positioned popover inside a 17rem box, which on a 360px screen hung off the
+ *    edge of the viewport with its Apply button half off-screen — the single
+ *    most common complaint about the inline assistant. Below the `sm` breakpoint
+ *    it is now a full-width sheet pinned to the bottom of the viewport, where a
+ *    thumb can actually reach it.
+ *  • **The pilot bar appears under the editor on selection.** Textarea caret
+ *    coordinates require measuring a mirror copy of the text, which drifts on
+ *    mobile keyboards and IME composition. A sticky bar is exact, needs no
+ *    measurement, and gives five comfortable tap targets.
+ *  • **Dropping an image inserts it, rather than replacing the cover.** A drop
+ *    on the body uploads the file and writes markdown at the caret.
  */
 
 const KIND_UNDERLINE: Record<WritingSuggestion["kind"], string> = {
@@ -44,7 +59,6 @@ const KIND_BADGE: Record<WritingSuggestion["kind"], string> = {
   style: "bg-surface-700/60 text-surface-300",
 };
 
-/** The textarea's text classes, reused verbatim by the mirror. */
 /**
  * Both boxes reserve the same scrollbar gutter. Without it a scrolling textarea
  * narrows its content box by the scrollbar's width while the mirror's stays
@@ -98,6 +112,15 @@ interface ActiveMark {
   left: number;
 }
 
+export interface EditorRange {
+  selectionStart: number;
+  selectionEnd: number;
+  cursor: number;
+  hasSelection: boolean;
+}
+
+const EMPTY_RANGE: EditorRange = { selectionStart: 0, selectionEnd: 0, cursor: 0, hasSelection: false };
+
 export function CheckedEditor({
   value,
   onChange,
@@ -105,6 +128,9 @@ export function CheckedEditor({
   suggestions,
   onApply,
   onDismiss,
+  onSelectionChange,
+  onPilot,
+  pilotBusy = null,
   placeholder,
   disabled = false,
 }: {
@@ -114,14 +140,38 @@ export function CheckedEditor({
   suggestions: WritingSuggestion[];
   onApply: (suggestion: WritingSuggestion) => void;
   onDismiss: (id: string) => void;
+  /** Reports the current selection, so the page knows what a pilot action targets. */
+  onSelectionChange?: (range: EditorRange) => void;
+  /** Run a pilot action. The range travels with it so ops apply where they were asked for. */
+  onPilot?: (action: PilotAction, range: EditorRange) => void;
+  pilotBusy?: PilotAction | null;
   placeholder?: string;
   disabled?: boolean;
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const mirrorRef = useRef<HTMLDivElement | null>(null);
   const [active, setActive] = useState<ActiveMark | null>(null);
+  const [range, setRange] = useState<EditorRange>(EMPTY_RANGE);
+  const [isDesktop, setIsDesktop] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const segments = useMemo(() => segmentsOf(value, suggestions), [value, suggestions]);
+
+  /**
+   * Which layout the fix card uses. Kept in state (not pure CSS) because the
+   * card is positioned with inline `top`/`left` computed from the mark's offset,
+   * and those coordinates are meaningless in the sheet layout.
+   */
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(min-width: 640px)");
+    const apply = () => setIsDesktop(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
 
   /** Keep the mirror scrolled exactly where the textarea is. */
   const syncScroll = useCallback(() => {
@@ -131,6 +181,26 @@ export function CheckedEditor({
     mirror.scrollTop = ta.scrollTop;
     mirror.scrollLeft = ta.scrollLeft;
   }, [textareaRef]);
+
+  /** Read the caret/selection. Called on every meaningful selection event. */
+  const readRange = useCallback((): EditorRange => {
+    const ta = textareaRef.current;
+    if (!ta) return EMPTY_RANGE;
+    const start = ta.selectionStart ?? 0;
+    const end = ta.selectionEnd ?? 0;
+    return {
+      selectionStart: start,
+      selectionEnd: end,
+      cursor: end,
+      hasSelection: end > start,
+    };
+  }, [textareaRef]);
+
+  const publishRange = useCallback(() => {
+    const next = readRange();
+    setRange(next);
+    onSelectionChange?.(next);
+  }, [readRange, onSelectionChange]);
 
   const close = useCallback(() => setActive(null), []);
 
@@ -165,13 +235,103 @@ export function CheckedEditor({
     setActive({ suggestion, top: mark.offsetTop + mark.offsetHeight + 6, left });
   }
 
+  /**
+   * Upload a dropped or pasted image and write its markdown at the caret.
+   *
+   * The insertion point is captured *before* the await: uploading takes a
+   * second, and the caret the writer left behind is the one they meant. Reading
+   * it afterwards would use wherever focus drifted to in the meantime.
+   */
+  const insertImages = useCallback(
+    async (files: File[]) => {
+      const images = files.filter((f) => f.type.startsWith("image/"));
+      if (images.length === 0) return;
+
+      const ta = textareaRef.current;
+      const at = ta ? (ta.selectionEnd ?? value.length) : value.length;
+      setUploading(true);
+      setUploadError(null);
+
+      const markdown: string[] = [];
+      for (const file of images) {
+        try {
+          const form = new FormData();
+          form.append("file", file);
+          form.append("kind", "post");
+          const res = await fetch("/api/upload", { method: "POST", body: form });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({ error: "Upload failed" }));
+            throw new Error(err.error || "Upload failed");
+          }
+          const data = await res.json();
+          const alt = file.name.replace(/\.[a-z0-9]+$/i, "").replace(/[-_]+/g, " ").trim() || "image";
+          markdown.push(`![${alt}](${data.url})`);
+        } catch (err) {
+          setUploadError(err instanceof Error ? err.message : "Upload failed");
+        }
+      }
+
+      if (markdown.length > 0) {
+        const block = markdown.join("\n\n");
+        const before = value.slice(0, at);
+        const prefix = before.length > 0 && !/\n\s*$/.test(before) ? "\n\n" : "";
+        const next = `${before}${prefix}${block}\n\n${value.slice(at)}`;
+        onChange(next);
+        const caret = before.length + prefix.length + block.length + 2;
+        requestAnimationFrame(() => {
+          ta?.focus();
+          ta?.setSelectionRange(caret, caret);
+          publishRange();
+        });
+      }
+      setUploading(false);
+    },
+    [onChange, publishRange, textareaRef, value]
+  );
+
+  function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+    if (!event.dataTransfer?.files?.length) return;
+    event.preventDefault();
+    setDragging(false);
+    void insertImages(Array.from(event.dataTransfer.files));
+  }
+
+  const showPilotBar = !disabled && range.hasSelection && Boolean(onPilot);
+
   return (
-    <div ref={wrapRef} className="relative">
+    <div
+      ref={wrapRef}
+      className={cn(
+        "relative rounded-2xl transition-shadow",
+        dragging && "ring-2 ring-brand-500/60 ring-offset-2 ring-offset-surface-950"
+      )}
+      onDragOver={(e) => {
+        if (e.dataTransfer?.types?.includes("Files")) {
+          e.preventDefault();
+          setDragging(true);
+        }
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        setDragging(false);
+      }}
+      onDrop={handleDrop}
+    >
       <textarea
         ref={textareaRef}
         value={value}
         onChange={(e) => handleChange(e.target.value)}
         onScroll={syncScroll}
+        onSelect={publishRange}
+        onKeyUp={publishRange}
+        onMouseUp={publishRange}
+        onPaste={(e) => {
+          const files = Array.from(e.clipboardData?.files ?? []);
+          if (files.some((f) => f.type.startsWith("image/"))) {
+            e.preventDefault();
+            void insertImages(files);
+          }
+        }}
         placeholder={placeholder}
         rows={20}
         disabled={disabled}
@@ -210,15 +370,71 @@ export function CheckedEditor({
         )}
       </div>
 
+      {dragging ? (
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-brand-500/70 bg-surface-950/80 backdrop-blur-sm">
+          <span className="flex items-center gap-2 rounded-full bg-brand-500/15 px-4 py-2 text-xs font-semibold text-brand-200">
+            <ImagePlus className="h-4 w-4" />
+            Drop to insert into the story
+          </span>
+        </div>
+      ) : null}
+
+      {uploading ? (
+        <div className="absolute right-3 top-3 z-20 flex items-center gap-1.5 rounded-full bg-surface-900/90 border border-surface-700 px-2.5 py-1 type-caption text-surface-300 backdrop-blur">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Optimising image…
+        </div>
+      ) : null}
+
+      {uploadError ? (
+        <div className="mt-2 flex items-center gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2">
+          <p className="type-caption flex-1 text-red-300">{uploadError}</p>
+          <button onClick={() => setUploadError(null)} className="text-red-400 hover:text-red-300">
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      ) : null}
+
+      {/*
+        The pilot bar. Sticky rather than floating: it needs no caret
+        measurement, and on a phone it sits above the keyboard where a thumb is
+        already resting instead of under it.
+      */}
+      {showPilotBar ? (
+        <div className="sticky bottom-2 z-20 mt-2 flex items-center gap-1.5 overflow-x-auto rounded-xl border border-accent-violet/30 bg-surface-900/95 p-1.5 shadow-glow backdrop-blur-xl">
+          <span className="ml-1 hidden shrink-0 items-center gap-1 type-caption font-semibold uppercase tracking-wider text-accent-violet sm:flex">
+            <Sparkles className="h-3 w-3" />
+            Pilot
+          </span>
+          {PILOT_QUICK_ACTIONS.map((a) => (
+            <button
+              key={a.id}
+              onClick={() => onPilot?.(a.id, range)}
+              disabled={pilotBusy !== null}
+              title={a.hint}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-accent-violet/25 bg-accent-violet/10 px-3 py-2 type-caption font-medium text-accent-violet transition-colors hover:bg-accent-violet/20 disabled:opacity-40 sm:px-2.5 sm:py-1.5"
+            >
+              {pilotBusy === a.id ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+              {a.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       {active ? (
         <>
           {/* Click-away layer, sitting under the card so the card stays usable. */}
-          <div className="fixed inset-0 z-10" onClick={close} />
+          <div className="fixed inset-0 z-30" onClick={close} />
           <div
             role="dialog"
             aria-label={active.suggestion.message}
-            className="absolute z-20 w-[17rem] rounded-xl border border-surface-700 bg-surface-900 p-3 shadow-xl"
-            style={{ top: active.top, left: active.left }}
+            className={cn(
+              "z-40 border border-surface-700 bg-surface-900 p-3 shadow-xl",
+              // Phone: a bottom sheet. Desktop: the popover anchored to the mark.
+              "fixed inset-x-0 bottom-0 rounded-t-2xl pb-[max(0.75rem,env(safe-area-inset-bottom))]",
+              "sm:absolute sm:inset-x-auto sm:bottom-auto sm:w-[17rem] sm:rounded-xl sm:pb-3"
+            )}
+            style={isDesktop ? { top: active.top, left: active.left } : undefined}
           >
             <div className="flex items-start gap-2">
               <span
@@ -242,7 +458,7 @@ export function CheckedEditor({
             </div>
 
             {active.suggestion.replacement !== null ? (
-              <div className="mt-2.5 flex items-center gap-2">
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 <span className="min-w-0 flex-1 truncate rounded bg-red-500/10 px-1.5 py-1 type-caption text-red-300 line-through">
                   {active.suggestion.original}
                 </span>
@@ -260,7 +476,7 @@ export function CheckedEditor({
                     onApply(active.suggestion);
                     close();
                   }}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2 py-1.5 type-caption font-semibold text-emerald-300 transition-colors hover:bg-emerald-500/20"
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2 py-2 type-caption font-semibold text-emerald-300 transition-colors hover:bg-emerald-500/20 sm:py-1.5"
                 >
                   <Check className="h-3 w-3" />
                   Apply fix
@@ -271,7 +487,7 @@ export function CheckedEditor({
                   onDismiss(active.suggestion.id);
                   close();
                 }}
-                className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-surface-700 px-2 py-1.5 type-caption text-surface-400 transition-colors hover:text-surface-100"
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-surface-700 px-2 py-2 type-caption text-surface-400 transition-colors hover:text-surface-100 sm:py-1.5"
               >
                 <X className="h-3 w-3" />
                 Dismiss

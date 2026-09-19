@@ -10,6 +10,8 @@ import {
 import { summarizeText, stripHtml, extractKeywords } from "@/lib/neural-text";
 import { neuralMind } from "@/lib/neural-mind";
 import { hiveBrain } from "@/lib/hive-brain";
+import { appBrain } from "@/lib/app-brain";
+import type { PilotOp } from "@/lib/brain-pilot";
 import { generateText, studioSystemPrompt } from "@/lib/ai-provider";
 import { analyzeSeo } from "@/lib/seo-analyzer";
 import { checkPlagiarism } from "@/lib/plagiarism-checker";
@@ -28,7 +30,9 @@ export type StudioAction =
   | "seo"
   | "plagiarism"
   | "optimize"
-  | "inspect";
+  | "inspect"
+  /** The Brain Pilot: structured edits the composer applies in place. */
+  | "pilot";
 
 export interface StudioRequest {
   action: StudioAction;
@@ -40,6 +44,12 @@ export interface StudioRequest {
   excerpt?: string;
   tags?: string[];
   category?: string;
+  /**
+   * For the `pilot` action: which edit the writer asked for (improve, shorten,
+   * fix, expand, tone, headline, excerpt, tags, ask). Validated in `appBrain`,
+   * which falls back to `improve` rather than trusting the wire.
+   */
+  pilotAction?: string;
 }
 
 export interface StudioResult {
@@ -49,6 +59,14 @@ export interface StudioResult {
   alternatives?: string[];
   /** Inline, offset-addressed issues — only `inspect` returns these. */
   suggestions?: WritingSuggestion[];
+  /**
+   * Structured edits — only `pilot` returns these. The composer applies them
+   * against the ranges it measured when it asked, so the reply can never write
+   * over the wrong words.
+   */
+  ops?: PilotOp[];
+  /** True when the pilot fell back to the deterministic engines. */
+  degraded?: boolean;
   meta?: {
     notes?: string[];
     score?: number;
@@ -248,8 +266,15 @@ export async function runStudioBrain(req: StudioRequest): Promise<StudioResult> 
         .join("\n\n");
       const llm = await tryLlmAction(action, message);
       if (llm) return { action, text: llm };
-      const response = await neuralMind.processQuery(message);
-      return { action, text: response.text };
+      // The fallback goes through the *unified* brain rather than the neural
+      // mind alone, so a copilot answer is composed from the same three engines
+      // (memory, reasoning, live platform senses) as everything else in the app
+      // instead of being a second, narrower mind with its own opinions.
+      const response = await appBrain.think(message);
+      return {
+        action,
+        text: response.context ? `${response.text}\n\n_Live context: ${response.context}_` : response.text,
+      };
     }
 
     case "seo": {
@@ -319,6 +344,39 @@ export async function runStudioBrain(req: StudioRequest): Promise<StudioResult> 
         });
       }
       return { action, text: lines.join("\n"), meta: { score: result.overallScore, grade: result.overallGrade } };
+    }
+
+    /**
+     * The Brain Pilot — read the composer, write back into it.
+     *
+     * Distinct from every action above, which return *text* for the writer to
+     * place by hand. The pilot returns operations, which is what makes it an
+     * assistant rather than a chat window: "tighten this paragraph" lands as an
+     * edit to that paragraph, not as a suggestion the writer has to retype.
+     */
+    case "pilot": {
+      const result = await appBrain.pilot({
+        action: bounded(req.pilotAction, 40) || "improve",
+        content,
+        title,
+        excerpt,
+        tags,
+        category,
+        selection,
+        instruction: prompt || undefined,
+      });
+      return {
+        action,
+        text: result.reply,
+        ops: result.ops,
+        degraded: result.degraded,
+        meta: {
+          notes:
+            result.ops.length > 0
+              ? [`${result.ops.length} edit${result.ops.length === 1 ? "" : "s"} ready to apply.`]
+              : [],
+        },
+      };
     }
 
     /**

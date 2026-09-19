@@ -4,8 +4,14 @@ import { enhanceText } from "@/lib/neural-generate";
 
 /**
  * Phase 2/4 content intelligence: on-demand readability & clarity analysis for
- * a draft. Deterministic, dependency-free — returns a quality score, grade, and
- * actionable rewrite suggestions for the studio's AI Content Studio panel.
+ * a draft. Deterministic, dependency-free — returns a quality score, grade and
+ * actionable rewrite suggestions.
+ *
+ * The studio's own panel was folded into the Brain Pilot (which reads the whole
+ * composer and writes back through the op vocabulary), so nothing in the UI
+ * calls this today. It stays as a stable, auth-gated contract: it is deterministic
+ * and spends nothing on a provider, which makes it the cheapest thing a future
+ * surface — or a client that is not this web app — can reach for.
  */
 export async function POST(request: NextRequest) {
   try {

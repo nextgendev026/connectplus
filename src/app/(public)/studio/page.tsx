@@ -7,12 +7,14 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, Eye, EyeOff, Upload, Loader2, X, PenLine, AlertCircle, Clock, AlignLeft } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, Upload, Loader2, X, PenLine, AlertCircle, Clock, AlignLeft, Wand2 } from "lucide-react";
 import { StudioToolbar } from "@/components/studio/StudioToolbar";
 import { StudioPreview } from "@/components/studio/StudioPreview";
 import { StudioSidebar } from "@/components/studio/StudioSidebar";
 import { CheckedEditor } from "@/components/studio/CheckedEditor";
 import { applySuggestion, applySuggestions, type WritingSuggestion } from "@/lib/writing-checks";
+import { applyPilotOps, type PilotAction, type PilotOp } from "@/lib/brain-pilot";
+import type { EditorRange } from "@/components/studio/CheckedEditor";
 
 const AUTOSAVE_MS = 4000;
 const BACKUP_KEY = "connectplus:studio:new";
@@ -73,15 +75,16 @@ export default function StudioPage() {
   const [aiSuggestions, setAiSuggestions] = useState<{ tags: string[]; category: string | null; trendingTopics: { title: string; mentions: number }[]; confidence: number } | null>(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
-  const [genBusy, setGenBusy] = useState<null | "headline" | "excerpt" | "topics">(null);
-  const [generated, setGenerated] = useState<{ type: string; primary: string; alternatives: string[] } | null>(null);
-  const [enhanceBusy, setEnhanceBusy] = useState(false);
-  const [enhancement, setEnhancement] = useState<{ score: number; grade: string; readability: { sentences: number; words: number; avgSentenceWords: number; longSentenceCount: number }; suggestions: { kind: string; message: string }[] } | null>(null);
+  /* The Brain Pilot. `busy` holds the action in flight so the right button
+     spins; the notice carries what was applied and a one-tap undo. */
+  const [pilotBusy, setPilotBusy] = useState<PilotAction | null>(null);
+  const [pilotNotice, setPilotNotice] = useState<{ message: string; undo: (() => void) | null } | null>(null);
+  const [selectionRange, setSelectionRange] = useState<EditorRange>({ selectionStart: 0, selectionEnd: 0, cursor: 0, hasSelection: false });
   const [reviewNotice, setReviewNotice] = useState<string | null>(null);
   const [copilotBusy, setCopilotBusy] = useState<string | null>(null);
   const [copilotPrompt, setCopilotPrompt] = useState("");
   const [copilotError, setCopilotError] = useState<string | null>(null);
-  const [copilotResult, setCopilotResult] = useState<{ action: "rewrite" | "continue" | "outline" | "summarize" | "headline" | "tags" | "curate" | "assist" | "seo" | "plagiarism" | "optimize"; text: string; alternatives?: string[]; meta?: { notes?: string[]; score?: number; grade?: string; heading?: string; tags?: string[]; wordsBefore?: number; wordsAfter?: number } } | null>(null);
+  const [copilotResult, setCopilotResult] = useState<{ action: "rewrite" | "continue" | "outline" | "summarize" | "headline" | "tags" | "curate" | "assist" | "seo" | "plagiarism" | "optimize" | "pilot"; text: string; alternatives?: string[]; ops?: PilotOp[]; degraded?: boolean; meta?: { notes?: string[]; score?: number; grade?: string; heading?: string; tags?: string[]; wordsBefore?: number; wordsAfter?: number } } | null>(null);
   const mountedRef = useRef(true);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   /*
@@ -228,21 +231,106 @@ export default function StudioPage() {
     setAiSuggestions({ tags: suggestedTags, category: suggestedCategory, trendingTopics, confidence: Math.min(keywords.length / 10, 1) });
   }, [title, content]);
 
-  const generateAssist = useCallback(async (type: "headline" | "excerpt" | "topics") => {
-    if (content.trim().length < 40) { setError("Write at least 40 characters to generate AI suggestions."); return; }
-    setGenBusy(type); setError(null);
-    try { const res = await fetch("/api/ai/generate", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ type, title, content }) }); if (res.ok) { const data = await res.json(); setGenerated({ type, primary: data.primary, alternatives: data.alternatives ?? [] }); } else { const err = await res.json().catch(() => ({})); setError(err.error ?? "AI generation failed."); } } catch { setError("AI generation failed."); }
-    setGenBusy(null);
-  }, [title, content]);
+  /**
+   * Apply a pilot reply to the composer.
+   *
+   * The ranges travel *with* the ops because they were measured before the
+   * request went out — a rewrite of a passage must land on that passage, not on
+   * whatever the caret happens to be resting on by the time the model answers.
+   * The whole previous state is captured for undo, because a rewrite the writer
+   * disagrees with should cost one tap, not a re-type.
+   */
+  const applyPilot = useCallback(
+    (ops: PilotOp[], ranges: EditorRange) => {
+      if (ops.length === 0) return;
+      const before = { title, content, excerpt, tags };
+      const next = applyPilotOps(before, ops, ranges);
+      if (next.applied.length === 0) {
+        setPilotNotice({ message: "Nothing needed changing there.", undo: null });
+        return;
+      }
+      setTitle(next.title);
+      setContent(next.content);
+      setExcerpt(next.excerpt);
+      setTags(next.tags);
+      setPilotNotice({
+        message: `Pilot ${next.applied.join(", ")}.`,
+        undo: () => {
+          setTitle(before.title);
+          setContent(before.content);
+          setExcerpt(before.excerpt);
+          setTags(before.tags);
+          setPilotNotice(null);
+        },
+      });
+    },
+    [content, excerpt, tags, title]
+  );
 
-  const applyGenerated = useCallback((value: string) => { if (!generated) return; if (generated.type === "headline") setTitle(value); else if (generated.type === "excerpt") setExcerpt(value); else if (generated.type === "topics") { const next = value.split(",").map((t) => t.trim().toLowerCase().replace(/^#/, "")).filter(Boolean).slice(0, 10); setTags((prev) => [...new Set([...prev, ...next])].slice(0, 10)); setTagInput(""); } }, [generated]);
+  /**
+   * Ask the pilot for an edit.
+   *
+   * `apply` decides who commits the result: the inline toolbar applies it in
+   * place (the writer asked *at* that passage, so a second confirmation would be
+   * friction), while the sidebar stages it in the copilot panel for review.
+   */
+  const runPilot = useCallback(
+    async (action: PilotAction, instruction?: string, opts: { apply?: boolean; range?: EditorRange } = {}) => {
+      const ta = contentRef.current;
+      const ranges: EditorRange =
+        opts.range ??
+        (ta
+          ? {
+              selectionStart: ta.selectionStart ?? 0,
+              selectionEnd: ta.selectionEnd ?? 0,
+              cursor: ta.selectionEnd ?? 0,
+              hasSelection: (ta.selectionEnd ?? 0) > (ta.selectionStart ?? 0),
+            }
+          : selectionRange);
+      const selection = ranges.hasSelection ? content.slice(ranges.selectionStart, ranges.selectionEnd) : "";
 
-  const runEnhance = useCallback(async () => {
-    if (content.trim().length < 40) { setError("Write at least 40 characters to analyze."); return; }
-    setEnhanceBusy(true); setError(null);
-    try { const res = await fetch("/api/ai/enhance", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ content }) }); if (res.ok) { const data = await res.json(); setEnhancement({ score: data.score, grade: data.grade, readability: data.readability, suggestions: data.suggestions ?? [] }); } else { const err = await res.json().catch(() => ({})); setError(err.error ?? "Enhancement failed."); } } catch { setError("Enhancement failed."); }
-    setEnhanceBusy(false);
-  }, [content]);
+      setPilotBusy(action);
+      setPilotNotice(null);
+      setError(null);
+      try {
+        const res = await fetch("/api/ai/studio", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            action: "pilot",
+            pilotAction: action,
+            title,
+            content,
+            excerpt,
+            category: categoryName,
+            tags,
+            selection: selection || undefined,
+            prompt: instruction,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "The pilot could not answer.");
+        const ops: PilotOp[] = Array.isArray(data.ops) ? data.ops : [];
+        if (opts.apply) {
+          applyPilot(ops, ranges);
+          // The applied edit moved the text under the caret, so the selection
+          // that opened the pilot bar no longer exists. Clearing it hides the
+          // bar rather than leaving it offering to refine a passage that is
+          // gone (the undo notice is deliberately kept — `??` preserves it).
+          setSelectionRange({ selectionStart: 0, selectionEnd: 0, cursor: 0, hasSelection: false });
+          if (data.text) setPilotNotice((prev) => prev ?? { message: data.text, undo: null });
+        } else {
+          setCopilotResult({ action: "pilot", text: data.text ?? "", ops, degraded: data.degraded, meta: data.meta });
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "The pilot could not answer.");
+      } finally {
+        setPilotBusy(null);
+      }
+    },
+    [applyPilot, categoryName, content, excerpt, selectionRange, tags, title]
+  );
 
   const readSelection = useCallback((): string => { const ta = contentRef.current; if (ta && ta.selectionStart !== ta.selectionEnd) return ta.value.slice(ta.selectionStart, ta.selectionEnd).trim(); return ""; }, []);
 
@@ -256,6 +344,19 @@ export default function StudioPage() {
   const applyCopilot = useCallback((result: NonNullable<typeof copilotResult>) => {
     const ta = contentRef.current; const { action, text, meta } = result;
     const selected = ta && ta.selectionStart !== ta.selectionEnd; const start = ta?.selectionStart ?? 0; const end = ta?.selectionEnd ?? 0;
+    // A staged pilot reply applies through the op vocabulary, against the live
+    // caret — the writer has had a moment to move it, and where it rests now is
+    // where they meant the edit to land.
+    if (action === "pilot") {
+      applyPilot(result.ops ?? [], {
+        selectionStart: start,
+        selectionEnd: end,
+        cursor: end,
+        hasSelection: Boolean(selected),
+      });
+      setCopilotResult(null);
+      return;
+    }
     if (action === "headline") { setTitle(text); setCopilotResult(null); return; }
     if (action === "summarize") { setExcerpt(text); setCopilotResult(null); return; }
     if (action === "tags") { const next = text.split(",").map((t) => t.trim().toLowerCase().replace(/^#/, "").replace(/\s+/g, "-")).filter(Boolean).slice(0, 10); setTags((prev) => [...new Set([...prev, ...next])].slice(0, 10)); setTagInput(""); setCopilotResult(null); return; }
@@ -263,7 +364,7 @@ export default function StudioPage() {
     if (action === "continue") { setContent((prev) => prev.trimEnd() + "\n\n" + (meta?.heading ? meta.heading + "\n\n" : "") + text); setCopilotResult(null); return; }
     if (ta) { if (selected) { setContent(ta.value.slice(0, start) + text + "\n\n" + ta.value.slice(end)); } else { const pos = ta.selectionStart ?? ta.value.length; const suffix = pos > 0 && !/\n$/.test(ta.value.slice(0, pos)) ? "\n\n" : ""; setContent(ta.value.slice(0, pos) + suffix + text + "\n\n" + ta.value.slice(pos)); } requestAnimationFrame(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }); } else { setContent((prev) => prev.trimEnd() + "\n\n" + text); }
     setCopilotResult(null);
-  }, []);
+  }, [applyPilot]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); }, []);
   const handleDragLeave = useCallback(() => { setIsDragOver(false); }, []);
@@ -378,6 +479,26 @@ export default function StudioPage() {
 
       {reviewNotice && (<div className="max-w-7xl mx-auto px-3 sm:px-6 pt-4"><div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/25 px-4 py-3 text-sm text-emerald-300"><span className="shrink-0">✨</span><span className="flex-1">{reviewNotice}</span><button onClick={() => setReviewNotice(null)} className="text-emerald-400 hover:text-emerald-300"><X className="w-4 h-4" /></button></div></div>)}
 
+      {pilotNotice && (
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 pt-4">
+          <div className="flex items-center gap-2 rounded-xl border border-accent-violet/30 bg-accent-violet/10 px-4 py-3 text-sm text-accent-violet">
+            <Wand2 className="w-4 h-4 shrink-0" />
+            <span className="flex-1">{pilotNotice.message}</span>
+            {pilotNotice.undo ? (
+              <button
+                onClick={pilotNotice.undo}
+                className="shrink-0 rounded-lg border border-accent-violet/30 px-2.5 py-1 text-xs font-semibold transition-colors hover:bg-accent-violet/20"
+              >
+                Undo
+              </button>
+            ) : null}
+            <button onClick={() => setPilotNotice(null)} className="shrink-0 text-accent-violet hover:opacity-80">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-7xl mx-auto px-3 sm:px-6 pt-4 sm:pt-6 lg:pt-8 pb-28 md:pb-10">
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-4 lg:gap-6">
           <div className="space-y-4">
@@ -397,7 +518,10 @@ export default function StudioPage() {
                   suggestions={writingChecks?.suggestions ?? []}
                   onApply={applyWritingCheck}
                   onDismiss={dismissWritingCheck}
-                  placeholder="Start writing your story... Share your perspective on technology, culture, business, or life in East Africa."
+                  onSelectionChange={setSelectionRange}
+                  onPilot={(action, range) => void runPilot(action, undefined, { apply: true, range })}
+                  pilotBusy={pilotBusy}
+                  placeholder="Start writing your story... Share your perspective on technology, culture, business, or life in East Africa. Drag an image in to place it inline."
                 />
                 <div className="space-y-2">
                   <label className="text-xs font-semibold text-surface-300 flex items-center gap-1.5"><AlignLeft className="w-3 h-3 text-accent-strong" />Excerpt</label>
@@ -408,7 +532,7 @@ export default function StudioPage() {
             )}
           </div>
 
-          <StudioSidebar title={title} content={content} tags={tags} setTags={setTags} tagInput={tagInput} setTagInput={setTagInput} handleAddTag={handleAddTag} handleRemoveTag={handleRemoveTag} handleTagKeyDown={handleTagKeyDown} aiSuggestions={aiSuggestions} setAiSuggestions={setAiSuggestions} assistWithPost={assistWithPost} categoryId={categoryId} setCategoryId={setCategoryId} categoryName={categoryName} setCategoryName={setCategoryName} categoriesList={categoriesList} categoryOpen={categoryOpen} setCategoryOpen={setCategoryOpen} scheduledFor={scheduledFor} setScheduledFor={setScheduledFor} now={now} wordCount={wordCount} readTime={readTime} myStories={myStories} storiesLoading={storiesLoading} storiesUnauth={storiesUnauth} editingId={editingId} openStory={openStory} newStory={newStory} deletePost={deletePost} genBusy={genBusy} generateAssist={generateAssist} generated={generated} setGenerated={setGenerated} applyGenerated={applyGenerated} enhanceBusy={enhanceBusy} runEnhance={runEnhance} enhancement={enhancement} setEnhancement={setEnhancement} copilotBusy={copilotBusy} runCopilot={runCopilot} copilotPrompt={copilotPrompt} setCopilotPrompt={setCopilotPrompt} copilotError={copilotError} setCopilotError={setCopilotError} copilotResult={copilotResult} setCopilotResult={setCopilotResult} applyCopilot={applyCopilot} writingChecks={writingChecks} checksBusy={checksBusy} applyWritingCheck={applyWritingCheck} applyAllWritingChecks={applyAllWritingChecks} dismissWritingCheck={dismissWritingCheck} error={error} setError={setError} />
+          <StudioSidebar title={title} content={content} tags={tags} setTags={setTags} tagInput={tagInput} setTagInput={setTagInput} handleAddTag={handleAddTag} handleRemoveTag={handleRemoveTag} handleTagKeyDown={handleTagKeyDown} aiSuggestions={aiSuggestions} setAiSuggestions={setAiSuggestions} assistWithPost={assistWithPost} categoryId={categoryId} setCategoryId={setCategoryId} categoryName={categoryName} setCategoryName={setCategoryName} categoriesList={categoriesList} categoryOpen={categoryOpen} setCategoryOpen={setCategoryOpen} scheduledFor={scheduledFor} setScheduledFor={setScheduledFor} now={now} wordCount={wordCount} readTime={readTime} myStories={myStories} storiesLoading={storiesLoading} storiesUnauth={storiesUnauth} editingId={editingId} openStory={openStory} newStory={newStory} deletePost={deletePost} pilotBusy={pilotBusy} runPilot={runPilot} hasSelection={selectionRange.hasSelection} copilotBusy={copilotBusy} runCopilot={runCopilot} copilotPrompt={copilotPrompt} setCopilotPrompt={setCopilotPrompt} copilotError={copilotError} setCopilotError={setCopilotError} copilotResult={copilotResult} setCopilotResult={setCopilotResult} applyCopilot={applyCopilot} writingChecks={writingChecks} checksBusy={checksBusy} applyWritingCheck={applyWritingCheck} applyAllWritingChecks={applyAllWritingChecks} dismissWritingCheck={dismissWritingCheck} error={error} setError={setError} />
         </div>
       </div>
     </div>

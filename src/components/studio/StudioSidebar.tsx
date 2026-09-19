@@ -24,9 +24,9 @@ import {
   Send,
   Menu,
   Check,
-  ChevronRight,
 } from "lucide-react";
 import type { WritingSuggestion } from "@/lib/writing-checks";
+import { PILOT_QUICK_ACTIONS, type PilotAction, type PilotOp } from "@/lib/brain-pilot";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -49,28 +49,13 @@ interface MyPost {
   publishedAt?: string | null;
 }
 
-interface GeneratedResult {
-  type: string;
-  primary: string;
-  alternatives: string[];
-}
-
-interface EnhancementResult {
-  score: number;
-  grade: string;
-  readability: {
-    sentences: number;
-    words: number;
-    avgSentenceWords: number;
-    longSentenceCount: number;
-  };
-  suggestions: { kind: string; message: string }[];
-}
-
 interface CopilotResult {
-  action: "rewrite" | "continue" | "outline" | "summarize" | "headline" | "tags" | "curate" | "assist" | "seo" | "plagiarism" | "optimize";
+  action: "rewrite" | "continue" | "outline" | "summarize" | "headline" | "tags" | "curate" | "assist" | "seo" | "plagiarism" | "optimize" | "pilot";
   text: string;
   alternatives?: string[];
+  /** Structured edits — only the pilot returns these, and they are applied in place. */
+  ops?: PilotOp[];
+  degraded?: boolean;
   meta?: {
     notes?: string[];
     score?: number;
@@ -144,17 +129,10 @@ interface StudioSidebarProps {
   openStory: (id: string) => void;
   newStory: () => void;
   deletePost: (id: string) => void;
-  /* AI generate */
-  genBusy: null | "headline" | "excerpt" | "topics";
-  generateAssist: (type: "headline" | "excerpt" | "topics") => void;
-  generated: GeneratedResult | null;
-  setGenerated: Dispatch<SetStateAction<GeneratedResult | null>>;
-  applyGenerated: (value: string) => void;
-  /* Enhancement */
-  enhanceBusy: boolean;
-  runEnhance: () => void;
-  enhancement: EnhancementResult | null;
-  setEnhancement: Dispatch<SetStateAction<EnhancementResult | null>>;
+  /* Brain Pilot — structured edits written straight into the composer */
+  pilotBusy: PilotAction | null;
+  runPilot: (action: PilotAction, instruction?: string) => void;
+  hasSelection: boolean;
   /* Copilot */
   copilotBusy: string | null;
   runCopilot: (
@@ -246,16 +224,15 @@ type SidebarContentProps = StudioSidebarProps & {
 function SidebarContent(props: SidebarContentProps) {
   const {
     railTab, setRailTab,
-    title, content,
-    tags, setTags, tagInput, setTagInput, handleAddTag, handleRemoveTag, handleTagKeyDown,
-    aiSuggestions, setAiSuggestions, assistWithPost,
+    content,
+    tags, tagInput, setTagInput, handleAddTag, handleRemoveTag, handleTagKeyDown,
+    assistWithPost,
     categoryId, setCategoryId, categoryName, setCategoryName, categoriesList,
     categoryOpen, setCategoryOpen,
     scheduledFor, setScheduledFor, now, wordCount, readTime,
     myStories, storiesLoading, storiesUnauth,
     editingId, openStory, newStory, deletePost,
-    genBusy, generateAssist, generated, setGenerated, applyGenerated,
-    enhanceBusy, runEnhance, enhancement, setEnhancement,
+    pilotBusy, runPilot, hasSelection,
     copilotBusy, runCopilot, copilotPrompt, setCopilotPrompt,
     copilotError, setCopilotError, copilotResult, setCopilotResult, applyCopilot,
     writingChecks, checksBusy, applyWritingCheck, applyAllWritingChecks, dismissWritingCheck,
@@ -300,120 +277,6 @@ function SidebarContent(props: SidebarContentProps) {
             onDismiss={dismissWritingCheck}
           />
 
-          {/* AI Content Studio */}
-          <div className="relative overflow-hidden rounded-2xl bg-surface-900/60 border border-brand-500/20 p-5 shadow-card">
-            <div className="pointer-events-none absolute -top-10 -right-10 h-32 w-32 rounded-full bg-brand-500/10 blur-2xl" />
-            <h3 className="text-xs font-semibold text-accent-strong uppercase tracking-wider mb-3 flex items-center gap-2">
-              <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-gradient-to-r from-brand-500 to-accent-coral shadow-glow">
-                <Sparkles className="w-3 h-3 text-white" />
-              </span>
-              AI Content Studio
-            </h3>
-            <div className="grid grid-cols-3 gap-2">
-              <SidebarButton
-                onClick={() => generateAssist("headline")}
-                disabled={genBusy !== null || content.trim().length < 40}
-                busy={genBusy === "headline"}
-                icon={<PenLine className="h-3.5 w-3.5" />}
-                label="Headline"
-              />
-              <SidebarButton
-                onClick={() => generateAssist("excerpt")}
-                disabled={genBusy !== null || content.trim().length < 40}
-                busy={genBusy === "excerpt"}
-                icon={<AlignLeft className="h-3.5 w-3.5" />}
-                label="Excerpt"
-              />
-              <SidebarButton
-                onClick={() => generateAssist("topics")}
-                disabled={genBusy !== null || content.trim().length < 40}
-                busy={genBusy === "topics"}
-                icon={<Tag className="h-3.5 w-3.5" />}
-                label="Topics"
-              />
-            </div>
-
-            <button
-              onClick={runEnhance}
-              disabled={enhanceBusy || content.trim().length < 40}
-              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-brand-500/15 to-accent-coral/10 border border-brand-500/25 px-2 py-2 type-caption text-accent-strong hover:from-brand-500/25 hover:to-accent-coral/15 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-            >
-              {enhanceBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Gauge className="h-3.5 w-3.5" />}
-              {enhanceBusy ? "Analyzing…" : "Enhance — readability & clarity"}
-            </button>
-
-            {/* Enhancement results */}
-            {enhancement && (
-              <div className="mt-3 rounded-lg border border-surface-700/60 bg-surface-950/40 p-3">
-                <div className="flex items-center justify-between">
-                  <span className="type-caption text-surface-400 uppercase tracking-wider">
-                    Grade {enhancement.grade}
-                  </span>
-                  <button onClick={() => setEnhancement(null)} className="text-surface-500 hover:text-surface-300">
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <div className="h-1.5 flex-1 rounded-full bg-surface-800">
-                    <div
-                      className={cn(
-                        "h-1.5 rounded-full transition-all",
-                        enhancement.score >= 75 ? "bg-emerald-500" : enhancement.score >= 50 ? "bg-amber-500" : "bg-red-500"
-                      )}
-                      style={{ width: `${enhancement.score}%` }}
-                    />
-                  </div>
-                  <span className="type-caption text-surface-300">{enhancement.score}/100</span>
-                </div>
-                <p className="mt-2 type-caption text-surface-500">
-                  {enhancement.readability.sentences} sentences · {enhancement.readability.words} words
-                </p>
-                {enhancement.suggestions.length > 0 ? (
-                  <ul className="mt-2 space-y-1.5">
-                    {enhancement.suggestions.map((s, i) => (
-                      <li key={i} className="flex items-start gap-1.5 type-meta text-surface-300 leading-relaxed">
-                        <span className="mt-1 h-1 w-1 shrink-0 rounded-full bg-brand-400" />
-                        {s.message}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="mt-2 type-meta text-emerald-400">Clean draft — no suggestions. Nice.</p>
-                )}
-              </div>
-            )}
-
-            {/* Generated results */}
-            {generated && (
-              <div className="mt-3 space-y-2 rounded-lg border border-surface-700/60 bg-surface-950/40 p-3">
-                <div className="flex items-center justify-between">
-                  <span className="type-caption text-surface-400 uppercase tracking-wider">
-                    {generated.type} suggestions
-                  </span>
-                  <button onClick={() => setGenerated(null)} className="text-surface-500 hover:text-surface-300">
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-                <button
-                  onClick={() => applyGenerated(generated.primary)}
-                  className="block w-full text-left rounded-md bg-brand-500/10 border border-brand-500/20 px-3 py-2 text-xs text-brand-200 hover:bg-brand-500/20 transition-all"
-                >
-                  {generated.primary}
-                </button>
-                {generated.alternatives.map((alt, i) => (
-                  <button
-                    key={i}
-                    onClick={() => applyGenerated(alt)}
-                    className="block w-full text-left rounded-md bg-surface-800/60 border border-surface-700/50 px-3 py-2 text-xs text-surface-300 hover:border-brand-500/30 hover:text-brand-300 transition-all"
-                  >
-                    {alt}
-                  </button>
-                ))}
-                <p className="text-[9px] text-surface-600">Click a suggestion to apply it.</p>
-              </div>
-            )}
-          </div>
-
           {/* Brain Copilot */}
           <div className="relative overflow-hidden rounded-2xl bg-surface-900/60 border border-accent-violet/25 p-5 shadow-card">
             <div className="pointer-events-none absolute -bottom-10 -left-10 h-32 w-32 rounded-full bg-accent-violet/10 blur-2xl" />
@@ -434,6 +297,41 @@ function SidebarContent(props: SidebarContentProps) {
             <p className="type-caption text-surface-500 mb-3">
               Reads your draft and writes back into the editor.
             </p>
+
+            {/*
+              The Brain Pilot row.
+
+              These five are the same edits the inline toolbar offers on a
+              selection, surfaced here for a writer who has not highlighted
+              anything yet. They differ from the buttons below in kind, not just
+              in wording: the pilot returns *operations*, so an answer is
+              applied in place rather than pasted in, and a rewrite of the
+              passage you had selected lands back on that passage.
+            */}
+            <div className="mb-3">
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="type-caption font-semibold uppercase tracking-wider text-accent-violet">
+                  Quick edits
+                </span>
+                <span className="type-caption text-surface-500">
+                  {hasSelection ? "on your selection" : "on the whole draft"}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {PILOT_QUICK_ACTIONS.map((a) => (
+                  <button
+                    key={a.id}
+                    onClick={() => runPilot(a.id)}
+                    disabled={pilotBusy !== null || copilotBusy !== null || content.trim().length < 20}
+                    title={a.hint}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-accent-violet/25 bg-accent-violet/10 px-2.5 py-1.5 type-caption font-medium text-accent-violet transition-colors hover:bg-accent-violet/20 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {pilotBusy === a.id ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             <div className="grid grid-cols-2 gap-2">
               <CopilotButton
@@ -557,6 +455,7 @@ function SidebarContent(props: SidebarContentProps) {
                       : copilotResult.action === "headline" ? "Headline"
                       : copilotResult.action === "tags" ? "Tags"
                       : copilotResult.action === "curate" ? "Curation brief"
+                      : copilotResult.action === "pilot" ? "Pilot edit"
                       : "Brain answer"}
                   </span>
                   <div className="flex items-center gap-1.5">
@@ -609,12 +508,31 @@ function SidebarContent(props: SidebarContentProps) {
                     ))}
                   </div>
                 )}
+                {copilotResult.ops && copilotResult.ops.length > 0 ? (
+                  <ul className="mt-2 space-y-1">
+                    {copilotResult.ops.slice(0, 6).map((op, i) => (
+                      <li
+                        key={i}
+                        className="rounded-md border border-accent-violet/20 bg-surface-900/60 px-2 py-1.5 type-caption text-surface-300"
+                      >
+                        <span className="mr-1.5 font-semibold uppercase tracking-wide text-accent-violet">
+                          {op.kind.replace(/-/g, " ")}
+                        </span>
+                        <span className="text-surface-400">
+                          {(op.kind === "fix" ? op.find : op.text)?.slice(0, 80)}
+                          {(op.kind === "fix" ? op.find : op.text)!.length > 80 ? "…" : ""}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
                 <button
                   onClick={() => applyCopilot(copilotResult)}
                   className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-accent-violet to-brand-500 px-3 py-2 type-meta text-white shadow-glow hover:scale-[1.02] transition-all"
                 >
                   <Wand2 className="h-3 w-3" />
-                  {copilotResult.action === "headline" ? "Use as title"
+                  {copilotResult.action === "pilot" ? `Apply ${copilotResult.ops?.length ?? 0} edit${(copilotResult.ops?.length ?? 0) === 1 ? "" : "s"}`
+                    : copilotResult.action === "headline" ? "Use as title"
                     : copilotResult.action === "summarize" ? "Use as excerpt"
                     : copilotResult.action === "tags" ? "Add tags"
                     : copilotResult.action === "rewrite" ? "Replace draft"
@@ -1007,31 +925,6 @@ function WritingChecksPanel({
         </>
       )}
     </div>
-  );
-}
-
-function SidebarButton({
-  onClick,
-  disabled,
-  busy,
-  icon,
-  label,
-}: {
-  onClick: () => void;
-  disabled: boolean;
-  busy: boolean;
-  icon: React.ReactNode;
-  label: string;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className="flex flex-col items-center gap-1 rounded-lg bg-surface-800/60 border border-brand-500/20 px-2 py-2.5 type-caption text-accent-strong hover:bg-brand-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-    >
-      {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : icon}
-      {label}
-    </button>
   );
 }
 
