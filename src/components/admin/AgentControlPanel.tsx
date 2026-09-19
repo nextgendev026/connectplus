@@ -25,6 +25,8 @@ interface ProviderInfo {
   keyHint: string | null;
   model: string;
   models: string[];
+  /** What the settings store holds, which may not be the model that runs. */
+  storedModel?: string | null;
 }
 
 export default function AgentControlPanel({ canWrite = true }: { canWrite?: boolean }) {
@@ -224,6 +226,15 @@ export default function AgentControlPanel({ canWrite = true }: { canWrite?: bool
                       </select>
                       <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-surface-400" />
                     </div>
+                    {prov.storedModel && prov.storedModel !== prov.model ? (
+                      // Says *why* the saved id is not the one that will run. A paid
+                      // model left over from before the free-only rule fails every
+                      // call, so the substitution is shown rather than silent.
+                      <span className="mt-1 block text-[11px] leading-snug text-amber-500">
+                        Saved model <code className="font-mono">{prov.storedModel}</code> is not on the free tier — using{" "}
+                        <code className="font-mono">{prov.model}</code> instead.
+                      </span>
+                    ) : null}
                   </label>
                 </div>
 

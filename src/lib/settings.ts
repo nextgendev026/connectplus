@@ -472,7 +472,7 @@ export const SETTINGS_CATALOG: SettingDef[] = [
     defaultValue: "builtin",
     group: "api",
     label: "AI provider",
-    hint: "builtin (self-contained) or openai / anthropic / openrouter / opencode when you add a key below.",
+    hint: "builtin (self-contained) or one of the free gateways: openrouter / opencode. Paid providers are not offered.",
     type: "text",
   },
   {
@@ -537,10 +537,13 @@ export const SETTINGS_CATALOG: SettingDef[] = [
   },
   {
     key: "opencodeModel",
-    defaultValue: "deepseek-v4-flash",
+    // Free ids only. Zen's paid half (`deepseek-v4-flash`, `glm-5.3`,
+    // `claude-sonnet-5`, …) needs a billing method and answers the provider's
+    // credits error, so this default is the free counterpart of the old one.
+    defaultValue: "deepseek-v4-flash-free",
     group: "api",
     label: "OpenCode Zen model",
-    hint: "Leave blank to use the first model the Zen API reports. e.g. deepseek-v4-flash, glm-5.3, claude-sonnet-4.",
+    hint: "Free ids only — leave blank for the live free roster, or use e.g. deepseek-v4-flash-free, mimo-v2.5-free, nemotron-3-ultra-free.",
     type: "text",
   },
   {

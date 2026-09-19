@@ -30,7 +30,13 @@ const OPENAI_COMPATIBLE: Record<
       "X-Title": "connectPlus",
     },
   },
-  opencode: { baseUrl: "https://opencode.ai/zen/v1", defaultModel: "deepseek-v4-flash" },
+  opencode: {
+    baseUrl: "https://opencode.ai/zen/v1",
+    // Free only. The paid roster (`deepseek-v4-flash`, `claude-sonnet-5`, …)
+    // answers `CreditsError: No payment method` on a workspace without billing,
+    // so a paid default is a default that fails on every call.
+    defaultModel: "deepseek-v4-flash-free",
+  },
 };
 
 /**
@@ -71,22 +77,67 @@ export const OPENROUTER_FREE_MODELS = [
   "dots-studio/dots-3-note-preview:free",
 ] as const;
 
-/** OpenCode Zen models — refreshed roster. The API is the source of truth;
- *  these static fallbacks only apply when the endpoint is unreachable or
- *  unconfigured. Keep the list in sync by polling `opencode.ai/zen/v1/models`
- *  and wiring whatever the API returns as the clickable model list rather than
- *  a hard-coded roster.
+/**
+ * Free-tier OpenCode Zen models — these cost $0 and need no billing method.
+ *
+ * Zen publishes a mixed catalogue: ~74 ids, of which exactly these are free.
+ * The old fallback list here was the *paid* half (`deepseek-v4-flash`,
+ * `glm-5.3-flash`, `kimi-k2.5`, `qwen3.5-plus`, `minimax-m2.5`,
+ * `gemini-3.5-flash`), and it was also the default model — so an install that
+ * selected OpenCode Zen and did not name a model called a paid id and got
+ * `CreditsError: No payment method` back on every single call. The console
+ * listed the same paid roster, which is why the picker showed paid versions.
+ *
+ * Verified against `GET https://opencode.ai/zen/v1/models` on 2026-09-19. Two
+ * rules decide membership, and both are enforced on the live list too:
+ *
+ *   • the id ends in `-free`, or is a known free id with no suffix
+ *     (`big-pickle` — Zen ships it free without saying so in the name);
+ *   • it is not a `contributor-free` id, which is locked to the account that
+ *     owns the workspace and fails for everyone else.
+ *
+ * `deepseek-v4-flash-free` leads because it is the free counterpart of the id
+ * that used to be the default, so an existing configuration keeps the same
+ * behaviour at zero cost.
  */
-export const OPENCODE_MODELS = [
-  "deepseek-v4-flash",
-  "glm-5.3-flash",
-  "kimi-k2.5",
-  "qwen3.5-plus",
-  "minimax-m2.5",
-  "gemini-3.5-flash",
+export const OPENCODE_FREE_MODELS = [
+  "deepseek-v4-flash-free",
+  "mimo-v2.5-free",
+  "nemotron-3-ultra-free",
+  "nemotron-3.5-lightning-free",
+  "ling-3.0-flash-fin-free",
+  "jev-1.13-free",
+  "big-pickle",
 ] as const;
 
-/** Models confirmed working via OpenCode Zen API (paid tier). */
+/** Free ids whose name does not carry the `-free` suffix. */
+const OPENCODE_UNSUFFIXED_FREE = new Set<string>(["big-pickle"]);
+
+/**
+ * Is this an OpenCode Zen model that costs nothing?
+ *
+ * Exported because the runtime guard and the console picker must agree: if the
+ * picker offers what the guard refuses (or worse, the other way round) the two
+ * disagree about what is free and the paid call comes back.
+ */
+export function isFreeOpenCodeModel(id: string): boolean {
+  const model = id.trim();
+  if (!model || model.includes("contributor-free")) return false;
+  return model.endsWith("-free") || OPENCODE_UNSUFFIXED_FREE.has(model);
+}
+
+/**
+ * Is this an OpenRouter model that costs nothing?
+ *
+ * OpenRouter marks its free shelf in the id itself: a `:free` suffix, or a
+ * variant tag like `:free:floor`. The static list is all free, so membership in
+ * it also counts.
+ */
+export function isFreeOpenRouterModel(id: string): boolean {
+  const model = id.trim();
+  if (!model) return false;
+  return model.includes(":free") || (OPENROUTER_FREE_MODELS as readonly string[]).includes(model);
+}
 
 
 /**
@@ -121,13 +172,16 @@ export async function fetchOpenRouterFreeModels(): Promise<string[]> {
     });
     if (!res.ok) return [...OPENROUTER_FREE_MODELS];
     const data = await res.json();
-    const models: string[] = data?.data
-      ?.filter((m: { id: string; pricing?: { prompt: string; completion: string } }) => {
-        const priced = m.pricing ? parseFloat(m.pricing.prompt) === 0 && parseFloat(m.pricing.completion) === 0 : false;
-        return (m.id.endsWith(":free") || priced) && isChatCapableModel(m.id);
-      })
-      .map((m: { id: string }) => m.id)
-      .slice(0, 30) ?? [];
+    const models: string[] =
+      data?.data
+        // The suffix is the rule, and only the suffix. A pricing field of 0 was
+        // also accepted here once, which offered models the runtime guard then
+        // refused as non-free — the picker and the guard have to apply the same
+        // test or an admin saves a model that is silently swapped out.
+        .filter((m: { id: string }) => isFreeOpenRouterModel(m.id))
+        .map((m: { id: string }) => m.id)
+        .filter((id: string) => isChatCapableModel(id))
+        .slice(0, 30) ?? [];
     return models.length > 0 ? models : [...OPENROUTER_FREE_MODELS];
   } catch {
     return [...OPENROUTER_FREE_MODELS];
@@ -147,6 +201,10 @@ export async function fetchOpenRouterFreeModels(): Promise<string[]> {
  * static list, so an admin never saw that they existed. The key is still sent
  * when present, because a keyed call returns the models that key can actually
  * reach.
+ *
+ * What the live call returns is then narrowed to free ids. Zen answers with its
+ * whole catalogue — paid Claude, GPT, Gemini and Grok ids included — so an
+ * unfiltered roster is a picker full of models the account cannot call.
  */
 export async function fetchOpenCodeModels(keyOverride?: string): Promise<string[]> {
   try {
@@ -155,38 +213,22 @@ export async function fetchOpenCodeModels(keyOverride?: string): Promise<string[
       signal: AbortSignal.timeout(10_000),
       ...(key ? { headers: { Authorization: `Bearer ${key}` } } : {}),
     });
-    if (!res.ok) return [...OPENCODE_MODELS];
+    if (!res.ok) return [...OPENCODE_FREE_MODELS];
     const data = await res.json();
     const models: string[] = data?.data
       ?.map((m: { id: string }) => m.id)
-      .filter((id: string) => !id.includes("contributor-free")) // exclude environment-locked free models
+      // Free only. Zen's catalogue is mostly paid, so the roster arrives with
+      // `claude-sonnet-5`, `gpt-5.5` and friends interleaved with the free ids —
+      // returning it unfiltered is what put paid models in the console picker.
+      .filter((id: string) => isFreeOpenCodeModel(id))
       .filter((id: string) => isChatCapableModel(id))
-      .slice(0, 60) ?? [];
-    return models.length > 0 ? models : [...OPENCODE_MODELS];
+      .slice(0, 30) ?? [];
+    return models.length > 0 ? models : [...OPENCODE_FREE_MODELS];
   } catch {
-    return [...OPENCODE_MODELS];
+    return [...OPENCODE_FREE_MODELS];
   }
 }
 
-/**
- * Anthropic fallback when no key is available to ask the live list.
- *
- * Deliberately a date-less alias rather than a dated snapshot: Anthropic ships
- * dated ids and retires them, and the alias is the one identifier that keeps
- * resolving without a code change. A keyed install overrides it with whatever
- * `/v1/models` reports.
- *
- * The previous values — `claude-3-5-haiku-latest` and `claude-3-5-sonnet-latest`
- * — are retired and fail every request. The whole Claude 3 generation is gone:
- * Claude 3.5 Haiku was retired on 2026-02-19 and Claude 3.5 Sonnet on
- * 2025-10-28. Because this constant is also the Anthropic *default* model in
- * `getAiConfig`, a keyed install with no explicit override was calling a model
- * that no longer existed, and every completion returned null.
- *
- * Claude Haiku 4.5 is the current fastest model, but its own deprecation window
- * opens 2026-10-15 — which is exactly why the live list should drive this and
- * this constant is only a last resort.
- */
 /**
  * One entry point for "the models this provider currently serves", so a caller
  * does not need to know which platforms are OpenAI-shaped and which are not —
@@ -230,11 +272,21 @@ export async function getAiConfig(): Promise<AiConfig> {
   const keys: Record<Exclude<AiProviderName, "builtin">, { key: string; model: string }> = {
     openrouter: {
       key: settings.openrouterApiKey || process.env.OPENROUTER_API_KEY || "",
-      model: settings.openrouterModel || process.env.OPENROUTER_MODEL || OPENAI_COMPATIBLE.openrouter.defaultModel,
+      model: freeOrFallback(
+        settings.openrouterModel || process.env.OPENROUTER_MODEL || "",
+        isFreeOpenRouterModel,
+        OPENAI_COMPATIBLE.openrouter.defaultModel,
+        "openrouter"
+      ),
     },
     opencode: {
       key: settings.opencodeApiKey || process.env.OPENCODE_API_KEY || "",
-      model: settings.opencodeModel || process.env.OPENCODE_MODEL || OPENAI_COMPATIBLE.opencode.defaultModel,
+      model: freeOrFallback(
+        settings.opencodeModel || process.env.OPENCODE_MODEL || "",
+        isFreeOpenCodeModel,
+        OPENAI_COMPATIBLE.opencode.defaultModel,
+        "opencode"
+      ),
     },
   };
 
@@ -255,6 +307,30 @@ export async function getAiConfig(): Promise<AiConfig> {
 
 export function isContentIntent(intent: Intent): boolean {
   return CONTENT_INTENTS.includes(intent);
+}
+
+/**
+ * Last line of defence against a paid model being called by accident.
+ *
+ * A stored setting, an environment variable or a model id saved before the
+ * free-only rule existed can all point at something that costs money. The
+ * provider would then answer `CreditsError: No payment method` on every call,
+ * which looks like an outage rather than a configuration mistake. So the id is
+ * checked here, at the one place a provider is chosen, and a non-free id is
+ * replaced with the free default.
+ *
+ * The substitution is logged rather than silent: an admin who typed a paid
+ * model should be able to see that it was not used, and why.
+ */
+function freeOrFallback(candidate: string, isFree: (id: string) => boolean, fallback: string, provider: string): string {
+  const model = candidate.trim();
+  if (model && isFree(model)) return model;
+  if (model) {
+    console.warn(
+      `[ai-provider] ${provider} model "${model}" is not on the free tier — using "${fallback}" instead. Only free models are permitted.`
+    );
+  }
+  return fallback;
 }
 
 /**

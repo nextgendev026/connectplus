@@ -3,8 +3,10 @@ import { auth } from "@/lib/auth";
 import { getSettings, updateSettings, settingDef } from "@/lib/settings";
 import {
   OPENROUTER_FREE_MODELS,
-  OPENCODE_MODELS,
+  OPENCODE_FREE_MODELS,
   fetchProviderModels,
+  isFreeOpenCodeModel,
+  isFreeOpenRouterModel,
   type AiProviderName,
 } from "@/lib/ai-provider";
 
@@ -17,8 +19,13 @@ export const dynamic = "force-dynamic";
  * The stored settings are passed in because a key saved through this console
  * lives in the settings store rather than the environment: without it, every
  * provider that only read `process.env` would keep rendering its static
- * fallback even on a fully configured install. All four platforms now answer
- * from their live API when they can and from a real fallback when they cannot.
+ * fallback even on a fully configured install.
+ *
+ * Every list is filtered to the free tier, here as well as in the fetchers. Zen
+ * publishes ~74 ids of which seven are free, so this is not belt-and-braces: it
+ * is the difference between a picker an admin can use and one where most
+ * choices answer `CreditsError: No payment method`. The filter runs on the way
+ * out because this is the last point before the console renders the list.
  */
 async function buildProviders(settings: Record<string, string>): Promise<{
   name: Exclude<AiProviderName, "builtin">;
@@ -33,24 +40,28 @@ async function buildProviders(settings: Record<string, string>): Promise<{
     fetchProviderModels("openrouter"),
     fetchProviderModels("opencode", settings.opencodeApiKey),
   ]);
+
+  const freeOpenRouter = orModels.filter(isFreeOpenRouterModel);
+  const freeOpenCode = ocModels.filter(isFreeOpenCodeModel);
+
   return [
     {
       name: "openrouter",
       label: "OpenRouter (Free)",
       keySetting: "openrouterApiKey",
       modelSetting: "openrouterModel",
-      defaultModel: orModels[0] || OPENROUTER_FREE_MODELS[0],
-      models: orModels,
-      note: `Free tier — ${orModels.length} models available, all :free cost nothing.`,
+      defaultModel: freeOpenRouter[0] || OPENROUTER_FREE_MODELS[0],
+      models: freeOpenRouter.length > 0 ? freeOpenRouter : [...OPENROUTER_FREE_MODELS],
+      note: `Free tier — ${freeOpenRouter.length} models, every one :free and free to run.`,
     },
     {
       name: "opencode",
       label: "OpenCode Zen (Free)",
       keySetting: "opencodeApiKey",
       modelSetting: "opencodeModel",
-      defaultModel: ocModels[0] || OPENCODE_MODELS[0],
-      models: ocModels.length > 0 ? ocModels : [...OPENCODE_MODELS],
-      note: `Free tier — ${ocModels.length} models available.`,
+      defaultModel: freeOpenCode[0] || OPENCODE_FREE_MODELS[0],
+      models: freeOpenCode.length > 0 ? freeOpenCode : [...OPENCODE_FREE_MODELS],
+      note: `Free tier — ${freeOpenCode.length} models. Zen's paid catalogue is hidden: those ids need a billing method.`,
     },
   ];
 }
@@ -77,13 +88,19 @@ export async function GET() {
     active: active === "builtin" ? "builtin" : active,
     providers: providers.map((p) => {
       const key = settings[p.keySetting] || "";
+      const stored = settings[p.modelSetting] || "";
+      const isFree = p.name === "openrouter" ? isFreeOpenRouterModel : isFreeOpenCodeModel;
       return {
         name: p.name,
         label: p.label,
         note: p.note,
         hasKey: Boolean(key),
         keyHint: key ? `••••${key.slice(-4)}` : null,
-        model: settings[p.modelSetting] || p.defaultModel,
+        // The stored model is shown as the effective one only if it is free; a
+        // paid id left over from before is displayed as what will actually run,
+        // so the console never claims a model the provider will refuse.
+        model: stored && isFree(stored) ? stored : p.defaultModel,
+        storedModel: stored || null,
         models: p.models,
       };
     }),
@@ -112,6 +129,26 @@ export async function POST(request: NextRequest) {
   const model = (typeof body?.model === "string" && body.model.trim()) || settings[def.modelSetting] || def.defaultModel;
 
   if (!key) return NextResponse.json({ error: "Add an API key for this provider first" }, { status: 400 });
+
+  /*
+   * Free only, refused with the reason.
+   *
+   * Without this an admin could save a paid id — by hand, or from a browser tab
+   * left open before the roster changed — and every completion afterwards would
+   * fail with the provider's credits error. Refusing at the boundary turns a
+   * silent outage into a sentence in the console.
+   */
+  const isFree = def.name === "openrouter" ? isFreeOpenRouterModel : isFreeOpenCodeModel;
+  if (!isFree(model)) {
+    return NextResponse.json(
+      {
+        error: "Only free models are available",
+        detail: `"${model}" is not a ${def.label} free model. Pick one from the list, or leave the model blank to use ${def.defaultModel}.`,
+        freeModels: def.models,
+      },
+      { status: 400 }
+    );
+  }
 
   if (action === "save") {
     if (!settingDef(def.keySetting) || !settingDef(def.modelSetting)) {
