@@ -30,6 +30,7 @@ import type {
   PipelineState,
 } from "@/lib/pipeline-health";
 import { BrainDiagnosticsPanel } from "@/components/admin/BrainDiagnosticsPanel";
+import { BrainApprovalsPanel } from "@/components/admin/BrainApprovalsPanel";
 
 /**
  * Pipeline health console.
@@ -190,6 +191,10 @@ export default function AdminHealthPage() {
       ) : null}
 
       <BrainDiagnosticsPanel />
+
+      {/* The other half of the brain's access: it reads everything, and every
+       * write it wants is decided here by a named human. */}
+      <BrainApprovalsPanel />
 
       {report ? (
         <>

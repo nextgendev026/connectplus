@@ -3,8 +3,8 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { neuralMind } from "@/lib/neural-mind";
 import { hiveBrain } from "@/lib/hive-brain";
-import { classifyIntent } from "@/lib/neural-intent";
-import { tryLlmForChat } from "@/lib/ai-provider";
+import { appBrain } from "@/lib/app-brain";
+import { pendingProposals } from "@/lib/brain-approvals";
 import { parseDirective, saveDirective } from "@/lib/mind-directives";
 
 export async function POST(request: NextRequest) {
@@ -54,13 +54,6 @@ export async function POST(request: NextRequest) {
 
     const history = (conversation.messages ?? []).map((m) => ({ role: m.role, content: m.content }));
 
-    // When an LLM provider is configured (admin Settings → API keys) and the
-    // query is conversational/content-creation, let the real model answer;
-    // otherwise the deterministic brains handle it (they query the live DB for
-    // platform data intents). Graceful fallback keeps the chat fully functional
-    // with zero configuration.
-    const classified = classifyIntent(message.trim());
-
     // A standing instruction is *saved*, not answered and forgotten. This is the
     // hook that lets an operator actually teach the combined mind: the directive
     // is persisted as a mind memory and consulted by every sports prediction from
@@ -70,17 +63,17 @@ export async function POST(request: NextRequest) {
       ? await saveDirective({ text: message.trim(), parsed: directive, createdBy: userId })
       : null;
 
-    const llmText = await tryLlmForChat(message.trim(), history, classified.intent);
-
-    const base = llmText
-      ? {
-          text: llmText,
-          intent: classified.intent,
-          enginesUsed: ["internal", "hive", "llm"] as const,
-          confidence: Math.max(classified.confidence, 0.7),
-          sources: [] as string[],
-        }
-      : await neuralMind.processQuery(message.trim(), history, { actorId: userId });
+    /*
+     * One front door.
+     *
+     * The route used to assemble an answer itself — try a model, else ask the
+     * neural mind — which is how a question about revenue could come back without
+     * anyone having checked whether the scheduler was behind. `appBrain.chat`
+     * reads every subsystem first and grounds the answer in what it found,
+     * routes action requests into the approval queue, and falls back to the
+     * deterministic engines when no provider is configured.
+     */
+    const base = await appBrain.chat(message.trim(), history, { actorId: userId });
 
     // The confirmation leads the reply so the operator sees immediately that the
     // instruction was understood and is now live, rather than hoping it was.
@@ -100,6 +93,10 @@ export async function POST(request: NextRequest) {
 
     void neuralMind.learnFromInteraction(message.trim(), response.intent, response.text).catch(() => {});
 
+    /* Anything this turn proposed was created after this timestamp, which is how
+     * the stream tells "the brain filed a request" from "requests already open". */
+    const pendingSince = Date.now() - 1_000;
+
     const hiveStatus = await hiveBrain.status();
 
     await prisma.neuralMessage.create({
@@ -109,7 +106,12 @@ export async function POST(request: NextRequest) {
         content: response.text,
         intent: response.intent,
         enginesUsed: response.enginesUsed.join(","),
-        metadata: JSON.stringify({ confidence: response.confidence, sources: response.sources }),
+        metadata: JSON.stringify({
+          confidence: response.confidence,
+          sources: response.sources,
+          understanding: response.understanding,
+          readings: response.readings ? { taken: response.readings.taken, missing: response.readings.missing, state: response.readings.state } : null,
+        }),
       },
     });
 
@@ -117,13 +119,44 @@ export async function POST(request: NextRequest) {
     const stream = new ReadableStream({
       async start(controller) {
         try {
-          controller.enqueue(encoder.encode(JSON.stringify({ type: "metadata", conversationId: conversation!.id, intent: response.intent, enginesUsed: response.enginesUsed }) + "\n"));
+          controller.enqueue(
+            encoder.encode(
+              JSON.stringify({
+                type: "metadata",
+                conversationId: conversation!.id,
+                intent: response.intent,
+                enginesUsed: response.enginesUsed,
+                // What the brain understood, and what it grounded the answer in.
+                // Both are shown in the console: an answer whose evidence the
+                // operator cannot see is an answer they have to take on faith.
+                understanding: response.understanding,
+                readings: response.readings
+                  ? {
+                      taken: response.readings.taken,
+                      missing: response.readings.missing,
+                      state: response.readings.state,
+                      items: response.readings.readings,
+                    }
+                  : null,
+              }) + "\n"
+            )
+          );
 
           if (saved) {
             controller.enqueue(encoder.encode(JSON.stringify({ type: "directive", directive: saved }) + "\n"));
           }
 
           controller.enqueue(encoder.encode(JSON.stringify({ type: "hive", status: hiveStatus }) + "\n"));
+
+          // A queued write is surfaced as its own event so the console can render
+          // an Approve / Reject card instead of the operator hunting for it.
+          if (pendingSince) {
+            const pending = await pendingProposals().catch(() => []);
+            const fresh = pending.filter((p) => new Date(p.createdAt).getTime() >= pendingSince);
+            if (fresh.length > 0) {
+              controller.enqueue(encoder.encode(JSON.stringify({ type: "proposals", proposals: fresh }) + "\n"));
+            }
+          }
 
           const text = response.text;
           const chunkSize = 12;

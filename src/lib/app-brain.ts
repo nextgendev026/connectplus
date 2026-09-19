@@ -3,7 +3,9 @@ import { createLogger } from "@/lib/logger";
 import { hiveBrain } from "@/lib/hive-brain";
 import { neuralMind, type NeuralResponse } from "@/lib/neural-mind";
 import { platformIntelligence } from "@/lib/platform-intelligence";
-import { generateText, getAiConfig } from "@/lib/ai-provider";
+import { generateText, getAiConfig, isContentIntent, tryLlmForChat } from "@/lib/ai-provider";
+import { classifyIntent } from "@/lib/neural-intent";
+import { gatherReadings, type BrainReading, type BrainReadings, type ReadingState } from "@/lib/brain-readings";
 import { activeCacheBackend, cacheBackendDetail } from "@/lib/redis";
 import { getCronStatus } from "@/lib/cron-schedule";
 import { getPipelineHealth } from "@/lib/pipeline-health";
@@ -146,6 +148,23 @@ export interface BrainAnswer extends NeuralResponse {
   context: string;
 }
 
+/** What the brain understood a chat turn to be asking for. */
+export interface BrainReadingsMeta {
+  taken: number;
+  missing: number;
+  state: ReadingState;
+  /** The readings themselves, so the console can show the evidence. */
+  readings: BrainReading[];
+}
+
+export interface BrainChatAnswer extends NeuralResponse {
+  minds: BrainMind[];
+  /** One line of "here is what I think you asked", shown above the answer. */
+  understanding: string;
+  /** What the answer was grounded in — and what could not be read. */
+  readings: BrainReadingsMeta | null;
+}
+
 class AppBrain {
   private readonly log = createLogger("app-brain");
 
@@ -179,6 +198,144 @@ class AppBrain {
       minds: [...minds],
       context: brief ? formatBrief(brief) : "",
     };
+  }
+
+  /**
+   * One turn of conversation, with the whole platform as its ground truth.
+   *
+   * This is the difference between a mind that retrieves and one that
+   * understands. A question about revenue used to reach whichever subsystem the
+   * classifier picked and answer from it alone; here every subsystem is read
+   * first (`gatherReadings`), the readings are handed to the model as facts, and
+   * the answer is required to be consistent with them — including saying so when
+   * a reading could not be taken.
+   *
+   * The routing is deliberately explicit rather than left to the model:
+   *
+   *   • **Action requests** go to the neural mind, which files them for human
+   *     approval. The model never executes anything, and never claims to.
+   *   • **Content requests** keep the writing path that already works.
+   *   • **Everything else** — platform questions, analysis, conversation — is
+   *     answered by the model over the live readings, with the deterministic
+   *     engines as the fallback when no provider is configured.
+   */
+  async chat(
+    input: string,
+    history: { role: string; content: string }[] = [],
+    opts: { actorId?: string; live?: boolean } = {}
+  ): Promise<BrainChatAnswer> {
+    const classified = classifyIntent(input);
+    const understanding = describeUnderstanding(input, classified.intent, classified.confidence);
+
+    /* Action requests never reach the model: the tool routing, the id extraction
+     * and the approval queue all live in the neural mind. */
+    if (classified.intent === "mind_action") {
+      const response = await neuralMind.processQuery(input, history, { actorId: opts.actorId });
+      const readings = await gatherReadings().catch(() => null);
+      return {
+        ...response,
+        minds: ["neural", "platform"],
+        understanding,
+        readings: readingsMeta(readings),
+      };
+    }
+
+    const readings = await gatherReadings({ live: opts.live }).catch(() => null);
+
+    /* Content work keeps its own tuned path — the writing system prompt is
+     * specialised for producing a piece, not for reporting on one. */
+    if (isContentIntent(classified.intent)) {
+      const llm = await tryLlmForChat(input, history, classified.intent).catch(() => null);
+      if (llm) {
+        return {
+          text: llm,
+          intent: classified.intent,
+          enginesUsed: ["internal", "hive", "llm"],
+          confidence: Math.max(classified.confidence, 0.7),
+          sources: [],
+          minds: ["neural", "platform"],
+          understanding,
+          readings: readingsMeta(readings),
+        };
+      }
+      const fallback = await neuralMind.processQuery(input, history, { actorId: opts.actorId });
+      return { ...fallback, minds: ["neural", "platform"], understanding, readings: readingsMeta(readings) };
+    }
+
+    const grounded = await this.groundedAnswer(input, history, readings).catch((error) => {
+      this.log.warn("grounded answer failed", { error: error instanceof Error ? error.message : String(error) });
+      return null;
+    });
+    if (grounded) {
+      return {
+        text: grounded,
+        intent: classified.intent,
+        // `enginesUsed` is the neural mind's own vocabulary (internal, external,
+        // hive, llm) — the platform senses are reported through `minds` and the
+        // readings instead of an engine name that does not exist.
+        enginesUsed: ["internal", "hive", "llm"],
+        confidence: Math.max(classified.confidence, 0.65),
+        sources: [],
+        minds: ["hive", "neural", "platform"],
+        understanding,
+        readings: readingsMeta(readings),
+      };
+    }
+
+    /* No provider configured, or it failed: the deterministic engines answer.
+     * The brief is still attached, and the reply says which papers it was
+     * written from rather than pretending to a model's fluency. */
+    const fallback = await neuralMind.processQuery(input, history, { actorId: opts.actorId });
+    const note = readings
+      ? `\n\n_Answered from live platform readings taken ${new Date(readings.generatedAt).toISOString()} — no writing model is configured, so this is the deterministic brain. Connect a provider in Admin → AI for a reasoning answer._`
+      : "";
+    return {
+      ...fallback,
+      text: `${fallback.text}${note}`,
+      minds: ["hive", "neural", "platform"],
+      understanding,
+      readings: readingsMeta(readings),
+    };
+  }
+
+  /**
+   * Ask the model, with the platform attached.
+   *
+   * `null` means "no model answered", never "the model said nothing" — an empty
+   * completion is treated as a failure so the deterministic path takes over
+   * rather than the console rendering a blank reply.
+   */
+  private async groundedAnswer(
+    input: string,
+    history: { role: string; content: string }[],
+    readings: BrainReadings | null
+  ): Promise<string | null> {
+    const config = await getAiConfig().catch(() => null);
+    if (!config || config.provider === "builtin" || !config.apiKey) return null;
+
+    const recall = await hiveBrain
+      .recall(input, 6)
+      .then((m) => m.map((x) => `• [${x.category}] ${x.content.slice(0, 240)}`).join("\n"))
+      .catch(() => "");
+
+    const recent = history
+      .slice(-6)
+      .filter((m) => m.content?.trim())
+      .map((m) => `${m.role === "user" ? "Admin" : "Brain"}: ${m.content.slice(0, 1_200)}`)
+      .join("\n\n");
+
+    const user = [
+      readings?.text ?? "No live readings could be taken.",
+      recall ? `\nWHAT THE HIVE REMEMBERS (lessons from this platform, not facts about the world):\n${recall}` : "",
+      recent ? `\nCONVERSATION SO FAR:\n${recent}` : "",
+      `\nREQUEST: ${input}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const text = await generateText({ system: BRAIN_CHAT_SYSTEM, user, maxTokens: 1_200 }).catch(() => null);
+    const trimmed = text?.trim();
+    return trimmed ? trimmed : null;
   }
 
   /**
@@ -1005,6 +1162,63 @@ function summarizeDiagnosis(diagnosis: BrainDiagnosis): string {
   const lines = diagnosis.findings.map((f) => `[${f.severity}] ${f.title} — ${f.detail}`);
   return `Brain self-diagnosis (${diagnosis.overall}) at ${diagnosis.generatedAt}: ${lines.join(" | ")}`.slice(0, 4_000);
 }
+
+/** The shape the console renders, from a readings pack that may have failed. */
+function readingsMeta(readings: BrainReadings | null): BrainReadingsMeta | null {
+  if (!readings) return null;
+  return {
+    taken: readings.taken,
+    missing: readings.missing,
+    state: readings.state,
+    readings: readings.readings,
+  };
+}
+
+/**
+ * Say what the turn was understood to be, in one line.
+ *
+ * Confidence is rendered as a band rather than a percentage: "0.68" invites a
+ * precision the classifier does not have, and an operator reading "fairly sure"
+ * knows exactly how much to trust it.
+ */
+function describeUnderstanding(input: string, intent: string, confidence: number): string {
+  const band = confidence >= 0.8 ? "high" : confidence >= 0.55 ? "fairly" : "low";
+  const keywords = extractKeywords(input, 4)
+    .map((k) => k.keyword)
+    .filter(Boolean)
+    .slice(0, 4);
+  const subject = keywords.length > 0 ? ` — subjects: ${keywords.join(", ")}` : "";
+  return `Read as \`${intent.replace(/_/g, " ")}\` (${band} confidence)${subject}.`;
+}
+
+/**
+ * The chat contract.
+ *
+ * Three properties matter more than tone: the answer is grounded in the readings
+ * it was given, a failed reading is reported instead of filled in, and the brain
+ * never claims to have changed something it only proposed. That last one is the
+ * whole reason writes go through an approval queue — a mind that says "done"
+ * when nothing ran is worse than one that says nothing.
+ */
+const BRAIN_CHAT_SYSTEM = [
+  "You are the ConnectPlus Brain: one mind over a live publishing platform (stories, creators, moderation, RSS intake, sports, ads, the scheduler and the economy).",
+  "You are talking to an administrator inside the admin console.",
+  "",
+  "Grounding — these rules are absolute:",
+  "- You are given LIVE PLATFORM READINGS. They are ground truth. Never contradict them, and never invent a number, date, name, quote or source that is not in them.",
+  "- If a line is marked [could not be read], say that it could not be read. An admitted gap is a correct answer; a plausible guess is not.",
+  "- HIVE memories are lessons this platform has recorded, not facts about the world. Use them for context and say when you are doing so.",
+  "- If the readings cannot answer the question, say exactly what is missing and which system would have it.",
+  "",
+  "Access:",
+  "- You can READ everything in the readings. You cannot WRITE anything directly.",
+  "- Publishing, scheduling, and moderation actions are filed as approval requests that a named admin approves. If asked to do one, explain what you would do and that it needs approval — never say it is done.",
+  "",
+  "Style:",
+  "- Lead with the answer in one sentence, then the evidence. Markdown, short paragraphs, no filler, no restating the question.",
+  "- Numbers exactly as given, with their unit. Prefer a table when comparing three or more figures.",
+  "- Be direct about what is broken and what would fix it. The reader is the operator who will do the work.",
+].join("\n");
 
 /** Pack the live brief into one line the model can consume cheaply. */
 function formatBrief(brief: Awaited<ReturnType<typeof platformIntelligence.getLiveBrief>>): string {

@@ -1021,3 +1021,47 @@ model MarketingShare {
   @@index([campaignId, createdAt])
   @@index([channel, status])
 }
+
+/// A write the brain wants to make, waiting for a human to approve it.
+///
+/// The combined mind reads the whole platform without asking — reading cannot
+/// break a publication. Every mutation it wants to make is parked here instead:
+/// publishing to production is the one class of action that must not be
+/// reachable by a phrase typed into a chat box, because a model can generate
+/// "yes, go ahead" as easily as a person can.
+///
+/// `tool` is checked against an allowlist before a row is ever written, so this
+/// table can only ever hold actions the platform supports deliberately. `risk`
+/// and `summary` are derived from the tool rather than from the model, so what
+/// the approver reads cannot be talked up or down by the model's own framing.
+model BrainActionProposal {
+  id          String    @id @default(cuid())
+  /// Allowlisted tool id: publish_post | schedule_post | flag_comment | remove_comment.
+  tool        String
+  /// The tool's arguments, as JSON.
+  args        String    @db.Text
+  /// What the brain was trying to achieve, in its own words.
+  rationale   String    @db.Text
+  /// What the human is being asked to authorise, in plain language.
+  summary     String    @db.Text
+  /// low | medium | high — derived from the tool, never from the model.
+  risk        String    @default("medium")
+  /// PENDING | APPROVED | REJECTED | FAILED | EXPIRED
+  status      String    @default("PENDING")
+  /// Where the request came from: chat | studio | auto.
+  source      String    @default("chat")
+  /// The admin who asked the brain for it, when there was one.
+  requestedBy String?
+  /// The admin who decided it. Always a named human.
+  reviewedBy  String?
+  reviewedAt  DateTime?
+  /// Why it was approved or rejected.
+  decidedNote String?   @db.Text
+  /// The tool's own result summary once it ran.
+  result      String?   @db.Text
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, createdAt])
+  @@index([tool])
+}

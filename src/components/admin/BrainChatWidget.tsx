@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BrainCircuit, Send, Loader2, X, MessageSquareText, Zap, Database, RefreshCw, Target, Ban, GraduationCap, Globe } from "lucide-react";
+import { BrainCircuit, Send, Loader2, X, MessageSquareText, Zap, Database, RefreshCw, Target, Ban, GraduationCap, Globe, Check, Stamp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface HiveData {
@@ -13,12 +13,45 @@ interface HiveData {
   recentLearnings: { source: string; category: string; content: string; confidence: number }[];
 }
 
+interface ReadingItem {
+  id: string;
+  area: string;
+  label: string;
+  value: string;
+  state: "ok" | "warn" | "critical" | "unknown";
+  detail?: string;
+}
+
+interface ReadingsSummary {
+  taken: number;
+  missing: number;
+  state: ReadingItem["state"];
+  items: ReadingItem[];
+}
+
+/** A write the brain asked for, waiting on this admin's decision. */
+interface ProposalCard {
+  id: string;
+  label: string;
+  summary: string;
+  risk: string;
+  status: string;
+  /** Filled in once a decision comes back, so the card reports the outcome. */
+  outcome?: string;
+}
+
 interface ChamberMessage {
   role: "user" | "assistant";
   content: string;
   intent?: string;
   enginesUsed?: string[];
   hive?: HiveData;
+  /** What the brain understood the question to be. */
+  understanding?: string;
+  /** The live platform readings the answer was grounded in. */
+  readings?: ReadingsSummary | null;
+  /** Requests the brain filed this turn — nothing has run yet. */
+  proposals?: ProposalCard[];
 }
 
 interface NeuralInsight {
@@ -83,6 +116,115 @@ function EngineBadges({ intent, enginesUsed: engines, hive }: ChamberMessage) {
           {hive.total} memories
         </span>
       )}
+    </div>
+  );
+}
+
+/**
+ * The evidence behind an answer.
+ *
+ * Collapsed by default and always present: an operator who cannot see what the
+ * brain read has to take the answer on faith, and the whole point of grounding
+ * the reply is that they do not have to. The state badges matter more than the
+ * text — `could not be read` is the honest half of the brief.
+ */
+function ReadingEvidence({ readings }: { readings: ReadingsSummary }) {
+  const tone: Record<ReadingItem["state"], string> = {
+    ok: "text-surface-300",
+    warn: "text-warning-strong",
+    critical: "text-danger-strong",
+    unknown: "text-surface-500",
+  };
+  return (
+    <details className="mt-2 rounded-lg border border-surface-700/60 bg-surface-900/40">
+      <summary className="cursor-pointer px-2 py-1.5 type-caption text-surface-400">
+        Grounded in {readings.taken} live readings
+        {readings.missing > 0 ? ` · ${readings.missing} could not be read` : ""}
+      </summary>
+      <ul className="space-y-1 px-2 pb-2">
+        {readings.items.map((item) => (
+          <li key={item.id} className="text-[10px] leading-snug">
+            <span className={cn("font-semibold", tone[item.state])}>{item.area}</span>
+            <span className="text-surface-500"> · {item.label}: </span>
+            <span className="text-surface-300">{item.value}</span>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+/**
+ * Approve or reject, without leaving the conversation.
+ *
+ * The brain is allowed to ask here; the answer has to come from a person. The
+ * buttons call the same endpoint the Health page's queue uses, so a decision made
+ * in the chat is the same decision — same audit row, same single execution.
+ */
+function ProposalDecisions({
+  proposals,
+  onDecided,
+}: {
+  proposals: ProposalCard[];
+  onDecided: (id: string, outcome: string) => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const decide = async (id: string, decision: "approve" | "reject") => {
+    setBusy(id);
+    try {
+      const res = await fetch("/api/admin/brain/approvals", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, decision }),
+      });
+      const data = await res.json().catch(() => ({}));
+      onDecided(id, data?.message ?? (res.ok ? "Done." : "The decision could not be applied."));
+    } catch {
+      onDecided(id, "The decision could not be sent.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="mt-2 space-y-2">
+      {proposals.map((proposal) => (
+        <div key={proposal.id} className="rounded-lg border border-warning/30 bg-warning/5 px-2.5 py-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Stamp className="h-3 w-3 text-warning-strong" />
+            <span className="text-[11px] font-semibold text-surface-100">{proposal.label}</span>
+            <span className="rounded-full bg-surface-800 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-surface-400">
+              {proposal.risk} risk
+            </span>
+          </div>
+          <p className="mt-1 text-[11px] leading-snug text-surface-300">{proposal.summary}</p>
+          {proposal.outcome ? (
+            <p className="mt-1.5 text-[11px] text-surface-400">{proposal.outcome}</p>
+          ) : (
+            <div className="mt-2 flex items-center gap-1.5">
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => void decide(proposal.id, "approve")}
+                className="flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+              >
+                {busy === proposal.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                Approve &amp; run
+              </button>
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => void decide(proposal.id, "reject")}
+                className="rounded-lg border border-surface-700 px-2 py-1 text-[10px] font-semibold text-surface-300 hover:text-surface-100 disabled:opacity-50"
+              >
+                Reject
+              </button>
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -328,7 +470,23 @@ export default function BrainChatWidget() {
                 setMessages(prev => {
                   const updated = [...prev];
                   const last = updated[updated.length - 1];
-                  if (last) updated[updated.length - 1] = { ...last, intent: event.intent, enginesUsed: event.enginesUsed };
+                  if (last)
+                    updated[updated.length - 1] = {
+                      ...last,
+                      intent: event.intent,
+                      enginesUsed: event.enginesUsed,
+                      understanding: event.understanding,
+                      readings: event.readings ?? null,
+                    };
+                  return updated;
+                });
+              } else if (event.type === "proposals") {
+                // Nothing here has run: the request is surfaced as a decision the
+                // operator makes without leaving the conversation.
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last) updated[updated.length - 1] = { ...last, proposals: event.proposals };
                   return updated;
                 });
               } else if (event.type === "directive") {
@@ -486,6 +644,24 @@ export default function BrainChatWidget() {
                       <span className="h-1.5 w-1.5 rounded-full bg-surface-400 animate-bounce [animation-delay:300ms]" />
                     </div>
                   ) : null)}
+                  {msg.understanding && (
+                    <p className="mt-1.5 text-[10px] italic text-surface-400">{msg.understanding}</p>
+                  )}
+                  {msg.readings && msg.readings.items.length > 0 && <ReadingEvidence readings={msg.readings} />}
+                  {msg.proposals && msg.proposals.length > 0 && (
+                    <ProposalDecisions
+                      proposals={msg.proposals}
+                      onDecided={(id, outcome) =>
+                        setMessages(prev =>
+                          prev.map(m =>
+                            m.proposals
+                              ? { ...m, proposals: m.proposals.map(p => (p.id === id ? { ...p, outcome } : p)) }
+                              : m
+                          )
+                        )
+                      }
+                    />
+                  )}
                   <EngineBadges {...msg} />
                 </div>
               </div>

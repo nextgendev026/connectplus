@@ -15,6 +15,7 @@ import {
   type TrafficDepth,
 } from "@/lib/platform-intelligence";
 import { mindActions, type ActionResult } from "@/lib/mind-actions";
+import { proposeAction, type ApprovalTool } from "@/lib/brain-approvals";
 import {
   composeDraft,
   continueText,
@@ -1927,14 +1928,20 @@ class NeuralMindEngine {
    * essential is missing the reply asks for it rather than guessing — acting on
    * the wrong post is measurably worse than asking which one.
    *
-   * Nothing destructive happens without `confirm` and, for anything that lands on
-   * the moderation ledger, a named acting admin.
+   * Nothing a chat message asks for is executed directly. Every mutation is
+   * FILED as a proposal that a named admin approves in the console, because the
+   * chat box is an input a language model can write to — "yes, go ahead" types
+   * itself as easily as a person types it, and a story that goes live on a
+   * model's say-so is a story nobody read first.
+   *
+   * Reads are untouched: ranking replies, drafting a reply, generating a cover
+   * and every report still answer immediately. The rule is deliberately
+   * asymmetric — reading cannot break a publication, publishing can.
    */
   private async runAction(input: string, actorId?: string): Promise<ActionResult> {
     const lower = input.toLowerCase();
     // Prisma cuids are the only ids in this schema; posts and comments both use them.
     const id = /\b(c[a-z0-9]{20,30})\b/.exec(input)?.[1] ?? null;
-    const confirm = /\b(confirm|confirmed|yes|go ahead|do it|approved|publish it|make it live|delete it)\b/.test(lower);
     const quoted = /["“”']([^"“”']{8,140})["“”']/.exec(input)?.[1] ?? null;
     const need = (action: string, what: string): ActionResult => ({
       ok: false,
@@ -1979,19 +1986,24 @@ class NeuralMindEngine {
     if (/\bflag\b/.test(lower)) {
       if (!id) return need("flag_comment", "the comment id (the `c…` string) to flag");
       if (!actorId) return need("flag_comment", "an authenticated admin identity, so the audit entry has a name on it");
-      return mindActions.flagComment({ commentId: id, moderatorId: actorId, confirm });
+      return this.propose({"commentId": id, reason: quoted ?? undefined}, { tool: "flag_comment", rationale: input, requestedBy: actorId });
     }
     if (/\b(remove|delete)\b/.test(lower)) {
       if (!id) return need("remove_comment", "the comment id (the `c…` string) to remove");
       if (!actorId) return need("remove_comment", "an authenticated admin identity before I delete anything");
-      const reason = quoted ?? `Removed on admin instruction: ${input.slice(0, 160)}`;
-      return mindActions.removeComment({ commentId: id, moderatorId: actorId, reason, confirm });
+      // Removal has always demanded a reason of its own; that requirement is kept
+      // at the proposal stage so a request without one never reaches a human.
+      const reason = quoted ?? "";
+      if (reason.trim().length < 4) {
+        return need("remove_comment", "a reason for deleting it (a few words) before I ask anyone to approve it");
+      }
+      return this.propose({ commentId: id, reason }, { tool: "remove_comment", rationale: input, requestedBy: actorId });
     }
 
     // Post lifecycle.
     if (/\b(publish|unpublish|go live|make it live)\b/.test(lower)) {
       if (!id) return need("publish_post", "the post id (the `c…` string) to publish");
-      return mindActions.publishPost({ postId: id, confirm });
+      return this.propose({ postId: id }, { tool: "publish_post", rationale: input, requestedBy: actorId });
     }
     if (/\b(schedul|reschedul)/.test(lower)) {
       if (!id) return need("schedule_post", "the post id (the `c…` string) to schedule");
@@ -1999,7 +2011,10 @@ class NeuralMindEngine {
       if (!when) {
         return need("schedule_post", 'a date and time — for example "schedule it for 2026-09-20 09:00" or "in 3 hours"');
       }
-      return mindActions.schedulePost({ postId: id, when, confirm });
+      return this.propose(
+        { postId: id, when: when.toISOString() },
+        { tool: "schedule_post", rationale: input, requestedBy: actorId }
+      );
     }
 
     return {
@@ -2009,6 +2024,50 @@ class NeuralMindEngine {
       summary:
         "I can publish or schedule a post, triage comments (rank replies, draft a reply, flag or remove one), generate a cover image " +
         "and attempt a short video. Tell me which and include the `c…` id of the record.",
+    };
+  }
+
+  /**
+   * File a mutation for human approval and speak the outcome.
+   *
+   * Wrapped in one place so every interactive tool follows the same rule, and so
+   * the reply a person gets is always the same shape: what will happen, that
+   * nothing has happened yet, and where to approve it.
+   */
+  private async propose(
+    args: Record<string, unknown>,
+    opts: { tool: ApprovalTool; rationale: string; requestedBy?: string }
+  ): Promise<ActionResult> {
+    const filed = await proposeAction({
+      tool: opts.tool,
+      args,
+      rationale: opts.rationale.slice(0, 500),
+      requestedBy: opts.requestedBy ?? null,
+      source: "chat",
+    });
+
+    if (!filed.ok) {
+      return { ok: false, action: opts.tool, error: filed.error ?? "refused", summary: filed.message };
+    }
+
+    return {
+      ok: true,
+      action: opts.tool,
+      // `needsConfirmation` is exactly right here: something is pending a human
+      // decision, and the renderer already marks that with a pause glyph.
+      needsConfirmation: true,
+      summary:
+        `${filed.message}\n\nApprove or reject it in Admin → Health → Approvals` +
+        (filed.proposal ? ` (request ${filed.proposal.id}).` : "."),
+      detail: filed.proposal
+        ? {
+            proposalId: filed.proposal.id,
+            tool: filed.proposal.tool,
+            risk: filed.proposal.risk,
+            willDo: filed.proposal.summary,
+            status: filed.proposal.status,
+          }
+        : undefined,
     };
   }
 
