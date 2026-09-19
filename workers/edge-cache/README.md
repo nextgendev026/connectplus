@@ -279,8 +279,54 @@ is set.
 
 Workers free plan: **100,000 requests/day**, 10 ms CPU per request. This worker
 does no parsing, no crypto and no loops over payloads — a cache lookup and a
-fetch — so it stays well inside that ceiling. One KV namespace backs the
-`SNAPSHOTS` binding, and KV has its own free tier (100k reads/day, 1k writes/day)
-that three snapshots refreshed on a two-minute cadence sit far inside; there are
-no Durable Objects and no R2. The worker is written to work with the binding
-absent, so a deploy that cannot create it loses global visibility, not function.
+fetch — so it stays well inside that ceiling. There are no Durable Objects and
+no R2. The worker is written to work with the KV binding absent, so a deploy
+that cannot create it loses global visibility, not function.
+
+### Distributing the KV write budget
+
+KV's own free tier is **100k reads/day and 1k writes/day**, and it is the write
+side that was about to become the constraint. Every Cron Trigger rewrites the
+tick ledger, and the tick cadences add up to roughly **1,150 writes a day**
+before the snapshot records themselves are counted — so the store holding the
+proof that the cron is alive was the thing quietly becoming unable to write it.
+
+Records are therefore **sharded by write frequency** across two stores:
+
+| Record | Cadence | Store |
+| --- | --- | --- |
+| `tick` (the ledger `/__edge` reads) | every trigger | **remote** |
+| `snapshot:livescore-football` | ~2 min under reader traffic | **remote** |
+| `snapshot:status` | ~5 min | `kv` |
+| `snapshot:radio-stations` | ~15 min | `kv` |
+
+`remote` is the app's own cache tier — the Upstash / Vercel-KV REST store every
+page read already uses — reached through `https://<app>/api/edge/kv`, which is
+guarded by the same `CRON_SECRET` the cron pings use. That tier's free limits are
+counted in commands rather than in one-write-per-tick-forever, and it is already
+paid for. The result is roughly **300 KV writes/day**, comfortably inside the
+allowance, with the two highest-frequency records costing KV nothing.
+
+Three properties keep the shard a performance decision rather than a durability
+one:
+
+1. **Reads consult both stores** and take the newer copy, so a record written
+   before an assignment changed — or written while one store was down — is still
+   found. Shards can be moved without a migration.
+2. **Writes fall back to the other store.** A broken remote tier must not stop
+   the ledger being written at all; losing the record is strictly worse than
+   spending one of the writes we were trying to save.
+3. **Shards are keyed by the stable record id, not the cache version**, so a
+   `CACHE_VERSION` bump can never silently move a record to a store it was not
+   chosen for.
+
+Leave `REMOTE_KV_URL` empty and every path behaves exactly as before: KV only.
+`/__edge` reports which store each class is using, so the budget question is
+answerable from outside the Cloudflare dashboard:
+
+```bash
+curl -s https://connectplus-edge.connectplusapp.workers.dev/__edge | jq .storage
+# { "cache": true, "kv": true, "remote": true,
+#   "tickLedger": "remote",
+#   "shards": { "livescore-football": "remote", "status": "kv", "radio-stations": "kv" } }
+```

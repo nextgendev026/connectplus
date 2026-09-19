@@ -32,6 +32,9 @@ const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID;
 const NAME = process.env.WORKER_NAME ?? "connectplus-edge";
 const ORIGIN = process.env.ORIGIN ?? "https://connectplusapp.vercel.app";
 const CRON_SECRET = (process.env.CRON_SECRET ?? "").trim();
+// Where the worker's high-frequency durable records go, when the KV write
+// allowance is not the right budget for them. Unset ⇒ every record stays in KV.
+const REMOTE_KV_URL = (process.env.REMOTE_KV_URL ?? "").trim().replace(/\/+$/, "");
 const REGISTER_CRONS = process.env.CRON_TRIGGERS !== "off";
 
 /**
@@ -130,8 +133,19 @@ const metadata = {
     ...(kvNamespaceId
       ? [{ type: "kv_namespace", name: "SNAPSHOTS", namespace_id: kvNamespaceId }]
       : []),
+    // The second durable store, for the high-frequency records the KV write
+    // allowance cannot afford (the tick ledger and the livescore snapshot).
+    // Omitted when unset, which leaves the shard map preferring KV — the same
+    // behaviour as before this existed.
+    ...(REMOTE_KV_URL ? [{ type: "plain_text", name: "REMOTE_KV_URL", text: REMOTE_KV_URL }] : []),
   ],
 };
+
+if (!REMOTE_KV_URL) {
+  console.log(
+    "note: REMOTE_KV_URL not set — the tick ledger and livescore snapshot will keep consuming Cloudflare KV writes (~1.15k/day against a 1k/day allowance). Pass REMOTE_KV_URL=https://<app>/api/edge/kv to shard them onto the app's cache tier."
+  );
+}
 
 if (!CRON_SECRET) {
   console.log(
@@ -195,5 +209,6 @@ const zoneBody = await zone.json();
 if (zoneBody.success && zoneBody.result?.subdomain) {
   console.log(`\nlive at: https://${NAME}.${zoneBody.result.subdomain}.workers.dev`);
   console.log(`origin : ${ORIGIN}`);
+  console.log(`records: ${REMOTE_KV_URL ? `high-frequency shard → ${REMOTE_KV_URL}` : "all in Cloudflare KV (REMOTE_KV_URL unset)"}`);
   console.log(`verify : curl -sI https://${NAME}.${zoneBody.result.subdomain}.workers.dev/ | grep -i x-edge-cache`);
 }

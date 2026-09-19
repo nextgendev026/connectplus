@@ -705,3 +705,144 @@ describe("edge cache — durable snapshots in KV", () => {
     expect(body.lastTick?.cron).toBe("*/5 * * * *");
   });
 });
+
+/**
+ * Sharding the durable records across two stores.
+ *
+ * Cloudflare KV allows 1,000 writes a day and the tick ledger alone is
+ * rewritten ~1,152 times, so the highest-frequency records are written to the
+ * app's own cache tier instead. What these tests protect is that the shard is a
+ * *performance* decision: no record may become unfindable because of it, and a
+ * failing remote tier must never lose a write.
+ */
+describe("edge cache — durable records sharded across two stores", () => {
+  const REMOTE_URL = "https://app.test/api/edge/kv";
+
+  const kvData = new Map<string, string>();
+  const KV = {
+    get: async (key: string, type?: string) => {
+      const raw = kvData.get(key);
+      if (raw === undefined) return null;
+      return type === "json" ? JSON.parse(raw) : raw;
+    },
+    put: async (key: string, value: string | unknown) => {
+      kvData.set(key, typeof value === "string" ? value : JSON.stringify(value));
+    },
+  };
+
+  const remoteData = new Map<string, unknown>();
+  const remoteWrites: string[] = [];
+  let remoteDown = false;
+
+  const ENV_SHARDED = { ...ENV, CRON_SECRET: "s3cret", SNAPSHOTS: KV, REMOTE_KV_URL: REMOTE_URL };
+
+  /** Route fetch to the remote KV tier or the origin, so both are observable. */
+  function stubFetch() {
+    vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+      const href = String(input);
+      if (href.startsWith(REMOTE_URL)) {
+        if (remoteDown) return new Response("boom", { status: 500 });
+        if ((init?.method ?? "GET") === "PUT") {
+          const body = JSON.parse(String(init?.body)) as { key: string; value: unknown };
+          remoteData.set(body.key, body.value);
+          remoteWrites.push(body.key);
+          return Response.json({ ok: true, backend: "upstash-rest" });
+        }
+        const key = new URL(href).searchParams.get("key") ?? "";
+        const value = remoteData.get(key);
+        return Response.json(value === undefined ? { found: false, value: null } : { found: true, value });
+      }
+      originFetches.push(href);
+      return new Response('{"matches":[]}', { headers: { "Content-Type": "application/json" } });
+    });
+  }
+
+  async function edge(path: string, env: Record<string, unknown> = ENV_SHARDED): Promise<Response> {
+    return (await worker.fetch(new Request(`https://edge.test${path}`), env, CTX)) as Response;
+  }
+
+  type Probe = {
+    lastTick: { cron: string } | null;
+    snapshots: { id: string; ageSeconds: number | null; fresh: boolean }[];
+    storage: { kv: boolean; remote: boolean; tickLedger: string; shards: Record<string, string> };
+  };
+
+  beforeEach(() => {
+    kvData.clear();
+    remoteData.clear();
+    remoteWrites.length = 0;
+    remoteDown = false;
+    stubFetch();
+  });
+
+  it("writes the tick ledger to the remote tier and leaves the KV allowance alone", async () => {
+    await worker.scheduled({ cron: "*/5 * * * *" } as never, ENV_SHARDED);
+    await settleBackground();
+
+    // This is the whole point: ~1,152 ledger writes a day would exhaust KV's
+    // 1,000/day allowance on their own.
+    expect(kvData.has("tick:v4"), "the ledger must not spend a KV write").toBe(false);
+    expect(remoteData.has("tick:v4"), "the ledger must still be written").toBe(true);
+    expect(remoteWrites).toContain("tick:v4");
+  });
+
+  it("keeps the low-frequency snapshot on KV, where the writes are affordable", async () => {
+    await edge("/api/status");
+
+    // ~288 writes/day for `status` is well inside the allowance, and keeping it
+    // on KV means the shard map only has to move the two expensive records.
+    expect(kvData.has("snapshot:status:v4")).toBe(true);
+    expect(remoteWrites).not.toContain("snapshot:status:v4");
+  });
+
+  it("reads the newer copy from whichever store has it", async () => {
+    // Written before a shard moved: an old copy in KV, a new one remotely.
+    kvData.set(
+      "snapshot:livescore-football:v4",
+      JSON.stringify({ storedAt: Date.now() - 600_000, status: 200, contentType: "application/json", body: "{}" })
+    );
+    remoteData.set("snapshot:livescore-football:v4", {
+      storedAt: Date.now() - 5_000,
+      status: 200,
+      contentType: "application/json",
+      body: "{}",
+    });
+
+    const probe = (await (await edge("/__edge")).json()) as Probe;
+    const football = probe.snapshots.find((s) => s.id === "livescore-football");
+
+    // The newer copy wins, so moving a shard can never make a fresh record look
+    // cold — which would have the cron rebuild on every tick forever.
+    expect(football?.ageSeconds).toBeLessThan(60);
+    expect(football?.fresh).toBe(true);
+  });
+
+  it("falls back to KV rather than losing the record when the remote tier is down", async () => {
+    remoteDown = true;
+
+    await worker.scheduled({ cron: "*/5 * * * *" } as never, ENV_SHARDED);
+    await settleBackground();
+
+    // Losing the ledger is the failure this whole mechanism exists to prevent;
+    // spending one of the writes we were saving is strictly better.
+    const record = JSON.parse(kvData.get("tick:v4") ?? "null") as { cron: string } | null;
+    expect(record?.cron).toBe("*/5 * * * *");
+  });
+
+  it("reports the shard map and the ledger's store on the probe", async () => {
+    const sharded = (await (await edge("/__edge")).json()) as Probe;
+    expect(sharded.storage.remote).toBe(true);
+    expect(sharded.storage.tickLedger).toBe("remote");
+    expect(sharded.storage.shards).toEqual({
+      "livescore-football": "remote",
+      status: "kv",
+      "radio-stations": "kv",
+    });
+
+    // And with no remote tier configured, everything is back on KV:
+    // distribution is an optimisation, never a dependency.
+    const kvOnly = (await (await edge("/__edge", { ...ENV, CRON_SECRET: "s3cret", SNAPSHOTS: KV })).json()) as Probe;
+    expect(kvOnly.storage.remote).toBe(false);
+    expect(kvOnly.storage.tickLedger).toBe("kv");
+  });
+});

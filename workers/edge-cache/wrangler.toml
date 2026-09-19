@@ -42,6 +42,21 @@ workers_dev = true
 # The Vercel origin this worker fronts. Change here, or override per-environment.
 ORIGIN = "https://connectplusapp.vercel.app"
 
+# ── The second durable store (free-tier distribution) ────────────────────────
+# Cloudflare KV's free plan allows 1,000 *writes* a day. The worker's tick
+# ledger alone is rewritten on every trigger (~1,150/day at the current
+# cadence), so the ledger and the livescore snapshot are sharded onto the app's
+# own cache tier instead — `https://<app>/api/edge/kv`, which is Upstash /
+# Vercel-KV backed and free-counted by command, not by write-per-tick forever.
+#
+# Set this to the app's origin + `/api/edge/kv`:
+#   REMOTE_KV_URL = "https://connectplusapp.vercel.app/api/edge/kv"
+#
+# It uses the same CRON_SECRET already configured for the cron pings. Leave it
+# empty and everything behaves exactly as before — KV for every record, no
+# fallback path taken. See "Free tier" in README.md for the full distribution.
+REMOTE_KV_URL = ""
+
 # Secrets (set with `wrangler secret put`, or by scripts/deploy-worker.mjs):
 #   CRON_SECRET — the same shared secret /api/cron verifies, so this worker can
 #                 drive the jobs it owns. Without it the pings are still sent but

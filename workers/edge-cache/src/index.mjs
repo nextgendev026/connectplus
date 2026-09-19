@@ -59,6 +59,10 @@ const ROOT_TTL = 60 * 60;
  *   v4 — adds the worker-owned snapshots (the cron's cache-first check) and the
  *        cached status payload, both under key shapes v3 never wrote.
  */
+// Deliberately NOT bumped for the two-store shard change. Sharding moves *where*
+// a record is written, not what it is called, so v4 keys stay valid and every
+// existing durable copy is still read. Bumping would purge the whole edge cache
+// to no functional gain.
 const CACHE_VERSION = "4";
 
 /** How long the last tick's record is kept — a day is plenty to answer "is it alive?". */
@@ -279,16 +283,141 @@ async function kvPutJson(env, key, value, ttlSeconds) {
   }
 }
 
-/** Persist a snapshot body into KV alongside the per-colo cache copy. */
+/* ── The durable-record tier, sharded across two stores ──────────────────────
+
+   Cloudflare KV is where the worker's bookkeeping lives, and the free plan
+   allows 1,000 *writes* a day. The tick ledger is rewritten on every trigger —
+   720 livescore ticks, 288 notify, 96 radio, 48 intel and 4 payments, before
+   the snapshot records themselves — which puts the budget over the ceiling on a
+   normal day and makes the store the least reliable part of a mechanism that
+   exists to be reliable. A KV write that starts failing does not announce
+   itself: `/__edge` simply stops having a `lastTick`, which is the exact
+   symptom the ledger was added to remove.
+
+   So records are **sharded by write frequency** across two stores:
+
+     • `remote` — the app's own cache tier (Upstash / Vercel KV REST) via
+       `REMOTE_KV_URL`, whose free limits are counted in commands and which this
+       platform already pays for. High-frequency records go here.
+     • `kv` — the Cloudflare KV namespace. Low-frequency records go here, and it
+       remains the fallback for everything.
+
+   Reads always consult BOTH and take the newer copy. That is what makes the
+   shard assignment a performance decision rather than a durability one: a
+   record written before an assignment changed — or written while one store was
+   down — is still found. Writes go to the primary only, because mirroring a
+   two-minute record into KV is precisely the write budget being protected.
+
+   With `REMOTE_KV_URL` unset, every path here behaves exactly as it did before:
+   KV only. The distribution is an optimisation, never a dependency.
+──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Which keys prefer the remote store.
+ *
+ * Keyed by the *stable* record id (no cache version), so a version bump never
+ * silently moves a record to a store it was not chosen for.
+ */
+const REMOTE_PRIMARY = new Set([
+  // Rewritten on every trigger — ~1,150 writes/day if it lands in KV.
+  "tick",
+  // Rebuilt every couple of minutes whenever anybody is watching a board.
+  "snapshot:livescore-football",
+]);
+
+/** The remote tier's address and shared secret, or null when it is unset. */
+function remoteStore(env) {
+  const base = (env && env.REMOTE_KV_URL ? String(env.REMOTE_KV_URL) : "").replace(/\/+$/, "");
+  const secret = (env && env.CRON_SECRET ? String(env.CRON_SECRET) : "").trim();
+  return base && secret ? { base, secret } : null;
+}
+
+const prefersRemote = (env, id) => Boolean(remoteStore(env)) && REMOTE_PRIMARY.has(id);
+
+async function remoteGetJson(env, id) {
+  const store = remoteStore(env);
+  if (!store) return null;
+  try {
+    const res = await fetch(`${store.base}?key=${encodeURIComponent(id)}`, {
+      headers: { Authorization: `Bearer ${store.secret}` },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    return data && data.found === true && data.value && typeof data.value === "object" ? data.value : null;
+  } catch (err) {
+    console.log(`edge-kv: remote read ${id} failed — ${shortError(err)}`);
+    return null;
+  }
+}
+
+async function remotePutJson(env, id, value, ttlSeconds) {
+  const store = remoteStore(env);
+  if (!store) return false;
+  try {
+    const res = await fetch(store.base, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${store.secret}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ key: id, value, ttl: Math.max(60, Math.round(ttlSeconds)) }),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return false;
+    const data = await res.json().catch(() => null);
+    return Boolean(data && data.ok === true);
+  } catch (err) {
+    console.log(`edge-kv: remote write ${id} failed — ${shortError(err)}`);
+    return false;
+  }
+}
+
+/**
+ * Write a record to its primary store, falling back to the other one.
+ *
+ * The fallback is the part that matters. A broken remote tier must not stop the
+ * tick ledger being written at all — losing the record is the failure mode this
+ * whole mechanism exists to prevent, and it is strictly worse than spending one
+ * of the KV writes we were trying to save.
+ */
+async function durablePut(env, id, kvKey, value, ttlSeconds) {
+  if (prefersRemote(env, id)) {
+    if (await remotePutJson(env, kvKey, value, ttlSeconds)) return "remote";
+    return (await kvPutJson(env, kvKey, value, ttlSeconds)) ? "kv-fallback" : "none";
+  }
+  if (await kvPutJson(env, kvKey, value, ttlSeconds)) return "kv";
+  return (await remotePutJson(env, kvKey, value, ttlSeconds)) ? "remote-fallback" : "none";
+}
+
+/** Epoch milliseconds a durable record claims, whichever field it carries. */
+function recordStamp(record) {
+  if (typeof record.storedAt === "number") return record.storedAt;
+  if (typeof record.at === "string") return Date.parse(record.at) || 0;
+  return 0;
+}
+
+/** The newer of the two durable copies, or null when neither store has one. */
+async function durableGet(env, id, kvKey) {
+  const [fromKv, fromRemote] = await Promise.all([
+    kvGetJson(env, kvKey),
+    remoteGetJson(env, kvKey),
+  ]);
+  if (fromKv && fromRemote) return recordStamp(fromRemote) > recordStamp(fromKv) ? fromRemote : fromKv;
+  return fromKv ?? fromRemote ?? null;
+}
+
+/**
+ * Persist a snapshot body into its durable store alongside the per-colo copy.
+ * Returns the store that took it, for `/__edge`.
+ */
 async function kvWriteSnapshot(env, snapshot, response) {
   let body;
   try {
     body = await response.clone().text();
   } catch {
-    return false;
+    return "none";
   }
-  return kvPutJson(
+  return durablePut(
     env,
+    `snapshot:${snapshot.id}`,
     kvSnapshotKey(snapshot.id),
     {
       storedAt: Date.now(),
@@ -309,7 +438,7 @@ async function kvWriteSnapshot(env, snapshot, response) {
 async function snapshotState(env, snapshot) {
   const [cached, record] = await Promise.all([
     caches.default.match(snapshotKey(snapshot.id)).catch(() => null),
-    kvGetJson(env, kvSnapshotKey(snapshot.id)),
+    durableGet(env, `snapshot:${snapshot.id}`, kvSnapshotKey(snapshot.id)),
   ]);
 
   const fromCache =
@@ -329,7 +458,7 @@ async function lastTick(env) {
   const local = cached ? await cached.json().catch(() => null) : null;
   // KV carries the tick across colos, so a fresh deployment cannot look silent
   // from one edge location and alive from another.
-  const remote = await kvGetJson(env, kvTickKey());
+  const remote = await durableGet(env, "tick", kvTickKey());
   if (local && remote) {
     const localAt = Date.parse(local.at ?? "") || 0;
     const remoteAt = Date.parse(remote.at ?? "") || 0;
@@ -637,9 +766,11 @@ const shortError = (err) => (err && err.message ? err.message : String(err));
 
 /** Record a tick outcome for `/__edge`. Best-effort: never fails the invocation. */
 async function recordTick(env, record) {
-  // Recorded in KV first: the Cache API copy is only visible to the colo that
-  // ran the tick, which is precisely the ambiguity this ledger exists to remove.
-  await kvPutJson(env, kvTickKey(), record, TICK_TTL_SECONDS);
+  // Written to the durable store first: the Cache API copy is only visible to
+  // the colo that ran the tick, which is precisely the ambiguity this ledger
+  // exists to remove. The ledger is high-frequency, so its shard sends it to the
+  // remote tier and falls back to KV rather than losing the write.
+  const store = await durablePut(env, "tick", kvTickKey(), record, TICK_TTL_SECONDS);
   try {
     await caches.default.put(
       tickKey(),
@@ -651,6 +782,7 @@ async function recordTick(env, record) {
   } catch (err) {
     console.log(`edge-cron: could not record tick — ${shortError(err)}`);
   }
+  return store;
 }
 
 export default {
@@ -687,7 +819,18 @@ export default {
         // Which stores are actually in play. A deployment without the KV
         // binding is a supported configuration, not a silent failure — this is
         // how an operator can tell the two apart from outside the dashboard.
-        storage: { cache: true, kv: kvStore(env) !== null },
+        // Which store each durable record class is written to, so a budget
+        // question ("are we still inside the KV write allowance?") is answerable
+        // from outside the Cloudflare dashboard.
+        storage: {
+          cache: true,
+          kv: kvStore(env) !== null,
+          remote: remoteStore(env) !== null,
+          tickLedger: prefersRemote(env, "tick") ? "remote" : "kv",
+          shards: Object.fromEntries(
+            SNAPSHOTS.map((s) => [s.id, prefersRemote(env, `snapshot:${s.id}`) ? "remote" : "kv"])
+          ),
+        },
         schedules: SCHEDULES.map((s) => `${s.cron} → ${s.trigger}`),
         cronSecret: Boolean(env.CRON_SECRET),
       });
