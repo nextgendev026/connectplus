@@ -1,3 +1,5 @@
+import { withSentryConfig } from "@sentry/nextjs";
+
 /** @type {import('next').NextConfig} */
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -223,4 +225,10 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+export default withSentryConfig(nextConfig, {
+  // Automatically tree-shake Sentry logger statements in production builds.
+  silent: process.env.NODE_ENV !== "production",
+  // Disable Sentry's auto-instrumentation of webpack for now — it can slow
+  // builds. Re-enable after measuring the impact on build time.
+  disableWebpackPlugin: true,
+});

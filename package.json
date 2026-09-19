@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.6.0",
+    "@sentry/nextjs": "^10.75.0",
     "autoprefixer": "^10.5.5",
     "bcryptjs": "^2.4.3",
     "class-variance-authority": "^0.7.1",
