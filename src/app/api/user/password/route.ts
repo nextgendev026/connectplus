@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { compare, hash } from "bcryptjs";
+import { validateBody } from "@/lib/api-validation";
+import { ChangePasswordSchema } from "@/lib/schemas/validators";
 
 const MIN_LEN = 8;
 
@@ -11,16 +13,9 @@ export async function POST(request: NextRequest) {
     if (!session?.user) {
       return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
-    const body = await request.json();
-    const currentPassword = typeof body?.currentPassword === "string" ? body.currentPassword : "";
-    const newPassword = typeof body?.newPassword === "string" ? body.newPassword : "";
-
-    if (newPassword.length < MIN_LEN) {
-      return NextResponse.json({ error: `New password must be at least ${MIN_LEN} characters` }, { status: 400 });
-    }
-    if (!/[a-zA-Z]/.test(newPassword) || !/\d/.test(newPassword)) {
-      return NextResponse.json({ error: "New password must include a letter and a number" }, { status: 400 });
-    }
+    const body = await validateBody(request, ChangePasswordSchema);
+    if (body instanceof NextResponse) return body;
+    const { currentPassword, newPassword } = body;
 
     const user = await prisma.user.findUnique({ where: { id: session.user.id } });
     if (!user) {

@@ -3,10 +3,7 @@ import { auth } from "@/lib/auth";
 import { getSettings, updateSettings, settingDef } from "@/lib/settings";
 import {
   OPENROUTER_FREE_MODELS,
-  OPENCODE_PAID_MODELS,
   OPENCODE_MODELS,
-  OPENAI_FALLBACK_MODELS,
-  ANTHROPIC_FALLBACK_MODELS,
   fetchProviderModels,
   type AiProviderName,
 } from "@/lib/ai-provider";
@@ -32,11 +29,9 @@ async function buildProviders(settings: Record<string, string>): Promise<{
   models: string[];
   note: string;
 }[]> {
-  const [orModels, ocModels, oaModels, anModels] = await Promise.all([
+  const [orModels, ocModels] = await Promise.all([
     fetchProviderModels("openrouter"),
     fetchProviderModels("opencode", settings.opencodeApiKey),
-    fetchProviderModels("openai", settings.openaiApiKey),
-    fetchProviderModels("anthropic", settings.anthropicApiKey),
   ]);
   return [
     {
@@ -50,30 +45,12 @@ async function buildProviders(settings: Record<string, string>): Promise<{
     },
     {
       name: "opencode",
-      label: "OpenCode Zen",
+      label: "OpenCode Zen (Free)",
       keySetting: "opencodeApiKey",
       modelSetting: "opencodeModel",
       defaultModel: ocModels[0] || OPENCODE_MODELS[0],
-      models: ocModels.length > 0 ? ocModels : [...OPENCODE_PAID_MODELS],
-      note: `Zen API — ${ocModels.length} models. Free-tier models require OpenCode session; paid models work via API.`,
-    },
-    {
-      name: "openai",
-      label: "OpenAI",
-      keySetting: "openaiApiKey",
-      modelSetting: "openaiModel",
-      defaultModel: oaModels[0] || OPENAI_FALLBACK_MODELS[0],
-      models: oaModels,
-      note: `Paid — requires OpenAI credits. ${oaModels.length} models reported by your account.`,
-    },
-    {
-      name: "anthropic",
-      label: "Anthropic",
-      keySetting: "anthropicApiKey",
-      modelSetting: "anthropicModel",
-      defaultModel: anModels[0] || ANTHROPIC_FALLBACK_MODELS[0],
-      models: anModels,
-      note: `Paid — requires Anthropic credits. ${anModels.length} models reported by your account.`,
+      models: ocModels.length > 0 ? ocModels : [...OPENCODE_MODELS],
+      note: `Free tier — ${ocModels.length} models available.`,
     },
   ];
 }
@@ -156,31 +133,7 @@ export async function POST(request: NextRequest) {
     const baseUrl =
       def.name === "openrouter"
         ? "https://openrouter.ai/api/v1"
-        : def.name === "opencode"
-          ? "https://opencode.ai/zen/v1"
-          : def.name === "openai"
-            ? "https://api.openai.com/v1"
-            : "https://api.anthropic.com/v1";
-
-    if (def.name === "anthropic") {
-      const res = await fetch(`${baseUrl}/messages`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": key,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: 16,
-          messages: [{ role: "user", content: "Reply with the single word: ready" }],
-        }),
-        signal: AbortSignal.timeout(25_000),
-      });
-      const ok = res.ok;
-      const detail = ok ? undefined : (await res.text().catch(() => "")).slice(0, 200);
-      return NextResponse.json({ ok, latencyMs: Date.now() - started, model, detail });
-    }
+        : "https://opencode.ai/zen/v1";
 
     const res = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",

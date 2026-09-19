@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { validateBody } from "@/lib/api-validation";
+import { SportsFollowSchema } from "@/lib/schemas/validators";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,13 +41,9 @@ export async function POST(request: NextRequest) {
   const userId = await currentUserId();
   if (!userId) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
 
-  const body = (await request.json().catch(() => ({}))) as {
-    team?: string;
-    sport?: string;
-    competition?: string;
-  };
-  const team = (body.team ?? "").trim().slice(0, 80);
-  if (!team) return NextResponse.json({ error: "team is required" }, { status: 400 });
+  const body = await validateBody(request, SportsFollowSchema);
+  if (body instanceof NextResponse) return body;
+  const { team, sport, competition } = body;
 
   await prisma.sportsTeamFollow
     .upsert({
@@ -53,8 +51,8 @@ export async function POST(request: NextRequest) {
       create: {
         userId,
         team,
-        sport: (body.sport ?? "football").slice(0, 30),
-        competition: body.competition ? body.competition.slice(0, 120) : null,
+        sport: sport ?? "football",
+        competition: competition ?? null,
       },
       update: {},
     })

@@ -1,7 +1,7 @@
 import { getSettings } from "@/lib/settings";
 import type { Intent } from "@/lib/neural-intent";
 
-export type AiProviderName = "builtin" | "openai" | "anthropic" | "openrouter" | "opencode";
+export type AiProviderName = "builtin" | "openrouter" | "opencode";
 
 export interface AiConfig {
   provider: AiProviderName;
@@ -15,13 +15,12 @@ export interface AiConfig {
  * Both speak the same chat-completions shape as OpenAI, so one code path
  * serves all three.
  */
-type GatewayName = "openai" | "openrouter" | "opencode";
+type GatewayName = "openrouter" | "opencode";
 
 const OPENAI_COMPATIBLE: Record<
   GatewayName,
   { baseUrl: string; defaultModel: string; extraHeaders?: Record<string, string> }
 > = {
-  openai: { baseUrl: "https://api.openai.com/v1", defaultModel: "gpt-5.4-mini" },
   openrouter: {
     baseUrl: "https://openrouter.ai/api/v1",
     defaultModel: "z-ai/glm-5.2:free",
@@ -85,31 +84,10 @@ export const OPENCODE_MODELS = [
   "qwen3.5-plus",
   "minimax-m2.5",
   "gemini-3.5-flash",
-  "claude-sonnet-4",
-  "claude-haiku-4-5",
-  "gpt-5",
-  "gpt-5.4-mini",
 ] as const;
 
 /** Models confirmed working via OpenCode Zen API (paid tier). */
-export const OPENCODE_PAID_MODELS = [
-  "deepseek-v4-flash",
-  "glm-5.3-flash",
-  "glm-5.3",
-  "kimi-k2.5",
-  "kimi-k2.6",
-  "qwen3.5-plus",
-  "qwen3.6-plus",
-  "minimax-m2.5",
-  "minimax-m2.7",
-  "gemini-3.5-flash",
-  "gemini-3.5-flash-lite",
-  "gemini-3-flash",
-  "claude-sonnet-4",
-  "claude-haiku-4-5",
-  "gpt-5",
-  "gpt-5.4-mini",
-] as const;
+
 
 /**
  * Free does not mean chattable.
@@ -209,74 +187,6 @@ export async function fetchOpenCodeModels(keyOverride?: string): Promise<string[
  * opens 2026-10-15 — which is exactly why the live list should drive this and
  * this constant is only a last resort.
  */
-export const ANTHROPIC_FALLBACK_MODEL = "claude-haiku-4-5";
-
-/**
- * OpenAI chat models used when the live `/v1/models` list cannot be read.
- *
- * `gpt-4o` was dropped: its API shutdown is 2026-10-23, so offering it in the
- * admin picker handed out a model that would stop answering weeks later.
- * `gpt-4o-mini` still resolves but is a 2024 generation, so these are the
- * current actives filling the same cheap / mid / frontier roles, ending with
- * the model OpenAI itself names as the replacement for the retired 4.x line.
- */
-export const OPENAI_FALLBACK_MODELS = ["gpt-5.4-mini", "gpt-5.4", "gpt-5.6-sol"] as const;
-
-/** Anthropic models used when the live `/v1/models` list cannot be read. */
-export const ANTHROPIC_FALLBACK_MODELS = [
-  ANTHROPIC_FALLBACK_MODEL,
-  "claude-sonnet-5",
-] as const;
-
-/**
- * Live model list for OpenAI, so the admin console shows what the account can
- * actually call rather than a hand-written list that ages out silently.
- *
- * `keyOverride` exists because a key saved through the admin console lives in
- * the settings store, not in the environment — without it a keyed install would
- * still see only the static fallback and the console would look unrefreshed.
- */
-export async function fetchOpenAiModels(keyOverride?: string): Promise<string[]> {
-  try {
-    const key = keyOverride || process.env.OPENAI_API_KEY || "";
-    if (!key) return [...OPENAI_FALLBACK_MODELS];
-    const res = await fetch("https://api.openai.com/v1/models", {
-      signal: AbortSignal.timeout(10_000),
-      headers: { Authorization: `Bearer ${key}` },
-    });
-    if (!res.ok) return [...OPENAI_FALLBACK_MODELS];
-    const data = await res.json();
-    const models: string[] = (data?.data ?? []) 
-      .map((m: { id: string }) => m.id)
-      .filter((id: string) => isChatCapableModel(id))
-      .sort();
-    return models.length > 0 ? models : [...OPENAI_FALLBACK_MODELS];
-  } catch {
-    return [...OPENAI_FALLBACK_MODELS];
-  }
-}
-
-/**
- * Live model list for Anthropic. Same contract as the other fetchers: it never
- * throws, and it always answers with something the console can render.
- */
-export async function fetchAnthropicModels(keyOverride?: string): Promise<string[]> {
-  try {
-    const key = keyOverride || process.env.ANTHROPIC_API_KEY || "";
-    if (!key) return [...ANTHROPIC_FALLBACK_MODELS];
-    const res = await fetch("https://api.anthropic.com/v1/models", {
-      signal: AbortSignal.timeout(10_000),
-      headers: { "x-api-key": key, "anthropic-version": "2023-06-01" },
-    });
-    if (!res.ok) return [...ANTHROPIC_FALLBACK_MODELS];
-    const data = await res.json();
-    const models: string[] = (data?.data ?? []).map((m: { id: string }) => m.id);
-    return models.length > 0 ? models : [...ANTHROPIC_FALLBACK_MODELS];
-  } catch {
-    return [...ANTHROPIC_FALLBACK_MODELS];
-  }
-}
-
 /**
  * One entry point for "the models this provider currently serves", so a caller
  * does not need to know which platforms are OpenAI-shaped and which are not —
@@ -291,10 +201,6 @@ export async function fetchProviderModels(
       return fetchOpenRouterFreeModels();
     case "opencode":
       return fetchOpenCodeModels(keyOverride);
-    case "openai":
-      return fetchOpenAiModels(keyOverride);
-    case "anthropic":
-      return fetchAnthropicModels(keyOverride);
   }
 }
 
@@ -322,14 +228,6 @@ export async function getAiConfig(): Promise<AiConfig> {
   const providerSetting = (settings.aiProvider || "").toLowerCase().trim();
 
   const keys: Record<Exclude<AiProviderName, "builtin">, { key: string; model: string }> = {
-    openai: {
-      key: settings.openaiApiKey || process.env.OPENAI_API_KEY || "",
-      model: settings.openaiModel || process.env.OPENAI_MODEL || OPENAI_COMPATIBLE.openai.defaultModel,
-    },
-    anthropic: {
-      key: settings.anthropicApiKey || process.env.ANTHROPIC_API_KEY || "",
-      model: settings.anthropicModel || process.env.ANTHROPIC_MODEL || ANTHROPIC_FALLBACK_MODEL,
-    },
     openrouter: {
       key: settings.openrouterApiKey || process.env.OPENROUTER_API_KEY || "",
       model: settings.openrouterModel || process.env.OPENROUTER_MODEL || OPENAI_COMPATIBLE.openrouter.defaultModel,
@@ -347,8 +245,8 @@ export async function getAiConfig(): Promise<AiConfig> {
     return { provider: providerSetting, apiKey: keys[providerSetting].key, model: keys[providerSetting].model };
   }
 
-  // Otherwise prefer a free gateway (OpenRouter → OpenCode) before paid ones.
-  for (const name of ["openrouter", "opencode", "openai", "anthropic"] as const) {
+  // Only free gateways: OpenRouter → OpenCode. No paid providers.
+  for (const name of ["openrouter", "opencode"] as const) {
     if (keys[name].key) return { provider: name, apiKey: keys[name].key, model: keys[name].model };
   }
 
@@ -398,29 +296,6 @@ export async function generateText(opts: {
       if (!res.ok) return null;
       const data = await res.json();
       const text: string | undefined = data?.choices?.[0]?.message?.content;
-      return typeof text === "string" && text.trim() ? text.trim() : null;
-    }
-
-    if (cfg.provider === "anthropic") {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": cfg.apiKey,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-          model: cfg.model,
-          system: opts.system,
-          messages: [{ role: "user", content: opts.user }],
-          max_tokens: maxTokens,
-          temperature: 0.7,
-        }),
-        signal: AbortSignal.timeout(30_000),
-      });
-      if (!res.ok) return null;
-      const data = await res.json();
-      const text: string | undefined = data?.content?.[0]?.text;
       return typeof text === "string" && text.trim() ? text.trim() : null;
     }
 

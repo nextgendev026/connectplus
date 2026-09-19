@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 declare global {
   var __rateLimitCleanup: boolean | undefined;
@@ -123,7 +124,7 @@ function defaultApiLimit(): LimitRule {
   return { limit: parseInt(match[1]!, 10), windowMs: parseInt(match[2]!, 10) };
 }
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   if (request.nextUrl.pathname.startsWith("/api/")) {
     const key = getRateLimitKey(request);
 
@@ -133,7 +134,16 @@ export function proxy(request: NextRequest) {
 
     if (matchedKey) {
       const { limit, windowMs } = resolveRule(matchedKey);
-      if (isRateLimited(key, limit, windowMs)) {
+      // Use the distributed Redis-backed rate limiter when available.
+      const result = await checkRateLimit(key, limit, windowMs).catch(() => null);
+      if (result?.limited) {
+        return NextResponse.json(
+          { error: "Too many requests. Please try again later." },
+          { status: 429, headers: { "Retry-After": String(result.resetAfter) } }
+        );
+      }
+      // Redis fallback: in-memory check for this instance only.
+      if (!result && isRateLimited(key, limit, windowMs)) {
         return NextResponse.json(
           { error: "Too many requests. Please try again later." },
           { status: 429, headers: { "Retry-After": String(Math.ceil(windowMs / 1000)) } }

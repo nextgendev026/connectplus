@@ -241,3 +241,84 @@ export const SportsPredictionSchema = z.object({
 });
 
 export type SportsPredictionInput = z.infer<typeof SportsPredictionSchema>;
+
+/* ── Password change ───────────────────────────────────────────────────── */
+
+export const ChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "Current password is required"),
+  newPassword: z
+    .string()
+    .min(8, "New password must be at least 8 characters")
+    .max(128, "New password must be at most 128 characters")
+    .regex(/[a-zA-Z]/, "Password must include a letter")
+    .regex(/\d/, "Password must include a number"),
+});
+
+export type ChangePasswordInput = z.infer<typeof ChangePasswordSchema>;
+
+/* ── Push subscription ─────────────────────────────────────────────────── */
+
+export const PushSubscribeSchema = z.object({
+  endpoint: z.string().url("Invalid push endpoint").max(1200),
+  keys: z.object({
+    p256dh: z.string().min(1, "Missing p256dh key"),
+    auth: z.string().min(1, "Missing auth key"),
+  }),
+});
+
+export type PushSubscribeInput = z.infer<typeof PushSubscribeSchema>;
+
+/* ── Writer application ────────────────────────────────────────────────── */
+
+export const WriterApplySchema = z.object({
+  motivation: requiredTrimmed(20, 2000),
+  portfolio: optionalTrimmed(2000),
+});
+
+export type WriterApplyInput = z.infer<typeof WriterApplySchema>;
+
+/* ── Sports team follow ────────────────────────────────────────────────── */
+
+export const SportsFollowSchema = z.object({
+  team: requiredTrimmed(1, 80),
+  sport: optionalTrimmed(30).default("football"),
+  competition: optionalTrimmed(120),
+});
+
+export type SportsFollowInput = z.infer<typeof SportsFollowSchema>;
+
+/* ── Sports reminders ──────────────────────────────────────────────────── */
+
+export const SportsReminderSchema = z.object({
+  matchId: cuid,
+  remind: z.boolean(),
+});
+
+export type SportsReminderInput = z.infer<typeof SportsReminderSchema>;
+
+/* ── Notifications read ────────────────────────────────────────────────── */
+
+export const NotificationsReadSchema = z.object({
+  ids: z.array(cuid).max(100).optional(),
+  all: z.boolean().optional(),
+});
+
+export type NotificationsReadInput = z.infer<typeof NotificationsReadSchema>;
+
+/* ── Admin moderation ──────────────────────────────────────────────────── */
+
+export const AdminModerationSchema = z.object({
+  postId: cuid,
+  action: z.enum(["approve", "reject", "flag"]),
+  reason: optionalTrimmed(500),
+  aiScore: z.number().min(0).max(1).nullable().optional(),
+  aiFlags: optionalTrimmed(500),
+});
+
+export type AdminModerationInput = z.infer<typeof AdminModerationSchema>;
+
+/* ── Admin settings ────────────────────────────────────────────────────── */
+
+export const AdminSettingsSchema = z.record(z.string(), z.string());
+
+export type AdminSettingsInput = z.infer<typeof AdminSettingsSchema>;

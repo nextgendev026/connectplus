@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { createLogger } from "@/lib/logger";
 import { webPushConfigured } from "@/lib/push";
+import { validateBody } from "@/lib/api-validation";
+import { PushSubscribeSchema } from "@/lib/schemas/validators";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,17 +44,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
-  const body = (await request.json().catch(() => null)) as
-    | { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } }
-    | null;
-
-  const endpoint = typeof body?.endpoint === "string" ? body.endpoint.trim() : "";
-  const p256dh = typeof body?.keys?.p256dh === "string" ? body.keys.p256dh.trim() : "";
-  const auth_ = typeof body?.keys?.auth === "string" ? body.keys.auth.trim() : "";
-
-  if (!endpoint || !p256dh || !auth_) {
-    return NextResponse.json({ error: "Invalid subscription" }, { status: 400 });
-  }
+  const parsed = await validateBody(request, PushSubscribeSchema);
+  if (parsed instanceof NextResponse) return parsed;
+  const { endpoint, keys } = parsed;
+  const p256dh = keys.p256dh;
+  const auth_ = keys.auth;
   if (endpoint.length > MAX_ENDPOINT_LENGTH || !/^https:\/\//.test(endpoint)) {
     return NextResponse.json({ error: "Invalid push endpoint" }, { status: 400 });
   }

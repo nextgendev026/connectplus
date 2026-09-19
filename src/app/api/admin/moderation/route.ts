@@ -2,6 +2,8 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { redisIncr } from "@/lib/redis";
+import { validateBody } from "@/lib/api-validation";
+import { AdminModerationSchema } from "@/lib/schemas/validators";
 
 export async function GET(request: NextRequest) {
   try {
@@ -54,18 +56,10 @@ export async function PUT(request: NextRequest) {
     }
 
     const userId = session.user.id;
-    const body = await request.json();
+    const body = await validateBody(request, AdminModerationSchema);
+    if (body instanceof NextResponse) return body;
     const { postId, action, reason, aiScore, aiFlags } = body;
-
-    if (!postId || !action) {
-      return NextResponse.json({ error: "postId and action are required" }, { status: 400 });
-    }
-
-    const normalizedAction = String(action).toUpperCase();
-    const validActions = ["APPROVE", "FLAG", "REJECT"];
-    if (!validActions.includes(normalizedAction)) {
-      return NextResponse.json({ error: "Invalid action. Must be: approve, flag, or reject" }, { status: 400 });
-    }
+    const normalizedAction = action.toUpperCase();
 
     const post = await prisma.post.findUnique({ where: { id: postId } });
     if (!post) {

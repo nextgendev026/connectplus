@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { createNotification } from "@/lib/notifications";
+import { validateBody } from "@/lib/api-validation";
+import { WriterApplySchema } from "@/lib/schemas/validators";
 
 /**
  * Verified-writer applications. Applying requires a confirmed email; admins
@@ -15,22 +17,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
 
-    const body = await request.json().catch(() => ({}));
-    const motivation = typeof body?.motivation === "string" ? body.motivation.trim() : "";
-    const portfolio = typeof body?.portfolio === "string" ? body.portfolio.trim() : "";
-
-    if (motivation.length < 20) {
-      return NextResponse.json(
-        { error: "Please write a short motivation (at least 20 characters)." },
-        { status: 400 }
-      );
-    }
-    if (motivation.length > 2000) {
-      return NextResponse.json({ error: "Motivation is too long (max 2000 characters)." }, { status: 400 });
-    }
-    if (portfolio && portfolio.length > 2000) {
-      return NextResponse.json({ error: "Portfolio notes are too long (max 2000 characters)." }, { status: 400 });
-    }
+    const body = await validateBody(request, WriterApplySchema);
+    if (body instanceof NextResponse) return body;
+    const { motivation, portfolio } = body;
 
     const user = await prisma.user.findUnique({
       where: { id: session.user.id },
