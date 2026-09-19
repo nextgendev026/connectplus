@@ -199,6 +199,29 @@ export const BrainApprovalDecisionSchema = z.object({
 
 export type BrainApprovalDecisionInput = z.infer<typeof BrainApprovalDecisionSchema>;
 
+/**
+ * A turn with the operations assistant.
+ *
+ * `history` is capped rather than unbounded: the console keeps the last few
+ * turns itself, and a client that sends its own transcript should not be able
+ * to push an arbitrarily long prompt through the approval-filing path.
+ */
+export const AdminOperateSchema = z.object({
+  message: z.string().min(1, "Message is required").max(4000, "Message must be at most 4,000 characters"),
+  history: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant"]),
+        content: z.string().max(6000),
+      })
+    )
+    .max(20, "At most 20 previous turns")
+    .optional(),
+  live: z.boolean().optional(),
+});
+
+export type AdminOperateInput = z.infer<typeof AdminOperateSchema>;
+
 /* ── Moderation ──────────────────────────────────────────────────────────── */
 
 export const ModerationActionSchema = z.object({

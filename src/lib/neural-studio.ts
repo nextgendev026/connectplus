@@ -27,6 +27,29 @@ import {
 } from "@/lib/article-forge";
 import { coerceCopilotOutcome, recordCopilotOutcomes } from "@/lib/copilot-skills";
 
+/**
+ * ── The copilot's boundary ────────────────────────────────────────────────
+ *
+ * This module is the **writing copilot**, and it is content-only by design.
+ *
+ * Its entire vocabulary is `StudioAction`: rewrite, continue, outline,
+ * summarize, headline, tags, curate, assist, seo, plagiarism, optimize,
+ * inspect, pilot, compose, learn. Every one of them either reads the composer
+ * or proposes an edit to it. Nothing here can touch the platform's machinery.
+ *
+ * That is enforced structurally, not by intention:
+ *
+ *   • It imports no approval tool, so it cannot file a request.
+ *   • It has no access to the operations catalogue in `admin-intelligence`, so
+ *     it cannot name an operation even if a prompt tells it to.
+ *   • It cannot execute: its output is data the writer's editor applies, and
+ *     every op the composer applies can be undone.
+ *
+ * `tests/unit/copilot-boundary.test.ts` asserts the first two by reading this
+ * file's imports, so widening the copilot's reach cannot happen by accident.
+ * The operations mind — which *can* request platform changes, always behind an
+ * admin's approval — lives in `src/lib/admin-intelligence.ts`.
+ */
 export type StudioAction =
   | "rewrite"
   | "continue"

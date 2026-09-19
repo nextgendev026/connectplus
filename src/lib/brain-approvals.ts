@@ -37,8 +37,39 @@ export const PROPOSAL_TTL_HOURS = 24;
 export type ApprovalRisk = "low" | "medium" | "high";
 export type ProposalStatus = "PENDING" | "APPROVED" | "REJECTED" | "FAILED" | "EXPIRED";
 
-/** The tools the brain is allowed to propose. Anything else is refused. */
-export type ApprovalTool = "publish_post" | "schedule_post" | "flag_comment" | "remove_comment";
+/**
+ * The tools the brain is allowed to propose. Anything else is refused.
+ *
+ * Two families, and the split is the whole point of the queue:
+ *
+ *   • **Editorial tools** (`publish_post` …) act on a piece of content. They are
+ *     what a writer-facing assistant needs.
+ *   • **Operations tools** (`run_hive_sweep` …) act on the platform's own
+ *     machinery — the sweeps, the intake, the calibration, the autonomy
+ *     envelope. They are what the *virtual admin assistant* needs, and they are
+ *     the reason the two surfaces are separate modules: a copilot that can
+ *     re-register a cron schedule is a copilot that can quietly change what
+ *     the platform does between two paragraphs.
+ *
+ * Every operations tool is idempotent or convergent. That is not a preference,
+ * it is the condition for being on this list: an approval can arrive hours
+ * after it was filed, against a world that has moved on, so a tool whose second
+ * run is as harmless as its first is the only kind that can safely sit in a
+ * queue.
+ */
+export type ApprovalTool =
+  | "publish_post"
+  | "schedule_post"
+  | "flag_comment"
+  | "remove_comment"
+  | "run_hive_sweep"
+  | "run_rss_poll"
+  | "refire_stale_jobs"
+  | "rewarm_snapshots"
+  | "retry_view_fold"
+  | "run_sports_intelligence"
+  | "run_brain_diagnosis"
+  | "set_repair_mode";
 
 export interface ApprovalToolSpec {
   id: ApprovalTool;
@@ -108,7 +139,178 @@ export const APPROVAL_TOOLS: Record<ApprovalTool, ApprovalToolSpec> = {
         confirm: true,
       }),
   },
+
+  /* ── Operations: the platform's own machinery ─────────────────────────── */
+
+  run_hive_sweep: {
+    id: "run_hive_sweep",
+    label: "Sweep the hive",
+    risk: "low",
+    required: [],
+    describe: () =>
+      "Re-read the platform's own activity (stories, comments, what was actually read) and write what it learns into the hive's long-term memory.",
+    run: async () => {
+      const { hiveBrain } = await import("@/lib/hive-brain");
+      const sweep = await hiveBrain.sweepInternal();
+      return {
+        ok: true,
+        action: "run_hive_sweep",
+        summary: `Hive sweep finished — read ${sweep.postsScanned} stories and ${sweep.commentsScanned} comments, and wrote ${sweep.memoriesCreated} new lessons (${sweep.totalMemories} in memory now).`,
+        detail: sweep as unknown as Record<string, unknown>,
+      };
+    },
+  },
+
+  run_rss_poll: {
+    id: "run_rss_poll",
+    label: "Poll the feeds now",
+    risk: "low",
+    required: [],
+    describe: (args) =>
+      asString(args, "feedId")
+        ? `Poll feed ${asString(args, "feedId")} immediately instead of waiting for its next window.`
+        : "Poll every feed that is due, right now, instead of waiting for the next window.",
+    run: async (args) => {
+      const { pollFeeds } = await import("@/lib/rss-poll");
+      const summary = await pollFeeds(asString(args, "feedId") || undefined);
+      return {
+        ok: true,
+        action: "run_rss_poll",
+        summary: `Intake ran — ${summary.feedsPolled} feeds polled, ${summary.newArticles} new stories imported, ${summary.errors} error(s). ${summary.dueRemaining} feed(s) still due.`,
+        detail: summary as unknown as Record<string, unknown>,
+      };
+    },
+  },
+
+  refire_stale_jobs: {
+    id: "refire_stale_jobs",
+    label: "Re-fire the jobs that missed their window",
+    risk: "medium",
+    required: [],
+    describe: () =>
+      "Run each scheduled job that has gone past its window through its own runner. Idempotent: a second run of publishing, sweeping or folding converges rather than duplicating.",
+    run: () => runCatalogRepair("refire-stale-jobs"),
+  },
+
+  rewarm_snapshots: {
+    id: "rewarm_snapshots",
+    label: "Re-warm the edge snapshots",
+    risk: "low",
+    required: [],
+    describe: () =>
+      "Fetch our own public snapshot routes so the edge worker finds a fresh cached copy instead of rebuilding one. Read-only against our own origin.",
+    run: () => runCatalogRepair("rewarm-edge-snapshots"),
+  },
+
+  retry_view_fold: {
+    id: "retry_view_fold",
+    label: "Retry the view fold",
+    risk: "low",
+    required: [],
+    describe: () =>
+      "Fold the view counts that are already pending in the offload store into the database. Counts only ever add, and a post is only marked as folded after its write succeeds.",
+    run: () => runCatalogRepair("retry-view-fold"),
+  },
+
+  run_sports_intelligence: {
+    id: "run_sports_intelligence",
+    label: "Run a sports analysis pass",
+    risk: "medium",
+    required: [],
+    describe: () =>
+      "Learn from every finished match observed and analyse the fixtures in the window, which writes fresh picks and moves the model's calibration. Existing picks are updated in place, not duplicated.",
+    run: async () => {
+      const { runSportsIntelligence } = await import("@/lib/sports-intelligence");
+      const result = await runSportsIntelligence({ teach: true, horizonDays: 3 });
+      return {
+        ok: true,
+        action: "run_sports_intelligence",
+        summary: `Analysis pass finished — wrote ${result.generated} picks, refreshed ${result.refreshed}, settled ${result.settled} finished pick(s), and learned from ${result.realResultsTaught} observed results.`,
+      };
+    },
+  },
+
+  run_brain_diagnosis: {
+    id: "run_brain_diagnosis",
+    label: "Diagnose the platform now",
+    risk: "low",
+    required: [],
+    describe: () =>
+      "Run the full self-test across every subsystem, file any finding that has now persisted three runs as a tracked issue, and record the diagnosis in memory.",
+    run: async () => {
+      const { appBrain } = await import("@/lib/app-brain");
+      const diagnosis = await appBrain.diagnose({ live: true });
+      const report = await appBrain.report(diagnosis, { alert: false });
+      const opened = report.issues.opened.length;
+      return {
+        ok: true,
+        action: "run_brain_diagnosis",
+        summary:
+          diagnosis.findings.length === 0
+            ? `Diagnosis clean — all ${diagnosis.checks} checks passed.`
+            : `Diagnosis found ${diagnosis.findings.length} issue(s) across ${diagnosis.checks} checks; ${opened} newly tracked.`,
+        detail: { overall: diagnosis.overall, checks: diagnosis.checks, findings: diagnosis.findings.length, opened },
+      };
+    },
+  },
+
+  set_repair_mode: {
+    id: "set_repair_mode",
+    label: "Change the self-heal envelope",
+    risk: "high",
+    required: ["mode"],
+    describe: (args) => {
+      const mode = asString(args, "mode").toLowerCase();
+      const effect =
+        mode === "enforce"
+          ? "the brain will run its listed repairs unattended when it diagnoses a failure"
+          : mode === "off"
+            ? "the brain will stop repairing anything, even by hand from the console"
+            : "the brain will decide what it would do and log it, but change nothing";
+      return `Set the self-heal envelope to "${mode}" — ${effect}.`;
+    },
+    run: async (args) => {
+      const mode = asString(args, "mode").toLowerCase();
+      if (mode !== "off" && mode !== "observe" && mode !== "enforce") {
+        return { ok: false, action: "set_repair_mode", summary: `"${mode}" is not a mode. Use off, observe or enforce.`, error: "invalid_mode" };
+      }
+      const { updateSettings } = await import("@/lib/settings");
+      await updateSettings({ brainSelfHeal: mode });
+      return { ok: true, action: "set_repair_mode", summary: `Self-heal envelope is now "${mode}".` };
+    },
+  },
 };
+
+/**
+ * Wrap a `{ ok, detail }` repair-style result as an `ActionResult`.
+ *
+ * The operations tools all return a sentence and a boolean rather than a
+ * mutation row, so they share one adapter instead of eight near-identical ones.
+ */
+const asAction = (action: string, result: { ok: boolean; detail: string }): ActionResult => ({
+  ok: result.ok,
+  action,
+  summary: result.detail,
+  error: result.ok ? undefined : result.detail,
+});
+
+/**
+ * Run one named repair from the self-heal catalog.
+ *
+ * Resolved by id at run time rather than imported as a function reference: the
+ * catalog is the single register of what the mind may do unattended, and a
+ * repair removed from it must stop being runnable through the queue too. A
+ * repair that is no longer in the catalog is refused, not resurrected.
+ */
+async function runCatalogRepair(id: string): Promise<ActionResult> {
+  const { repairCatalog } = await import("@/lib/brain-repair");
+  const repair = repairCatalog().find((r) => r.id === id);
+  if (!repair) {
+    return { ok: false, action: id, summary: `No repair named "${id}" is in the catalog.`, error: "unknown_repair" };
+  }
+  const result = await repair.run();
+  return asAction(id, result);
+}
 
 export function isApprovalTool(value: unknown): value is ApprovalTool {
   return typeof value === "string" && Object.prototype.hasOwnProperty.call(APPROVAL_TOOLS, value);
