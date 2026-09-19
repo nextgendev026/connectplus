@@ -7,6 +7,7 @@ import {
   type JobHeartbeat,
 } from "./job-heartbeat";
 import {
+  runBrainDiagnosis,
   runEmbedPosts,
   runFeedHealth,
   runHiveSweep,
@@ -233,6 +234,24 @@ export const CRON_JOBS: readonly CronJobDef[] = [
     everyMinutes: 360,
     essential: false,
     run: () => runPlatformPulse(),
+  },
+  {
+    id: "brain-diagnose",
+    name: "Brain self-diagnosis",
+    description:
+      "Runs the mind's own health probes — database, cache tier, every scheduler heartbeat, pipelines, offload, hive recency — plus a self-test of the deterministic engines, stores the findings in the hive and alerts on anything critical.",
+    // Daily, at 03:15 UTC. Deliberately the quiet hour: the probes compare job
+    // heartbeats against their own windows, and a diagnosis run while the
+    // high-frequency jobs are mid-flight would report their normal in-flight
+    // state as staleness. Findings are stored either way, so the console always
+    // has the last report without re-running anything.
+    cron: "15 3 * * *",
+    everyMinutes: 1440,
+    // Not in the Vercel safety net: a diagnosis that failed at 03:15 is worth a
+    // retry on the next night, not a catch-up run in the middle of the day when
+    // the numbers it reads mean something different.
+    essential: false,
+    run: () => runBrainDiagnosis(),
   },
 ];
 

@@ -29,6 +29,7 @@ import type {
   PipelineHealthReport,
   PipelineState,
 } from "@/lib/pipeline-health";
+import { BrainDiagnosticsPanel } from "@/components/admin/BrainDiagnosticsPanel";
 
 /**
  * Pipeline health console.
@@ -187,6 +188,8 @@ export default function AdminHealthPage() {
           <AdminEmpty icon={Loader2} title="Reading the pipelines…" description="Checking view folds, feed polls and job heartbeats." />
         </AdminPanel>
       ) : null}
+
+      <BrainDiagnosticsPanel />
 
       {report ? (
         <>

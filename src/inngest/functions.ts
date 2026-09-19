@@ -713,6 +713,33 @@ export const feedHealth = inngest.createFunction(
   }
 );
 
+/**
+ * The brain's own self-diagnosis, on a schedule.
+ *
+ * The one job whose failure is hardest to notice from the outside is the one
+ * that would have reported it, so this is the job most worth running when nobody
+ * is looking: overnight, against a quiet platform, it probes the database, the
+ * cache tier, every scheduler heartbeat, the pipelines, the Convex offload, the
+ * hive's recency and the deterministic engines themselves. Findings land in the
+ * hive; only criticals alert, deduped per episode.
+ */
+export const brainDiagnose = inngest.createFunction(
+  {
+    id: "brain-diagnose",
+    name: "Brain self-diagnosis",
+    triggers: [{ event: "brain-diagnose" }, { cron: "15 3 * * *" }],
+    concurrency: 1,
+    retries: 1,
+  },
+  async ({ step }) => {
+    await step.run("heartbeat", () => recordHeartbeat("brain-diagnose"));
+    return step.run("diagnose", async () => {
+      const { runBrainDiagnosis } = await import("@/lib/cron-jobs");
+      return runBrainDiagnosis();
+    });
+  }
+);
+
 export const functions = [
   publishScheduled,
   rssPoll,
@@ -732,4 +759,5 @@ export const functions = [
   platformPulse,
   marketingSweep,
   feedHealth,
+  brainDiagnose,
 ];

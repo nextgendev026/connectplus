@@ -528,3 +528,40 @@ export async function runPlatformPulse(): Promise<{ day: string; deltas: number;
     return { error: message };
   }
 }
+
+/**
+ * The brain looking at itself, on a schedule.
+ *
+ * Eight independent probes over the platform's own subsystems, plus a self-test
+ * that drives the deterministic engines over a fixed fixture. The self-test is
+ * the part that catches *code* faults rather than infrastructure ones: a checker
+ * that starts swallowing sentences, or a generator that returns nothing, fails
+ * here and reaches a human, instead of surfacing as a writer saying "the AI is
+ * being weird".
+ *
+ * Findings are stored in the hive either way, so a later question — have we seen
+ * this before? — is answered from memory. Only *critical* findings alert, and
+ * each is deduped per episode by `appBrain.report`, so a nightly diagnosis of the
+ * same known fault is a record, not a stream of email.
+ */
+export async function runBrainDiagnosis(): Promise<{
+  overall: string;
+  findings: number;
+  alerted: number;
+  ids: string[];
+}> {
+  const { appBrain } = await import("@/lib/app-brain");
+  const diagnosis = await appBrain.diagnose({ live: true });
+  const reported = await appBrain.report(diagnosis, { alert: true });
+  log.info("brain diagnosis", {
+    overall: diagnosis.overall,
+    findings: diagnosis.findings.map((f) => `${f.severity}:${f.id}`),
+    alerted: reported.alerted,
+  });
+  return {
+    overall: diagnosis.overall,
+    findings: diagnosis.findings.length,
+    alerted: reported.alerted,
+    ids: diagnosis.findings.map((f) => f.id),
+  };
+}
