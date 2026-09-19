@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { cuid } from "@/lib/schemas/validators";
 
 export async function GET(
   _request: NextRequest,
@@ -32,7 +33,13 @@ export async function POST(
     if (!session?.user) {
       return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
-    const { postId } = await params;
+    const { postId: rawPostId } = await params;
+    // Validate the postId format before using it as a database key.
+    const parsed = cuid.safeParse(rawPostId);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid postId format" }, { status: 400 });
+    }
+    const postId = parsed.data;
     const existing = await prisma.bookmark.findUnique({
       where: { userId_postId: { userId: session.user.id, postId } },
     });

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hash } from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { validateBody } from "@/lib/api-validation";
+import { RegisterSchema } from "@/lib/schemas/validators";
 import {
   appBaseUrl,
   createEmailVerificationToken,
@@ -31,43 +33,13 @@ const EAST_AFRICAN_CITIES = [
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    // Validate at the boundary: every field, its type, and its length are
+    // checked before the handler touches the database. The old manual checks
+    // (typeof, regex, length) are replaced by a single schema that the
+    // frontend can also import for client-side form validation.
+    const body = await validateBody(request, RegisterSchema);
+    if (body instanceof NextResponse) return body;
     const { name, username, email, password } = body;
-
-    if (!name || !username || !email || !password) {
-      return NextResponse.json(
-        { error: "All fields are required" },
-        { status: 400 }
-      );
-    }
-
-    if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return NextResponse.json(
-        { error: "Invalid input" },
-        { status: 400 }
-      );
-    }
-
-    if (typeof password !== "string" || password.length < 8) {
-      return NextResponse.json(
-        { error: "Password must be at least 8 characters" },
-        { status: 400 }
-      );
-    }
-
-    if (typeof username !== "string" || !/^[a-zA-Z0-9_]+$/.test(username)) {
-      return NextResponse.json(
-        { error: "Invalid input" },
-        { status: 400 }
-      );
-    }
-
-    if (username.length < 3 || username.length > 30) {
-      return NextResponse.json(
-        { error: "Invalid input" },
-        { status: 400 }
-      );
-    }
 
     const randomCity =
       EAST_AFRICAN_CITIES[Math.floor(Math.random() * EAST_AFRICAN_CITIES.length)];

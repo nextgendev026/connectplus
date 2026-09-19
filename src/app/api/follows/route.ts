@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { validateBody } from "@/lib/api-validation";
+import { FollowSchema } from "@/lib/schemas/validators";
 
 export async function GET(request: NextRequest) {
   try {
@@ -46,11 +48,9 @@ export async function POST(request: NextRequest) {
     if (!session?.user) {
       return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
-    const body = await request.json();
-    const targetId = body?.targetId as string | undefined;
-    if (!targetId) {
-      return NextResponse.json({ error: "Missing targetId" }, { status: 400 });
-    }
+    const body = await validateBody(request, FollowSchema);
+    if (body instanceof NextResponse) return body;
+    const { targetId } = body;
     if (targetId === session.user.id) {
       return NextResponse.json({ error: "You cannot follow yourself" }, { status: 400 });
     }

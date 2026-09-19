@@ -2,15 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { hiveBrain } from "@/lib/hive-brain";
+import { z } from "zod";
+import { validateBody, validateSearchParams } from "@/lib/api-validation";
+import { CreateCommentSchema, cuid } from "@/lib/schemas/validators";
 
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const postId = searchParams.get("postId");
-
-    if (!postId) {
-      return NextResponse.json({ error: "postId is required" }, { status: 400 });
-    }
+    const params = validateSearchParams(request, z.object({ postId: cuid }));
+    if (params instanceof NextResponse) return params;
+    const { postId } = params;
 
     const comments = await prisma.comment.findMany({
       where: { postId, parentId: null },
@@ -41,16 +41,11 @@ export async function POST(request: NextRequest) {
     }
 
     const userId = session.user.id;
-    const body = await request.json();
+    // Validate at the boundary: content length, postId format, parentId format
+    // are all checked before the handler touches the database.
+    const body = await validateBody(request, CreateCommentSchema);
+    if (body instanceof NextResponse) return body;
     const { postId, content, parentId } = body;
-
-    if (!postId || typeof postId !== "string") {
-      return NextResponse.json({ error: "postId is required" }, { status: 400 });
-    }
-
-    if (!content || typeof content !== "string" || content.trim().length === 0) {
-      return NextResponse.json({ error: "Content is required" }, { status: 400 });
-    }
 
     if (content.length > 5000) {
       return NextResponse.json({ error: "Comment must be 5000 characters or less" }, { status: 400 });

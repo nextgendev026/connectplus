@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { validateBody } from "@/lib/api-validation";
+import { LikeSchema } from "@/lib/schemas/validators";
 
 export async function GET(request: NextRequest) {
   try {
@@ -47,11 +49,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
 
-    const { postId } = await request.json();
-
-    if (!postId) {
-      return NextResponse.json({ error: "postId is required" }, { status: 400 });
-    }
+    const body = await validateBody(request, LikeSchema);
+    if (body instanceof NextResponse) return body;
+    const { postId } = body;
 
     // Unlike if already liked
     const existingLike = await prisma.like.findUnique({
