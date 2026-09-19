@@ -81,6 +81,30 @@ export async function PUT(request: NextRequest) {
       }
     }
 
+    /*
+     * The self-healing envelope grants the brain permission to *mutate*
+     * production, so it gets the same bar as a code-injection setting: only a
+     * super admin may move it, and only to a value the repair layer understands.
+     * An unrecognised value reads as `observe` at runtime, but rejecting it here
+     * means a typo is explained rather than silently downgraded.
+     */
+    if (validUpdates.brainSelfHeal !== undefined) {
+      if (role !== "SUPER_ADMIN") {
+        return NextResponse.json(
+          { error: "Only a super admin may change the self-healing envelope." },
+          { status: 403 }
+        );
+      }
+      const mode = validUpdates.brainSelfHeal.trim().toLowerCase();
+      if (!["off", "observe", "enforce"].includes(mode)) {
+        return NextResponse.json(
+          { error: "Self-healing must be one of: off, observe, enforce." },
+          { status: 400 }
+        );
+      }
+      validUpdates.brainSelfHeal = mode;
+    }
+
     // A malformed measurement id produces no snippet at all, which reads as
     // "analytics is on but silent" — the failure mode this console exists to
     // avoid. Reject it at the point of entry instead.

@@ -12,6 +12,9 @@ import { convexAvailable, convexHealth, convexUrl } from "@/lib/convex";
 import { runWritingChecks } from "@/lib/writing-checks";
 import { polishText, generateHeadline, enhanceText } from "@/lib/neural-generate";
 import { extractKeywords, summarizeText, stripHtml } from "@/lib/neural-text";
+import { PERSISTENCE_THRESHOLD, syncIssues, type IssueSyncResult } from "@/lib/brain-issues";
+import { runRepairs, type RepairRunResult } from "@/lib/brain-repair";
+import { copilotSkillNotesFromStore } from "@/lib/copilot-skills";
 import {
   applyPilotOps,
   defaultOpsFor,
@@ -218,11 +221,20 @@ class AppBrain {
   ): Promise<PilotOp[]> {
     const config = await getAiConfig().catch(() => null);
     if (config && config.provider !== "builtin" && config.apiKey && focus.trim().length > 0) {
+      // What the writers of this publication have actually accepted, distilled
+      // from their own keep/discard decisions. It is guidance, not a rulebook:
+      // the notes are only emitted for actions with a real sample behind them,
+      // so a brand-new deployment gets no notes at all rather than invented ones.
+      const skillNotes = await copilotSkillNotesFromStore().catch(() => []);
+
       const user = [
         `Instruction: ${instruction}`,
         request.title ? `Headline: ${request.title}` : "",
         request.category ? `Category: ${request.category}` : "",
         request.tags?.length ? `Existing tags: ${request.tags.join(", ")}` : "",
+        skillNotes.length
+          ? `What this publication's writers usually accept:\n${skillNotes.map((n) => `- ${n}`).join("\n")}`
+          : "",
         hasSelection ? `Passage:\n${focus}` : `Draft:\n${focus.slice(0, 12_000)}`,
       ]
         .filter(Boolean)
@@ -626,6 +638,10 @@ class AppBrain {
    * evidence, not a lesson, until a human agrees with it.
    */
   async report(diagnosis: BrainDiagnosis, opts: { alert?: boolean } = {}): Promise<BrainReportResult> {
+    // Read the previous runs *before* this one is stored, so the register can
+    // ask "has this been true for a while?" rather than "is it true now?".
+    const history = await this.recentDiagnoses(PERSISTENCE_WINDOW).catch(() => [] as BrainDiagnosis[]);
+
     let memoryId: string | null = null;
     try {
       const row = await prisma.neuralMemory.create({
@@ -652,7 +668,74 @@ class AppBrain {
       alerted = await this.sendAlert(diagnosis, toAlert);
     }
 
-    return { diagnosis, memoryId, alerted };
+    /*
+     * File what has actually persisted, then act on it inside the envelope.
+     *
+     * Both are best-effort and independently caught: a register that cannot be
+     * written must not lose the diagnosis, and a repair that throws must not
+     * lose the issue.
+     */
+    let issues: IssueSyncResult = { opened: [], updated: [], resolved: [] };
+    try {
+      issues = await syncIssues(diagnosis, history);
+    } catch (error) {
+      this.log.warn("issue register could not be reconciled", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    let repairs: RepairRunResult | null = null;
+    try {
+      repairs = await runRepairs(diagnosis);
+    } catch (error) {
+      this.log.warn("self-heal could not run", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    /*
+     * A newly filed issue is the one event worth an email of its own. It means a
+     * fault has now been true for three consecutive examinations — which is a
+     * different claim from "something looked wrong tonight", and the claim the
+     * register exists to make.
+     */
+    if (opts.alert !== false && issues.opened.length > 0) {
+      alerted += await this.sendAlert(
+        diagnosis,
+        issues.opened.map((issue) => ({
+          id: `issue:${issue.findingId}`,
+          area: issue.area,
+          severity: issue.severity,
+          title: `Filed: ${issue.title}`,
+          detail: `Seen in ${issue.occurrences} consecutive diagnoses. Suspect ${issue.subsystem}. ${issue.detail}`,
+          fix: issue.externalUrl ? `${issue.fix} — tracked at ${issue.externalUrl}` : issue.fix,
+        }))
+      );
+    }
+
+    return { diagnosis, memoryId, alerted, issues, repairs };
+  }
+
+  /** The previous diagnoses, newest first — the register's memory of the past. */
+  private async recentDiagnoses(limit: number): Promise<BrainDiagnosis[]> {
+    const rows = await prisma.neuralMemory.findMany({
+      where: { source: DIAGNOSIS_SOURCE },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+      select: { metadata: true },
+    });
+    const out: BrainDiagnosis[] = [];
+    for (const row of rows) {
+      if (!row.metadata) continue;
+      try {
+        const parsed = JSON.parse(row.metadata) as BrainDiagnosis;
+        if (Array.isArray(parsed?.findings)) out.push(parsed);
+      } catch {
+        // A malformed record is skipped rather than aborting the reconciliation:
+        // one bad row must not stop the register working from the rest.
+      }
+    }
+    return out;
   }
 
   /** Email + webhook, using the same routing the status watchdog uses. */
@@ -819,7 +902,20 @@ export interface BrainReportResult {
   diagnosis: BrainDiagnosis;
   memoryId: string | null;
   alerted: number;
+  /** What the persistent-finding register changed this run. */
+  issues: IssueSyncResult;
+  /** What the self-heal envelope considered, and what it was allowed to do. */
+  repairs: RepairRunResult | null;
 }
+
+/**
+ * How far back the register looks for the same finding.
+ *
+ * One short of the persistence threshold: with `PERSISTENCE_THRESHOLD` at 3, two
+ * previous runs are enough to establish that a finding has been true three times
+ * running, and reading further back would only cost queries.
+ */
+const PERSISTENCE_WINDOW = PERSISTENCE_THRESHOLD - 1;
 
 export interface PilotRequest {
   action: string;

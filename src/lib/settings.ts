@@ -81,6 +81,15 @@ export const SETTINGS_CATALOG: SettingDef[] = [
     isPublic: true,
   },
   {
+    key: "brainSelfHeal",
+    defaultValue: "observe",
+    group: "general",
+    label: "Self-healing envelope",
+    hint:
+      "What the brain may do about a fault it finds in its own diagnosis. `off` reports nothing and does nothing; `observe` (default) records exactly what it would have done; `enforce` lets it re-fire a stalled job, re-warm a cold edge snapshot and retry the view fold. Only repairs listed in lib/brain-repair can run, at most three per night, and every one is logged with its outcome.",
+    type: "text",
+  },
+  {
     key: "siteTagline",
     defaultValue: "Voices of the Silicon Savanna",
     group: "general",

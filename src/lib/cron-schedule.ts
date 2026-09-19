@@ -239,7 +239,7 @@ export const CRON_JOBS: readonly CronJobDef[] = [
     id: "brain-diagnose",
     name: "Brain self-diagnosis",
     description:
-      "Runs the mind's own health probes — database, cache tier, every scheduler heartbeat, pipelines, offload, hive recency — plus a self-test of the deterministic engines, stores the findings in the hive and alerts on anything critical.",
+      "Runs the mind's own health probes — database, cache tier, every scheduler heartbeat, pipelines, offload, hive recency — plus a self-test of the deterministic engines. Findings are stored in the hive, a fault that survives three consecutive runs is filed as a tracked issue (and closed again when it stops appearing), and the self-healing envelope is applied within its cap.",
     // Daily, at 03:15 UTC. Deliberately the quiet hour: the probes compare job
     // heartbeats against their own windows, and a diagnosis run while the
     // high-frequency jobs are mid-flight would report their normal in-flight
