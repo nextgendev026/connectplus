@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { SettingsForm } from "@/components/settings/SettingsForm";
 import { VerifiedWriterCard } from "@/components/settings/VerifiedWriterCard";
 import { SubscriptionManager } from "@/components/subscription/SubscriptionManager";
+import { NotificationSoundSettings } from "@/components/notifications/NotificationSoundSettings";
 
 export const dynamic = "force-dynamic";
 
@@ -76,6 +77,8 @@ export default async function SettingsPage() {
           </div>
           <SubscriptionManager />
         </section>
+
+        <NotificationSoundSettings />
 
         <SettingsForm
           user={{

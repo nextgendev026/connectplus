@@ -17,6 +17,7 @@ export type NotificationKind =
   | "moderation"
   | "sports"
   | "publish"
+  | "payment"
   | "system";
 
 export interface NotificationLike {
@@ -37,7 +38,22 @@ export function notificationKind(type: string): NotificationKind {
   if (t === "REPLY") return "reply";
   if (t.startsWith("MODERATION")) return "moderation";
   if (t === "POST_PUBLISHED") return "publish";
+  // Money moving is its own kind — the reader has to recognise a tip landing
+  // from across the room, which is the whole reason the sounds differ at all.
+  if (/^(TIP|PAYOUT|PAYMENT|SUBSCRIPTION)/.test(t)) return "payment";
   return "system";
+}
+
+/**
+ * The sound/vibration voice a push notification should arrive with.
+ *
+ * The server knows the type and the device knows the motif, so only the kind
+ * travels over the wire. Kept here rather than in the push sender so a new
+ * notification type inherits its voice by adding one line to `notificationKind`
+ * instead of an edit in every sender.
+ */
+export function pushKindForType(type: string): NotificationKind {
+  return notificationKind(type);
 }
 
 /** Where tapping the notification should land. */
@@ -46,6 +62,9 @@ export function notificationHref(n: NotificationLike): string {
   // A sports alert is about a fixture, so it opens the board — linking to "/"
   // for every post-less notification made match alerts dead ends.
   if (kind === "sports") return "/sports";
+  // Earnings live on the monetization page, which is where a creator can see
+  // what actually landed rather than a generic inbox.
+  if (kind === "payment") return "/monetize";
   if (n.post?.slug) return `/article/${n.post.slug}`;
   if (n.actor?.username) return `/profile/${n.actor.username}`;
   return "/";
@@ -78,6 +97,17 @@ export function describeNotification(n: NotificationLike): NotificationDisplay {
       href,
       headline: n.title?.trim() || "Match update",
       body: n.message?.trim() || "Something changed in a match you follow.",
+    };
+  }
+
+  // Money notifications are system-generated: there is no actor to name, and
+  // naming "Someone" on a payout would be a lie about who paid.
+  if (kind === "payment") {
+    return {
+      kind,
+      href,
+      headline: n.title?.trim() || "Payment update",
+      body: n.message?.trim() || "There is a new update on your earnings.",
     };
   }
 

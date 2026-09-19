@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { sendPushToUser } from "@/lib/push";
+import { pushKindForType } from "@/lib/notification-display";
 
 export interface CreateNotificationInput {
   userId: string;
@@ -44,6 +45,9 @@ export async function createNotification(input: CreateNotificationInput) {
       body: input.message?.trim() || "You have a new notification.",
       url: input.url ?? "/notifications",
       tag: `cp-${input.type.toLowerCase()}`,
+      // The kind is what gives the alert its voice on the device: a comment and
+      // an approval must not arrive with the same buzz.
+      kind: pushKindForType(input.type),
     }).catch(() => null);
   }
 
@@ -148,6 +152,7 @@ export async function createPublishNotifications(params: {
         body: params.postTitle,
         url: "/notifications",
         tag: `cp-post-${params.postId}`,
+        kind: "publish",
       }
     ).catch(() => null);
 

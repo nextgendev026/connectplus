@@ -346,6 +346,29 @@ async function swrApi(request, url) {
 /* Push + notification UX                                            */
 /* ------------------------------------------------------------------ */
 
+/* The notification voices, mirrored from src/lib/notification-sounds.ts.
+ *
+ * This file cannot import from the app bundle, so the vibration patterns are
+ * duplicated deliberately — and kept to *patterns only*, because a service
+ * worker cannot synthesise the Web Audio motifs the foreground app plays. What
+ * matters here is that the kind still changes what the device does: a match
+ * alert must buzz like a match alert while the app is closed, and two comments
+ * must not. `kind` also becomes the notification `tag`, so a burst of the same
+ * kind collapses into one entry instead of a wall of them. */
+const PUSH_VIBRATION = {
+  follow: [18, 40, 24],
+  comment: [22, 60, 22],
+  reply: [18, 45, 18, 45, 26],
+  moderation: [30, 70, 30],
+  publish: [20, 50, 20, 50, 34],
+  sports: [40, 30, 40, 30, 90],
+  payment: [24, 40, 40],
+  system: [20, 60, 20],
+};
+
+/* Kinds that are allowed to sit on screen until dismissed. */
+const INSISTENT = new Set(["moderation", "sports", "payment"]);
+
 self.addEventListener("push", (event) => {
   let payload = {};
   try {
@@ -354,17 +377,33 @@ self.addEventListener("push", (event) => {
     payload = { title: "connectPlus", body: event.data ? event.data.text() : "" };
   }
   const title = payload.title || "connectPlus";
+  const kind = typeof payload.kind === "string" && PUSH_VIBRATION[payload.kind] ? payload.kind : "system";
   const options = {
     body: payload.body || "Something new from connectPlus",
     icon: payload.icon || "/pwa-192.png",
     badge: "/pwa-192.png",
-    data: { url: payload.url || "/" },
-    tag: payload.tag || `connectplus-${Date.now()}`,
+    data: { url: payload.url || "/", kind },
+    // Grouped by kind when the server did not pick a finer tag: repeating the
+    // same event collapses, a different kind gets its own entry.
+    tag: payload.tag || `connectplus-${kind}`,
     renotify: true,
-    requireInteraction: payload.important === true,
+    silent: false,
+    vibrate: PUSH_VIBRATION[kind],
+    requireInteraction: payload.important === true || INSISTENT.has(kind),
     actions: payload.actions || [],
   };
-  event.waitUntil(self.registration.showNotification(title, options));
+  event.waitUntil(
+    self.registration.showNotification(title, options).catch(() => {
+      /* Some platforms reject options they do not know; showing the plain
+       * notification is better than showing none. */
+      return self.registration.showNotification(title, {
+        body: options.body,
+        icon: options.icon,
+        tag: options.tag,
+        data: options.data,
+      });
+    })
+  );
 });
 
 self.addEventListener("notificationclick", (event) => {

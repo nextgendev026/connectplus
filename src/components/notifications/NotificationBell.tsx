@@ -6,11 +6,13 @@ import { useSession } from "next-auth/react";
 import { Bell, UserPlus, MessageSquare, Reply, ShieldCheck, BellRing, Trophy } from "lucide-react";
 import { cn, timeAgo } from "@/lib/utils";
 import {
+  announceNotification,
   notificationPermissionState,
   playNotificationSound,
   requestNotificationPermission,
   showSystemNotification,
   subscribeToPush,
+  unlockNotificationSounds,
   unsubscribeFromPush,
   webPushConfigured,
 } from "@/lib/permissions";
@@ -77,6 +79,26 @@ export function NotificationBell() {
     return () => window.removeEventListener("storage", sync);
   }, []);
 
+  useEffect(() => {
+    /*
+     * Unlock the notification voices on the first real interaction.
+     *
+     * Browsers will not start an audio context outside a gesture, so without
+     * this the first chime after a page load is dropped and only the second one
+     * is heard — which reads to a reader as "the sound is broken".
+     * `{ once: true }` because one gesture is all it takes.
+     */
+    const unlock = () => {
+      unlockNotificationSounds();
+    };
+    window.addEventListener("pointerdown", unlock, { once: true, passive: true });
+    window.addEventListener("keydown", unlock, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, []);
+
   const load = useCallback(async () => {
     if (!session?.user) return;
     setLoading(true);
@@ -90,13 +112,20 @@ export function NotificationBell() {
         const fresh = next.filter((n) => !n.read && !prevIdsRef.current.has(n.id));
         const top = fresh[0];
         if (top) {
-          playNotificationSound();
+          // The sound, the text and the destination all come from one shared
+          // description, so the bell and the notifications page cannot tell the
+          // reader two different stories about the same event.
+          const view = describeNotification(top);
+          const { sound } = announceNotification(view.kind);
           showSystemNotification(
-            top.actor?.name ? `${top.actor.name} · connectPlus` : "New notification",
-            top.title ?? `${top.type?.toLowerCase().replace("_", " ") ?? "update"}${top.post ? ` on “${top.post.title}”` : ""}`,
+            top.actor?.name ? `${top.actor.name} · connectPlus` : view.headline,
+            view.body,
             {
-              sound: true,
-              url: top.post ? `/article/${top.post.slug}` : "/notifications",
+              // Only one channel makes noise: if the in-app chime played, the OS
+              // banner stays silent rather than doubling the alert.
+              sound: !sound,
+              url: view.href,
+              kind: view.kind,
             }
           );
         }

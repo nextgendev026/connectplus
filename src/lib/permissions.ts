@@ -8,6 +8,14 @@
  * handler. Callers should always explain WHY the permission is needed first.
  */
 
+import {
+  announceNotification,
+  isInsistent,
+  playNotificationSound as playNotificationSoundFor,
+  unlockNotificationAudio,
+  type NotificationSoundKind,
+} from "@/lib/notification-sounds";
+
 export type PermissionOutcome =
   | { status: "granted" }
   | { status: "denied"; message: string }
@@ -105,18 +113,38 @@ export async function requestNotificationPermission(reason: string): Promise<Per
   }
 }
 
-/** Show a system notification (if permitted) with an optional sound. */
-export function showSystemNotification(title: string, body: string, opts: { sound?: boolean; url?: string; icon?: string } = {}) {
+/**
+ * Show a system notification (if permitted).
+ *
+ * `kind` does real work here rather than being decoration: it decides the tag —
+ * so five comments on one story collapse into one entry instead of five — and
+ * the vibration pattern, and whether the notification is allowed to stay on
+ * screen. Two comments arriving together must not look like a match alert.
+ */
+export function showSystemNotification(
+  title: string,
+  body: string,
+  opts: { sound?: boolean; url?: string; icon?: string; kind?: NotificationSoundKind } = {}
+) {
   if (typeof window === "undefined" || !("Notification" in window) || Notification.permission !== "granted") {
     return;
   }
+  const kind = opts.kind ?? "system";
   try {
     const n = new Notification(title, {
       body,
       icon: opts.icon ?? "/icon-180.png",
       badge: "/pwa-192.png",
-      tag: `connectplus-${Date.now()}`,
+      // Grouped by kind, not by timestamp: a timestamped tag can never collapse,
+      // which is how one busy comment thread used to bury the whole bar.
+      tag: `connectplus-${kind}`,
       silent: !opts.sound,
+      // The buzz is delivered by `navigator.vibrate` in the sound engine rather
+      // than through the notification options: `NotificationOptions.vibrate` is
+      // not in the DOM typings the app compiles against, and a cast to satisfy a
+      // type is a worse trade than one `navigator` call the platform either
+      // supports or ignores.
+      requireInteraction: isInsistent(kind),
     });
     if (opts.url) {
       n.onclick = () => {
@@ -129,32 +157,24 @@ export function showSystemNotification(title: string, body: string, opts: { soun
   }
 }
 
-/** A short, pleasant chime for in-app notification sounds. */
-export function playNotificationSound() {
-  if (typeof window === "undefined") return;
-  try {
-    const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return;
-    const ctx = new Ctx();
-    const now = ctx.currentTime;
-    const notes = [880, 1174.66, 1567.98]; // A5, D6, G6 — soft "ding-dong"
-    notes.forEach((freq, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "sine";
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0.0001, now + i * 0.12);
-      gain.gain.exponentialRampToValueAtTime(0.12, now + i * 0.12 + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.12 + 0.45);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(now + i * 0.12);
-      osc.stop(now + i * 0.12 + 0.5);
-    });
-    // Keep the context from being garbage collected too early.
-    setTimeout(() => ctx.close().catch(() => {}), 2000);
-  } catch {
-    // Audio is best-effort; never throw.
-  }
+/**
+ * The in-app chime for a notification.
+ *
+ * Delegates to the sound engine, so a comment, an approval and a match goal no
+ * longer share one ding — that sameness is why readers learned to ignore it.
+ * The whole notification voice, vibration and preference layer lives in
+ * `notification-sounds`; this stays as the call site the bell already uses.
+ */
+export function playNotificationSound(kind: NotificationSoundKind = "system") {
+  return playNotificationSoundFor(kind);
+}
+
+/** Play a kind's chime *and* buzz in its pattern. Returns what actually fired. */
+export { announceNotification };
+
+/** Call from the first real interaction so the audio context can start. */
+export function unlockNotificationSounds() {
+  return unlockNotificationAudio();
 }
 
 /* ------------------------------------------------------------------ */

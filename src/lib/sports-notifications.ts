@@ -387,6 +387,8 @@ export async function notifySportsFavourites(
           // banner rather than silently replacing the first one.
           tag: `cp-sports-${first.matchId}-${baseEvent(first.event)}`,
           important: first.event === "KICKOFF" || baseEvent(first.event) === "FINAL" || baseEvent(first.event) === "GOAL",
+          // A match alert buzzes like a match alert, in the app and out of it.
+          kind: "sports",
         });
       })
     ).catch(() => null);

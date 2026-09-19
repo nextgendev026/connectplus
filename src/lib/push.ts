@@ -60,6 +60,12 @@ export interface PushPayload {
   icon?: string;
   /** Match alerts should stay on screen until acknowledged. */
   important?: boolean;
+  /**
+   * The notification kind, which the device turns into a distinct vibration
+   * pattern and grouping tag. The motif itself is synthesised on the device —
+   * a push payload should be small, and shipping audio over it would not be.
+   */
+  kind?: string;
 }
 
 export interface PushSendResult {
@@ -96,6 +102,7 @@ async function sendOne(sub: StoredSub, payload: PushPayload): Promise<"ok" | "pr
         tag: payload.tag,
         icon: payload.icon,
         important: payload.important === true,
+        kind: payload.kind,
       }),
       { TTL: 60 * 60 }
     );
