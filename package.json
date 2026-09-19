@@ -28,7 +28,7 @@
     "vercel-build": "prisma migrate deploy && prisma generate && npm run db:ensure && next build"
   },
   "dependencies": {
-    "@prisma/client": "^6.6.0",
+    "@prisma/client": "^7.10.0",
     "@sentry/nextjs": "^10.75.0",
     "autoprefixer": "^10.5.5",
     "bcryptjs": "^2.4.3",
