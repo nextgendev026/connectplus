@@ -55,15 +55,34 @@ any snapshot is stored. The symptom is not an error: `/__edge` simply stops
 having a `lastTick`, which is indistinguishable from "the cron never ran" — the
 exact ambiguity the ledger was introduced to remove.
 
-So records are **sharded by write frequency** across two stores:
+So records are **sharded by write frequency** across two stores — and, after the
+first version of this table was proven wrong, **everything routine goes to the
+remote tier**, with Cloudflare KV kept as a fallback:
 
-| Record | Writes/day | Store |
-| --- | --- | --- |
-| `tick` ledger | ~1,152 | Upstash (remote) |
-| `snapshot:livescore-football` | ~720 | Upstash (remote) |
-| `snapshot:status` | ~288 | Cloudflare KV |
-| `snapshot:radio-stations` | ~96 | Cloudflare KV |
-| **KV total** | **~384** | comfortably inside 1,000 |
+| Record | Store |
+| --- | --- |
+| `tick` ledger | Upstash (remote) |
+| `snapshot:livescore-football` | Upstash (remote) |
+| `snapshot:status` | Upstash (remote) |
+| `snapshot:radio-stations` | Upstash (remote) |
+| any new `snapshot:*` | Upstash (remote) |
+| *fallback, when the remote tier is down* | Cloudflare KV |
+
+### Why the first split was wrong
+
+The original table put `status` and `radio-stations` on KV on the arithmetic
+"~384 writes/day, comfortably inside 1,000". The arithmetic was right and the
+model was wrong: those figures are **per colo**. The Cache API is per data
+centre, so the mirror in `store()` fires once per *colo* per window — twenty
+colos serving a five-minute status window write that record twenty times, and
+every colo that has ever seen traffic does the same. That fan-out, not the
+cadence, is what kept reaching the 1,000/day ceiling.
+
+The correction is not a smaller number, it is a different store: KV's allowance
+is measured in writes-per-day and cannot absorb a per-colo fan-out at any
+cadence, while the remote tier is counted in commands. So KV is now written
+**only** as a fallback, which is bounded and rare, and the shard rule is
+"everything, unless the remote tier is unreachable".
 
 Rules that keep this safe to change:
 

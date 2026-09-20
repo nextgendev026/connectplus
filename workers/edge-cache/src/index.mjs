@@ -342,12 +342,27 @@ async function kvPutJson(env, key, value, ttlSeconds) {
  *
  * Keyed by the *stable* record id (no cache version), so a version bump never
  * silently moves a record to a store it was not chosen for.
+ *
+ * Every snapshot is listed, and the prefix rule in `prefersRemote` catches any
+ * added later. The original split kept `status` and `radio-stations` on KV on
+ * the theory that ~384 writes a day was affordable — and the arithmetic was
+ * right and the model was wrong. The Cache API is **per colo**, so the mirror
+ * in `store()` fires once per colo per window, not once globally: twenty colos
+ * serving a five-minute status window write the record twenty times, and the
+ * same for every other colo that has ever seen traffic. That fan-out, not the
+ * cadence, is what keeps reaching the 1,000/day ceiling.
+ *
+ * So KV is now a **fallback only** — written when the remote tier is down,
+ * which is bounded and rare — and every routine write goes to the app's cache
+ * tier, whose allowance is counted in commands rather than writes-per-day.
  */
 const REMOTE_PRIMARY = new Set([
   // Rewritten on every trigger — ~1,150 writes/day if it lands in KV.
   "tick",
   // Rebuilt every couple of minutes whenever anybody is watching a board.
   "snapshot:livescore-football",
+  "snapshot:status",
+  "snapshot:radio-stations",
 ]);
 
 /** The remote tier's address and shared secret, or null when it is unset. */
@@ -357,7 +372,8 @@ function remoteStore(env) {
   return base && secret ? { base, secret } : null;
 }
 
-const prefersRemote = (env, id) => Boolean(remoteStore(env)) && REMOTE_PRIMARY.has(id);
+const prefersRemote = (env, id) =>
+  Boolean(remoteStore(env)) && (REMOTE_PRIMARY.has(id) || id.startsWith("snapshot:"));
 
 async function remoteGetJson(env, id) {
   const store = remoteStore(env);

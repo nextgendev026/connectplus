@@ -910,13 +910,15 @@ describe("edge cache — durable records sharded across two stores", () => {
     expect(remoteWrites).toContain("tick:v5");
   });
 
-  it("keeps the low-frequency snapshot on KV, where the writes are affordable", async () => {
+  it("sends every snapshot to the remote tier so the KV allowance is not spent", async () => {
     await edge("/api/status");
 
-    // ~288 writes/day for `status` is well inside the allowance, and keeping it
-    // on KV means the shard map only has to move the two expensive records.
-    expect(kvData.has("snapshot:status:v5")).toBe(true);
-    expect(remoteWrites).not.toContain("snapshot:status:v5");
+    // The reason this moved: the mirror in `store()` fires once per *colo* per
+    // window, so "~288 writes/day" was really 288 × however many data centres
+    // have seen traffic — which is what kept reaching the 1,000/day ceiling.
+    // KV is a fallback now, not a home.
+    expect(remoteWrites).toContain("snapshot:status:v5");
+    expect(kvData.has("snapshot:status:v5"), "the KV write allowance must be left alone").toBe(false);
   });
 
   it("reads the newer copy from whichever store has it", async () => {
@@ -959,8 +961,8 @@ describe("edge cache — durable records sharded across two stores", () => {
     expect(sharded.storage.tickLedger).toBe("remote");
     expect(sharded.storage.shards).toEqual({
       "livescore-football": "remote",
-      status: "kv",
-      "radio-stations": "kv",
+      status: "remote",
+      "radio-stations": "remote",
     });
 
     // And with no remote tier configured, everything is back on KV:
