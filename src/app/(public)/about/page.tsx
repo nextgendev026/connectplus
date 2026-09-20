@@ -7,7 +7,12 @@ import { BRAND_NAME } from "@/lib/brand";
 import { getPlatformFacts } from "@/lib/platform-facts";
 import { StatGrid } from "@/components/ui/StatGrid";
 
-export const dynamic = "force-dynamic";
+// Live platform facts, but no per-request state: no cookies, no session, no
+// query params. Marked `force-dynamic`, this ran a full server render and its
+// database queries for every visit and every crawl of a page whose numbers move
+// over hours. ISR serves the same content from the CDN and revalidates behind
+// the request, so the cost lands on a schedule instead of on each reader.
+export const revalidate = 300;
 
 export const metadata: Metadata = {
   title: "About",

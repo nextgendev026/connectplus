@@ -7,7 +7,12 @@ import { FaqJsonLd } from "@/components/seo/FaqJsonLd";
 import { getPlatformFacts } from "@/lib/platform-facts";
 import { formatCompact } from "@/lib/format-views";
 
-export const dynamic = "force-dynamic";
+// Live platform facts, but no per-request state: no cookies, no session, no
+// query params. Marked `force-dynamic`, this ran a full server render and its
+// database queries for every visit and every crawl of a page whose numbers move
+// over hours. ISR serves the same content from the CDN and revalidates behind
+// the request, so the cost lands on a schedule instead of on each reader.
+export const revalidate = 300;
 
 const DESCRIPTION =
   "How connectPlus collects, uses, stores and protects your data — what we hold, the lawful basis for each purpose, every processor we use, how long we keep things, and how to exercise your rights under the Kenya Data Protection Act, 2019.";
