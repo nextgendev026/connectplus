@@ -110,20 +110,46 @@ async function fetchReachable(url: string, timeoutMs = PROBE_TIMEOUT): Promise<b
   }
 }
 
+/**
+ * How much of the sampled dial has to keep working before radio counts as
+ * healthy.
+ *
+ * The rule used to be "any unreachable upstream means degraded", which flagged
+ * the whole integration for a single third-party stream dropping — and a station
+ * rebranding, geo-blocking or blipping for a minute is the *normal* state of an
+ * internet radio dial, not a fault in this platform. A check that is amber every
+ * day is a check nobody reads, which costs more than it catches. So the verdict
+ * now tracks what a listener actually experiences — can they still listen — and
+ * the detail still names every stream that is out, so nothing is hidden.
+ */
+const RADIO_WORKING_MAJORITY = 0.6;
+
 async function checkRadio(): Promise<{ status: ServiceStatus; detail: string }> {
   const sampleIds = ["capital-fm", "kiss-100", "radio-maisha", "clouds-fm", "radio-rwanda"];
   const samples = sampleIds
     .map((id) => STATIONS.find((s) => s.id === id))
     .filter((s): s is (typeof STATIONS)[number] => Boolean(s));
-  const results = await Promise.all(samples.map((s) => fetchReachable(s.streamUrl)));
-  const reachable = results.filter(Boolean).length;
-  if (reachable === samples.length) {
-    return { status: "operational", detail: `${reachable}/${samples.length} sampled upstreams reachable` };
+  const results = await Promise.all(
+    samples.map(async (station) => ({
+      station,
+      reachable: await fetchReachable(station.streamUrl),
+    }))
+  );
+  const up = results.filter((r) => r.reachable);
+  const down = results.filter((r) => !r.reachable);
+  const verdict = `${up.length}/${results.length} sampled upstreams reachable`;
+
+  if (down.length === 0) return { status: "operational", detail: verdict };
+  if (up.length === 0) return { status: "down", detail: "No sampled upstreams reachable" };
+
+  const offline = down.map((r) => r.station.name).join(", ");
+  if (up.length >= Math.ceil(results.length * RADIO_WORKING_MAJORITY)) {
+    return {
+      status: "operational",
+      detail: `${verdict} — ${offline} offline (third-party stream; the radio page still works)`,
+    };
   }
-  if (reachable > 0) {
-    return { status: "degraded", detail: `${reachable}/${samples.length} sampled upstreams reachable` };
-  }
-  return { status: "down", detail: "No sampled upstreams reachable" };
+  return { status: "degraded", detail: `${verdict} — offline: ${offline}` };
 }
 
 async function checkForex(): Promise<{ status: ServiceStatus; detail: string }> {

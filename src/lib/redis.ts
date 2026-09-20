@@ -110,10 +110,12 @@ function canUseRedis(): boolean {
 export function explainRedisError(raw: string, url: string): string {
   const message = raw.trim();
   if (/WRONGPASS|invalid username-password|invalid password/i.test(message)) {
-    const tlsHint = url.startsWith("rediss://")
-      ? "re-copy the password from the provider dashboard"
-      : "re-copy the password, and switch REDIS_URL to rediss:// if the endpoint is TLS-only";
-    return `Credentials rejected by the server — ${tlsHint}.`;
+    // Deliberately no TLS suggestion here. The server answered and rejected the
+    // credential, which means the scheme already reached it — telling an operator
+    // to switch to `rediss://` in this case sends them at the wrong problem, and
+    // a genuinely TLS-only endpoint fails with a TLS error, not this one.
+    const scheme = url.startsWith("rediss://") ? "rediss" : "redis";
+    return `Credentials rejected — the endpoint answered over ${scheme}://, so the host and port are right. Re-copy the password from the provider dashboard; a rotated credential is the usual cause.`;
   }
   if (/NOAUTH|without any password/i.test(message)) {
     return "The server requires a password but REDIS_URL supplies none.";
@@ -198,8 +200,41 @@ function createClient(): Redis | null {
  *  caller used to issue commands mid-handshake and give up on Redis entirely. */
 let connecting: Promise<void> | null = null;
 
+/**
+ * Retire a client whose connection was *refused* — wrong password, dead host,
+ * bad port.
+ *
+ * Dropping the reference is not enough, and assuming it was cost real work: an
+ * ioredis client whose `connect()` rejects keeps retrying in the background, so
+ * simply setting `client = null` left the socket reconnecting (and re-sending a
+ * credential the server had already rejected) for the lifetime of the process.
+ * Measured against the live endpoint: two further failed auth attempts inside
+ * 2.5s with the reference merely dropped, and none once `disconnect()` is
+ * called. On serverless, where every instance does this, that is a steady drip
+ * of pointless connections at the provider — exactly the kind of thing that
+ * spends a free tier's connection budget.
+ *
+ * `disconnect()` ends the retry loop. The next process — or the next cooldown
+ * window — re-probes from scratch with whatever credentials are configured then.
+ */
+function retire(c: Redis): void {
+  client = null;
+  try {
+    c.disconnect();
+  } catch {
+    // Already closed; nothing left to stop.
+  }
+}
+
 async function getClient(): Promise<Redis | null> {
   if (client === null) return null;
+  // Honour the breaker here, not only inside the individual command helpers.
+  // This is the single entry point every read, write, delete and increment
+  // funnels through, and it used to skip the cooldown entirely — so a Redis that
+  // was configured but rejecting credentials made *every* cache call on *every*
+  // request pay a doomed round-trip, while the breaker sat unarmed because a
+  // failed ping (unlike a failed command) never counted as a failure.
+  if (Date.now() < disabledUntil) return null;
   if (client === undefined) {
     client = canUseRedis() ? createClient() : null;
     if (client) {
@@ -208,7 +243,7 @@ async function getClient(): Promise<Redis | null> {
         .connect()
         .then(() => undefined)
         .catch(() => {
-          client = null;
+          retire(c);
         });
       await connecting;
       connecting = null;
@@ -218,8 +253,16 @@ async function getClient(): Promise<Redis | null> {
   if (client.status === "ready") return client;
   try {
     await client.ping();
+    recordSuccess();
     return client;
   } catch {
+    // Count it. A socket that answers the handshake and then fails every command
+    // is exactly the evidence the breaker exists to act on; leaving the count
+    // untouched meant `disabledUntil` never armed for this case, so each cache
+    // call kept paying a doomed round-trip instead of being skipped for the
+    // cooldown. (A refused credential never reaches here — that is caught above,
+    // and the client is retired outright.)
+    if (recordFailure()) disabledUntil = Date.now() + COOLDOWN_MS;
     return null;
   }
 }
@@ -269,8 +312,14 @@ async function restGet(key: string): Promise<string | null> {
   return restCommand<string>(`GET`, key);
 }
 
-async function restSetEx(key: string, seconds: number, value: string): Promise<void> {
-  await restCommand(`SET`, key, value, `EX`, seconds);
+async function restSetEx(key: string, seconds: number, value: string): Promise<boolean> {
+  // `restCommand` answers `null` for every failure — a rejected token, a non-200,
+  // a thrown fetch — and a completed `SET` replies `OK`, which the pipeline
+  // parser surfaces as a defined (if empty) result. So "not null" is exactly
+  // "the store took it", which is what the caller needs told apart from "the
+  // command was sent".
+  const result = await restCommand<unknown>(`SET`, key, value, `EX`, seconds);
+  return result !== null;
 }
 
 async function restDel(key: string): Promise<void> {
@@ -300,12 +349,27 @@ export async function redisGetRaw(key: string): Promise<string | null> {
   }
 }
 
+/**
+ * Write a value with a TTL. Returns **true only when a store actually took it**.
+ *
+ * The return value is load-bearing, not decoration. This used to resolve to
+ * `void` after swallowing every failure, and callers that need durability read
+ * "the promise resolved" as "the write landed" — which is how the job-heartbeat
+ * ledger ended up writing *nowhere* whenever Redis was configured but rejecting
+ * credentials: the heartbeat stores a fallback copy in Postgres when the cache
+ * declines the write, but it could never see a decline. The symptom was the
+ * admin console reporting that neither store had any run history, on a platform
+ * whose scheduled jobs were all firing.
+ *
+ * A cache read or write must still never break a page, so this still never
+ * throws — it reports.
+ */
 export async function redisSetEx(
   key: string,
   ttlSeconds: number,
   value: string
-): Promise<void> {
-  if (Date.now() < disabledUntil) return;
+): Promise<boolean> {
+  if (Date.now() < disabledUntil) return false;
   const safeTtl = Math.max(1, Math.min(ttlSeconds, MAX_TTL_SECONDS));
   const fullKey = cacheKey(key);
   try {
@@ -313,14 +377,18 @@ export async function redisSetEx(
     if (c) {
       await c.set(fullKey, value, "EX", safeTtl);
       recordSuccess();
-      return;
+      return true;
     }
     if (restUrl && restToken) {
-      await restSetEx(fullKey, safeTtl, value);
-      recordSuccess();
+      const ok = await restSetEx(fullKey, safeTtl, value);
+      if (ok) recordSuccess();
+      return ok;
     }
+    // No tier accepted it. This is the case that used to look like success.
+    return false;
   } catch {
     recordFailure();
+    return false;
   }
 }
 

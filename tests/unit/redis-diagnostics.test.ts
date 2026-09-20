@@ -25,9 +25,24 @@ describe("explainRedisError", () => {
     expect(message).toMatch(/re-copy the password/i);
   });
 
-  it("suggests TLS only when the URL is still plaintext", () => {
-    expect(explainRedisError("WRONGPASS invalid username-password pair", PLAIN_URL)).toMatch(/rediss:\/\//);
-    expect(explainRedisError("WRONGPASS invalid username-password pair", TLS_URL)).not.toMatch(/rediss:\/\//);
+  it("does not send a rejected credential to the TLS setting", () => {
+    // WRONGPASS means the server *answered* and refused the password. The
+    // transport already worked, so pointing at `rediss://` here sends an
+    // operator to reconfigure something that is not broken — and they come back
+    // with the same failure. A genuinely TLS-only endpoint fails with a TLS
+    // error, which is handled separately below.
+    // The word `rediss://` may legitimately appear — the message *names* the
+    // scheme it observed. What must not appear is the instruction to switch.
+    const imperative = /try rediss|switch|instead of|use rediss/i;
+    expect(explainRedisError("WRONGPASS invalid username-password pair", PLAIN_URL)).not.toMatch(imperative);
+    expect(explainRedisError("WRONGPASS invalid username-password pair", TLS_URL)).not.toMatch(imperative);
+  });
+
+  it("names the scheme the endpoint actually answered on", () => {
+    // The useful fact is *which* transport reached the server, because it rules
+    // host, port and scheme in, and leaves exactly one thing to check.
+    expect(explainRedisError("WRONGPASS", PLAIN_URL)).toMatch(/over redis:\/\//);
+    expect(explainRedisError("WRONGPASS", TLS_URL)).toMatch(/over rediss:\/\//);
   });
 
   it("recognises an auth-less URL hitting a password-protected server", () => {

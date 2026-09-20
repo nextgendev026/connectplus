@@ -112,13 +112,16 @@ export async function recordHeartbeat(
   };
 
   if (redisAvailable()) {
+    // `redisSetEx` reports whether a store accepted the write. Do **not** wrap
+    // this in `.then(() => true)` — that maps "the promise resolved" to "the
+    // write landed", and a Redis that is configured but refusing credentials
+    // resolves every time. That is how this ledger came to write nowhere at all
+    // while reporting success to its caller.
     const written = await redisSetEx(
       `${KEY_PREFIX}${jobId}`,
       TTL_SECONDS,
       JSON.stringify(payload)
-    )
-      .then(() => true)
-      .catch(() => false);
+    ).catch(() => false);
     if (written) {
       ledgerTier = "redis";
       return;

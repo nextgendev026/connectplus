@@ -1089,6 +1089,62 @@ export async function getIntegrations(): Promise<IntegrationsReport> {
     });
   }
 
+  /* ── Web push ──────────────────────────────────────────────────── */
+  {
+    /*
+     * Reported on its own, because "the app installs and works offline" and
+     * "an alert reaches a closed phone" are different facts and the panel above
+     * was blurring them. The PWA entry read *operational* and said nothing about
+     * push, so a deployment with no VAPID pair — where the OS tier can never
+     * sign a request and therefore never delivers — looked entirely healthy.
+     *
+     * That is precisely how a notification pipeline goes missing with nobody
+     * noticing: every check the console ran was about the shell, and the shell
+     * was fine. Splitting the capability out is what makes the gap visible.
+     */
+    const hasPublic = env("NEXT_PUBLIC_VAPID_KEY").length > 0;
+    const hasPrivate = env("VAPID_PRIVATE_KEY").length > 0;
+    const configured = hasPublic && hasPrivate;
+
+    let devices: number | null = null;
+    if (configured) {
+      devices = await prisma.pushSubscription
+        .count()
+        .then((n) => n)
+        .catch(() => null);
+    }
+
+    const status: IntegrationStatus = configured
+      ? devices === 0
+        ? "degraded"
+        : "operational"
+      : "unconfigured";
+
+    integrations.push({
+      id: "web-push",
+      name: "Web push",
+      category: "Messaging",
+      description:
+        "Delivers alerts to the operating system — the tier that reaches a reader whose app is closed, including Arabic-first installs on a phone.",
+      status,
+      detail: configured
+        ? devices === null
+          ? "VAPID pair present; the subscription table could not be counted."
+          : devices === 0
+            ? "Keys are set but no device has subscribed yet — every send is a no-op until a reader allows notifications."
+            : `Signing as configured, delivering to ${devices} registered ${devices === 1 ? "device" : "devices"}.`
+        : `Push cannot be delivered — ${!hasPublic && !hasPrivate ? "the VAPID pair is missing" : !hasPublic ? "NEXT_PUBLIC_VAPID_KEY is missing" : "VAPID_PRIVATE_KEY is missing"}. Alerts still appear in an open tab; they never reach a closed one. Generate a pair with scripts/generate-vapid-keys.mjs and set both halves (and VAPID_SUBJECT) in the deployment.`,
+      latencyMs: null,
+      verdict: configured ? verdictFor(status, false) : "attention",
+      fields: [
+        field("Push public key", "NEXT_PUBLIC_VAPID_KEY", { required: false }),
+        field("Push private key", "VAPID_PRIVATE_KEY", { required: false, secret: true }),
+        field("Contact subject", "VAPID_SUBJECT", { required: false }),
+      ],
+      links: [{ label: "Notification settings", href: "/notifications" }],
+    });
+  }
+
   const summary = {
     total: integrations.length,
     operational: integrations.filter((i) => i.status === "operational").length,
