@@ -148,7 +148,7 @@ export async function runHiveSweep(): Promise<{
   await neuralMind.learnFromRssArticles();
 
   const { foldConvexViews } = await import("@/lib/view-sync");
-  const folded = await foldConvexViews(500);
+  const folded = await foldConvexViews();
 
   return {
     ok: true,

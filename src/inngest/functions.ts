@@ -242,8 +242,15 @@ export const hiveSweep = inngest.createFunction(
     // pass keeps Postgres authoritative for ranking and display.
     const synced = await step.run("sync-view-counts", async () => {
       const { foldConvexViews } = await import("@/lib/view-sync");
-      const folded = await foldConvexViews(500);
-      return { posts: folded.posts, views: folded.views };
+      const folded = await foldConvexViews();
+      return {
+        posts: folded.posts,
+        views: folded.views,
+        pages: folded.pages,
+        drained: folded.drained,
+        orphaned: folded.orphaned,
+        prunedDays: folded.prunedDays,
+      };
     });
 
     return { ok: true, viewSync: synced };

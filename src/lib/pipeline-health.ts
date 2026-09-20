@@ -9,7 +9,7 @@ import {
   type JobHeartbeat,
 } from "./job-heartbeat";
 import { VIEW_SYNC_HEARTBEAT } from "./view-sync";
-import { convexAvailable, convexHealth, convexPendingViews, convexUrlSource } from "./convex";
+import { convexAvailable, convexHealth, convexPendingSummary, convexUrlSource } from "./convex";
 
 const log = createLogger("pipeline-health");
 
@@ -585,12 +585,14 @@ export async function getPipelineHealth(now = Date.now()): Promise<PipelineHealt
   // reportable fact rather than a silent `[]`.
   let pending: { posts: number; views: number; capped: boolean } | null = null;
   if (configured) {
-    const deltas = await convexPendingViews(500).catch(() => null);
-    if (deltas !== null && convexHealth().state !== "failing") {
+    const summary = await convexPendingSummary(500).catch(() => null);
+    if (summary !== null && convexHealth().state !== "failing") {
       pending = {
-        posts: deltas.length,
-        views: deltas.reduce((sum, d) => sum + d.delta, 0),
-        capped: deltas.length >= 500,
+        posts: summary.posts,
+        views: summary.views,
+        // `done` is the honest signal: false means there were more rows to
+        // examine than one page holds, so the figure is a floor, not a total.
+        capped: !summary.done,
       };
     }
   }

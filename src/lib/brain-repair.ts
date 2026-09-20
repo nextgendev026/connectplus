@@ -149,15 +149,19 @@ export function repairCatalog(): Repair[] {
         "Folds the Convex deltas that are already pending into Postgres. It is the same operation the nightly sync runs, it is monotonic (counts only ever add), and the post ids it marks are only marked after the write succeeds.",
       run: async () => {
         const { foldConvexViews } = await import("@/lib/view-sync");
-        const result = await foldConvexViews(500);
+        const result = await foldConvexViews();
         if (result.unreachable) {
           // Not a failure of the repair: the offload is down, so there is
           // nothing to fold and the finding belongs to the Convex probe instead.
           return { ok: true, detail: "Convex is unreachable, so the deltas could not be read." };
         }
+        const tail = [
+          result.drained ? "backlog clear" : "backlog remains",
+          result.orphaned > 0 ? `${result.orphaned} orphaned delta(s) dropped` : "",
+        ].filter(Boolean);
         return {
           ok: true,
-          detail: `folded ${result.views} views across ${result.posts} posts (${result.waiting} were waiting)`,
+          detail: `folded ${result.views} views across ${result.posts} posts (${result.waiting} were waiting) — ${tail.join(", ")}`,
         };
       },
     },

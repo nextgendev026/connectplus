@@ -216,9 +216,62 @@ export interface ViewDelta {
   total: number;
 }
 
-/** Deltas waiting to be folded into Post.viewCount by the daily sync. */
-export async function convexPendingViews(limit = 500): Promise<ViewDelta[]> {
-  return call((c) => c.query(api.views.pending, { limit }), [], "views.pending");
+/** One page of the fold's work, plus the cursor that continues the walk. */
+export interface ViewDeltaPage {
+  views: ViewDelta[];
+  continueCursor: string;
+  isDone: boolean;
+  /** Rows the page examined — a page can legitimately be empty without being last. */
+  scanned: number;
+}
+
+const EMPTY_VIEW_PAGE: ViewDeltaPage = { views: [], continueCursor: "", isDone: true, scanned: 0 };
+
+/**
+ * One bounded page of deltas waiting to be folded into Post.viewCount.
+ *
+ * The walk is paginated rather than "give me the first 500", because the old
+ * un-bounded read on the Convex side threw once `postViews` outgrew the
+ * per-execution document limit — which turned a growing backlog into what
+ * looked like a Convex outage. `numItems` is capped at 500 by the function
+ * itself, so no caller can ask for a page big enough to trigger it.
+ */
+export async function convexPendingViewsPage(
+  cursor: string | null,
+  numItems = 250
+): Promise<ViewDeltaPage> {
+  return call(
+    (c) => c.query(api.views.pending, { paginationOpts: { numItems, cursor } }),
+    EMPTY_VIEW_PAGE,
+    "views.pending"
+  );
+}
+
+/**
+ * A one-page snapshot of the backlog, for the admin health view.
+ *
+ * Deliberately not the walk: health wants a number to print, and a walk of a
+ * 100k-post table to compute one would be the very cost this module exists to
+ * avoid. A backlog larger than one page is reported as such by the caller.
+ */
+export async function convexPendingSummary(limit = 500): Promise<{
+  views: number;
+  posts: number;
+  done: boolean;
+} | null> {
+  return call((c) => c.query(api.views.pendingSummary, { limit }), null, "views.pendingSummary");
+}
+
+/**
+ * Delete daily buckets older than a cutoff day, in one bounded batch.
+ *
+ * `viewDays` grew by one row per post per day and was never trimmed, so the
+ * cheapest way to keep a free-tier Convex deployment inside its *storage*
+ * allowance is to stop keeping a year of per-day per-post counts that only the
+ * "trending today" list ever reads.
+ */
+export async function convexPruneViewDays(beforeDay: string, limit = 500): Promise<number> {
+  return call((c) => c.mutation(api.views.pruneDays, { before: beforeDay, limit }), 0, "views.pruneDays");
 }
 
 export async function convexMarkViewsSynced(postIds: string[]): Promise<number> {

@@ -51,7 +51,10 @@ export const stats = query({
     clicks: v.number(),
   }),
   handler: async (ctx) => {
-    const rows = await ctx.db.query("adStats").collect();
+    // Bounded, like every other read here: a full-table `collect()` is a call
+    // that starts throwing once the table outgrows Convex's per-execution
+    // document limit, and ad creatives are not a set that stays small forever.
+    const rows = await ctx.db.query("adStats").take(2000);
     return {
       ads: rows.map((r) => ({ adId: r.adId, impressions: r.impressions, clicks: r.clicks })),
       impressions: rows.reduce((n, r) => n + r.impressions, 0),
