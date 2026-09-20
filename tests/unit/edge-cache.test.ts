@@ -13,6 +13,8 @@ const ENV = { ORIGIN: "https://origin.test" };
 
 const stored = new Map<string, Response>();
 const originFetches: string[] = [];
+/** The headers the worker actually sent upstream, per origin fetch. */
+const originHeaders: Headers[] = [];
 /** Promises the worker handed to `ctx.waitUntil` — background revalidations. */
 const background: Promise<unknown>[] = [];
 
@@ -74,9 +76,16 @@ function agedResponse(
   });
 }
 
+/**
+ * The worker hands `fetch` a constructed `Request` (so it can add the forwarded
+ * host), so the stub has to read the URL off either shape — and record the
+ * headers, which is where the host forwarding is observable.
+ */
 function originReturns(body: string, contentType: string, init: ResponseInit = {}) {
-  vi.stubGlobal("fetch", async (url: string) => {
-    originFetches.push(String(url));
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+    const req = input instanceof Request ? input : new Request(String(input));
+    originFetches.push(req.url);
+    originHeaders.push(req.headers);
     return new Response(body, {
       ...init,
       headers: { "Content-Type": contentType, ...(init.headers ?? {}) },
@@ -95,6 +104,7 @@ function ttlOf(res: Response): number {
 beforeEach(() => {
   stored.clear();
   originFetches.length = 0;
+  originHeaders.length = 0;
   vi.stubGlobal("caches", cacheStorage);
 });
 
@@ -243,6 +253,37 @@ describe("edge cache — the syndication surface", () => {
   });
 });
 
+/**
+ * Host forwarding, which is what makes the worker's own hostname safe to use as
+ * the canonical site URL.
+ *
+ * `Host` is a forbidden header — `fetch` rewrites it to the Vercel origin — so
+ * without forwarding, the app mints auth redirects and session cookies for
+ * `connectplusapp.vercel.app` while the reader is on the worker's domain, and
+ * every signed-in reader looks signed out.
+ */
+describe("edge cache — the reader's host reaches the origin", () => {
+  it("forwards the host and scheme on an anonymous request", async () => {
+    originReturns("<html>", "text/html");
+
+    await request("/");
+
+    expect(originHeaders[0]?.get("x-forwarded-host")).toBe("edge.test");
+    expect(originHeaders[0]?.get("x-forwarded-proto")).toBe("https");
+  });
+
+  it("forwards it on a credentialed request too, which is the sign-in path", async () => {
+    originReturns("{}", "application/json");
+
+    const res = await request("/api/auth/session", { Cookie: "cp_session=abc" });
+
+    expect(res.headers.get("x-edge-cache")).toBe("BYPASS");
+    // The bypass branches are where auth and payment callbacks travel, so the
+    // host must be forwarded there as well — not only on cached GETs.
+    expect(originHeaders[0]?.get("x-forwarded-host")).toBe("edge.test");
+  });
+});
+
 describe("livescore edge tier", () => {
   const LIVE_URL = "/__livescore?sport=football&date=2026-09-13";
 
@@ -300,7 +341,7 @@ describe("livescore edge tier", () => {
   it("serves a stale entry immediately and refreshes behind the reader", async () => {
     // Past the 15s TTL but inside the 45s stale window.
     seedCached(
-      "https://edge.test/__livescore?sport=football&date=2026-09-13&__edge=live&v=4",
+      "https://edge.test/__livescore?sport=football&date=2026-09-13&__edge=live&v=5",
       30,
       '{"matches":["stale"]}'
     );
@@ -330,7 +371,7 @@ describe("livescore edge tier", () => {
   it("refetches synchronously once the stale window has passed", async () => {
     // Older than ttl + swr (15 + 45), so it is no longer worth serving.
     seedCached(
-      "https://edge.test/__livescore?sport=football&date=2026-09-13&__edge=live&v=4",
+      "https://edge.test/__livescore?sport=football&date=2026-09-13&__edge=live&v=5",
       120,
       '{"matches":["ancient"]}'
     );
@@ -402,9 +443,9 @@ describe("edge cron — cache-first snapshots", () => {
 
   /** Pre-seed a worker-owned snapshot the check considers `ageSeconds` old. */
   function seedSnapshot(id: string, ageSeconds: number, body = '{"matches":[]}') {
-    // `v=4` mirrors CACHE_VERSION; the key *shape* is asserted in the policy
+    // `v=5` mirrors CACHE_VERSION; the key *shape* is asserted in the policy
     // suite above, so a bump fails loudly there rather than silently here.
-    stored.set(`${SNAP}/${id}?v=4`, agedResponse(body, ageSeconds));
+    stored.set(`${SNAP}/${id}?v=5`, agedResponse(body, ageSeconds));
   }
 
   const cronFetches = () => originFetches.filter((u) => u.includes("/api/cron"));
@@ -434,13 +475,13 @@ describe("edge cron — cache-first snapshots", () => {
 
     // The readers' responses are mirrored into the snapshot namespace, so the
     // tick reads the same documents instead of rebuilding them.
-    expect([...stored.keys()]).toContain(`${SNAP}/livescore-football?v=4`);
+    expect([...stored.keys()]).toContain(`${SNAP}/livescore-football?v=5`);
 
     // …and with the *snapshot's* lifetime, not the board's. The Cache API
     // expires an entry from its response headers, so a copy left carrying the
     // board's 15s max-age was gone before the tick's 120s window opened — the
     // tick then rebuilt every time, which is the bug this pins.
-    const mirrored = stored.get(`${SNAP}/livescore-football?v=4`);
+    const mirrored = stored.get(`${SNAP}/livescore-football?v=5`);
     expect(/max-age=(\d+)/.exec(mirrored?.headers.get("cache-control") ?? "")?.[1]).toBe("120");
     await tick("*/2 * * * *");
     expect(cronFetches()).toEqual([]);
@@ -470,7 +511,7 @@ describe("edge cron — cache-first snapshots", () => {
   it("does not let a historical day refresh the live snapshot", async () => {
     originReturns('{"matches":[]}', "application/json");
     await request("/__livescore?sport=football&date=2020-01-01");
-    expect([...stored.keys()]).not.toContain(`${SNAP}/livescore-football?v=4`);
+    expect([...stored.keys()]).not.toContain(`${SNAP}/livescore-football?v=5`);
   });
 
   it("snaps a retired sport onto the football snapshot", async () => {
@@ -480,7 +521,7 @@ describe("edge cron — cache-first snapshots", () => {
     originReturns('{"matches":[]}', "application/json");
     await request(`/__livescore?sport=basketball&date=${TODAY}`);
     expect(originFetches).toEqual([`https://origin.test/api/sports/live?sport=football&date=${TODAY}`]);
-    expect([...stored.keys()]).toContain(`${SNAP}/livescore-football?v=4`);
+    expect([...stored.keys()]).toContain(`${SNAP}/livescore-football?v=5`);
   });
 
   it("rebuilds and re-warms once a snapshot has actually gone stale", async () => {
@@ -493,7 +534,7 @@ describe("edge cron — cache-first snapshots", () => {
     expect(cronFetches()).toEqual(["https://origin.test/api/cron?trigger=sports-live&source=cloudflare-cron"]);
     expect(originFetches).toContain("https://origin.test/api/sports/live?sport=football");
     expect(originFetches.filter((u) => u.includes("/api/sports/live"))).toHaveLength(1);
-    const warmed = stored.get(`${SNAP}/livescore-football?v=4`);
+    const warmed = stored.get(`${SNAP}/livescore-football?v=5`);
     const stamped = Number(warmed?.headers.get("x-edge-stored-at"));
     expect(stamped, "a warmed copy must carry our write time or it can never age").toBeTruthy();
     expect(Date.now() - stamped).toBeLessThan(5_000);
@@ -587,7 +628,7 @@ describe("edge cron — cache-first snapshots", () => {
   });
 
   it("still rebuilds when the snapshot entry has no usable date", async () => {
-    stored.set(`${SNAP}/livescore-football?v=4`, new Response('{"matches":[]}', { status: 200 }));
+    stored.set(`${SNAP}/livescore-football?v=5`, new Response('{"matches":[]}', { status: 200 }));
     originReturns('{"matches":[]}', "application/json");
     await tick("*/2 * * * *");
     expect(cronFetches()).toHaveLength(1);
@@ -606,7 +647,7 @@ describe("edge cron — cache-first snapshots", () => {
         Date: new Date().toUTCString(),
       },
     });
-    stored.set(`${SNAP}/livescore-football?v=4`, oldCopy);
+    stored.set(`${SNAP}/livescore-football?v=5`, oldCopy);
     originReturns('{"matches":[]}', "application/json");
 
     const probe = (await (await request("/__edge")).json()) as {
@@ -674,10 +715,10 @@ describe("edge cache — durable snapshots in KV", () => {
       kvData.set(key, typeof value === "string" ? value : JSON.stringify(value));
     },
   };
-  const kvTtlOf = (id: string) => kvTtl.get(`snapshot:${id}:v4`) ?? 0;
+  const kvTtlOf = (id: string) => kvTtl.get(`snapshot:${id}:v5`) ?? 0;
 
   const ENV_WITH_KV = { ...ENV, CRON_SECRET: "s3cret", SNAPSHOTS: KV };
-  const snapshotKeyOf = (id: string) => `snapshot:${id}:v4`;
+  const snapshotKeyOf = (id: string) => `snapshot:${id}:v5`;
 
   async function edge(path: string, env: Record<string, unknown>): Promise<Response> {
     return (await worker.fetch(new Request(`https://edge.test${path}`), env, CTX)) as Response;
@@ -821,8 +862,8 @@ describe("edge cache — durable records sharded across two stores", () => {
 
   /** Route fetch to the remote KV tier or the origin, so both are observable. */
   function stubFetch() {
-    vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
-      const href = String(input);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const href = input instanceof Request ? input.url : String(input);
       if (href.startsWith(REMOTE_URL)) {
         if (remoteDown) return new Response("boom", { status: 500 });
         if ((init?.method ?? "GET") === "PUT") {
@@ -864,9 +905,9 @@ describe("edge cache — durable records sharded across two stores", () => {
 
     // This is the whole point: ~1,152 ledger writes a day would exhaust KV's
     // 1,000/day allowance on their own.
-    expect(kvData.has("tick:v4"), "the ledger must not spend a KV write").toBe(false);
-    expect(remoteData.has("tick:v4"), "the ledger must still be written").toBe(true);
-    expect(remoteWrites).toContain("tick:v4");
+    expect(kvData.has("tick:v5"), "the ledger must not spend a KV write").toBe(false);
+    expect(remoteData.has("tick:v5"), "the ledger must still be written").toBe(true);
+    expect(remoteWrites).toContain("tick:v5");
   });
 
   it("keeps the low-frequency snapshot on KV, where the writes are affordable", async () => {
@@ -874,17 +915,17 @@ describe("edge cache — durable records sharded across two stores", () => {
 
     // ~288 writes/day for `status` is well inside the allowance, and keeping it
     // on KV means the shard map only has to move the two expensive records.
-    expect(kvData.has("snapshot:status:v4")).toBe(true);
-    expect(remoteWrites).not.toContain("snapshot:status:v4");
+    expect(kvData.has("snapshot:status:v5")).toBe(true);
+    expect(remoteWrites).not.toContain("snapshot:status:v5");
   });
 
   it("reads the newer copy from whichever store has it", async () => {
     // Written before a shard moved: an old copy in KV, a new one remotely.
     kvData.set(
-      "snapshot:livescore-football:v4",
+      "snapshot:livescore-football:v5",
       JSON.stringify({ storedAt: Date.now() - 600_000, status: 200, contentType: "application/json", body: "{}" })
     );
-    remoteData.set("snapshot:livescore-football:v4", {
+    remoteData.set("snapshot:livescore-football:v5", {
       storedAt: Date.now() - 5_000,
       status: 200,
       contentType: "application/json",
@@ -908,7 +949,7 @@ describe("edge cache — durable records sharded across two stores", () => {
 
     // Losing the ledger is the failure this whole mechanism exists to prevent;
     // spending one of the writes we were saving is strictly better.
-    const record = JSON.parse(kvData.get("tick:v4") ?? "null") as { cron: string } | null;
+    const record = JSON.parse(kvData.get("tick:v5") ?? "null") as { cron: string } | null;
     expect(record?.cron).toBe("*/5 * * * *");
   });
 

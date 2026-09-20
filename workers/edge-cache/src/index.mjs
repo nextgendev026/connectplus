@@ -78,12 +78,17 @@ const ROOT_TTL = 60 * 60;
  *        `__edge=live` key shape the older entries never used.
  *   v4 — adds the worker-owned snapshots (the cron's cache-first check) and the
  *        cached status payload, both under key shapes v3 never wrote.
+ *   v5 — the site's canonical origin moved onto the worker, so every cached
+ *        document written before the move still carries the old host in its
+ *        canonicals, feed links and sitemap entries. A bump is the only purge
+ *        the Cache API offers, and a crawl that indexes the wrong host is not
+ *        something a TTL fixes quickly (the sitemap entry lived six hours).
  */
 // Deliberately NOT bumped for the two-store shard change. Sharding moves *where*
 // a record is written, not what it is called, so v4 keys stay valid and every
 // existing durable copy is still read. Bumping would purge the whole edge cache
 // to no functional gain.
-const CACHE_VERSION = "4";
+const CACHE_VERSION = "5";
 
 /** How long the last tick's record is kept — a day is plenty to answer "is it alive?". */
 const TICK_TTL_SECONDS = 86_400;
@@ -757,6 +762,38 @@ const tagged = (response, state) => {
 };
 
 /**
+ * The origin request, carrying the host the reader actually used.
+ *
+ * This is what makes the worker's own hostname safe to use as the site's
+ * canonical URL. `fetch(originUrl, request)` rewrites `Host` to the Vercel
+ * origin — it is a forbidden header and cannot be forwarded — so the app sees
+ * `connectplusapp.vercel.app` and mints auth redirects and session cookies for
+ * *that* domain, which a browser sitting on the worker's domain never sends
+ * back. Every signed-in reader would look signed out, and a login round trip
+ * would land them on a different host than they started on.
+ *
+ * Next and Auth.js read `X-Forwarded-Host` ahead of `Host` once `trustHost` is
+ * set (it is), so forwarding the real host lets the app answer for the domain
+ * the reader is on. `X-Forwarded-Proto` travels with it so an https redirect is
+ * not turned into a downgrade.
+ *
+ * Passing the original `Request` as the init preserves the method, the body and
+ * every header — which matters because the credentialed path this decorates is
+ * where sign-in and payment callbacks come through.
+ */
+function forwarded(request, originUrl, url) {
+  const req = new Request(originUrl, request);
+  try {
+    req.headers.set("X-Forwarded-Host", url.host);
+    req.headers.set("X-Forwarded-Proto", url.protocol.replace(":", ""));
+  } catch {
+    // A runtime that refuses the header leaves the previous behaviour intact
+    // rather than failing the request.
+  }
+  return req;
+}
+
+/**
  * Store a response, and mirror it into the snapshot namespace when this request
  * is the canonical form of a worker-owned snapshot. The mirror is what keeps a
  * busy board's cache and the cron's freshness check talking about one document:
@@ -889,7 +926,7 @@ export default {
 
     // Writes, credentialed traffic and never-cache paths go straight through.
     if (request.method !== "GET" || hasCredentials(request) || isNever(pathname)) {
-      const res = await fetch(originUrl, request);
+      const res = await fetch(forwarded(request, originUrl, url));
       return tagged(res, "BYPASS");
     }
 
@@ -928,11 +965,7 @@ export default {
       // gets the refreshed entry.
       if (age <= poll.ttl + poll.swr) {
         ctx.waitUntil(
-          fetch(originUrl, {
-            method: "GET",
-            headers: { accept: request.headers.get("accept") ?? "*/*" },
-            redirect: "manual",
-          })
+          fetch(forwarded(request, originUrl, url), { redirect: "manual" })
             .then(async (res) => {
               if (!cacheableResponse(res)) return;
               const body = await res.arrayBuffer();
@@ -960,11 +993,7 @@ export default {
       // Past the stale window — fall through and refetch synchronously.
     }
 
-    const res = await fetch(originUrl, {
-      method: "GET",
-      headers: { accept: request.headers.get("accept") ?? "*/*" },
-      redirect: "manual",
-    });
+    const res = await fetch(forwarded(request, originUrl, url), { redirect: "manual" });
 
     const ttl = ttlFor(pathname, res);
     if (ttl === 0 || !cacheableResponse(res)) {
