@@ -43,18 +43,45 @@ export function isOptimizable(url: string | null | undefined): boolean {
 }
 
 /**
+ * True when a source can be asked for a specific pixel width directly.
+ *
+ * Only the *stored-cover* route is width-addressable (`/api/thumb/post/<id>`,
+ * which streams a real image out of Postgres or the publisher's host). It
+ * accepts `?w=` and resizes before answering.
+ *
+ * The generated branded thumbnail — `/api/thumb/<base64 code>` — is an SVG.
+ * Two reasons it is excluded: it has nothing to gain from a pixel width, and
+ * its whole design depends on being a *query-free* URL, which is what lets it
+ * sail through the Next.js image optimizer and the CDN cache. Appending a
+ * query would quietly undo that.
+ */
+export function isWidthAddressable(url: string | null | undefined): boolean {
+  return typeof url === "string" && url.startsWith("/api/thumb/post/");
+}
+
+/** Ask the thumbnail route for one specific width. */
+export function thumbWidthSrc(url: string, width: number): string {
+  if (!isWidthAddressable(url)) return url;
+  const w = Math.min(Math.max(Math.round(width), 64), 1600);
+  return `${url}${url.includes("?") ? "&" : "?"}w=${w}`;
+}
+
+/**
  * The URL an `<img>`/`<picture>` should point at.
  *
  * Returns "" for a missing source so the caller can decide on a fallback rather
  * than rendering a broken image. Generated thumbnails and `data:` URIs pass
  * through untouched — the optimizer has nothing to add and a round trip would
- * only cost latency.
+ * only cost latency. A width-addressable cover is asked for its width directly
+ * rather than handed to the optimizer, because it arrives from our own route,
+ * which is already the resize step.
  */
 export function optimizedImageSrc(
   url: string | null | undefined,
   { preset = "cover", width, height, quality }: OptimizeOptions = {}
 ): string {
   if (!url || !url.trim()) return "";
+  if (isWidthAddressable(url)) return width ? thumbWidthSrc(url, width) : url;
   if (!isOptimizable(url)) return url;
 
   const params = new URLSearchParams({ url, preset });
@@ -113,22 +140,34 @@ export function sizesForPreset(preset: OptimizePresetName): string {
 }
 
 /**
- * A `srcset` for the optimizer, or `""` when there is nothing to choose from.
+ * A `srcset` for a cover, or `""` when there is nothing to choose from.
  *
- * Returns empty for a source the optimizer passes through (generated thumbs,
- * `data:` URIs) because all candidates would be the same bytes — advertising
- * four identical entries only makes the browser work harder for the same result.
- * Callers omit the attribute when this returns empty rather than rendering
- * `srcset=""`, which is invalid and can defeat the `src` fallback.
+ * Two kinds of source can offer real alternatives, and they are asked in
+ * different ways:
+ *
+ *   • a **stored cover** (`/api/thumb/post/<id>`) takes `?w=` — the route
+ *     resizes before answering, so each candidate really is a smaller image;
+ *   • anything else **optimizable** goes through `/api/optimize`, which
+ *     negotiates format and resizes on demand.
+ *
+ * Everything else returns empty: the generated `data:`-style thumbnails and
+ * inline SVGs would produce four identical entries, which only makes the
+ * browser work harder for the same bytes. Callers omit the attribute when this
+ * returns empty rather than rendering `srcset=""`, which is invalid and can
+ * defeat the `src` fallback.
  */
 export function responsiveSrcSet(
   url: string | null | undefined,
   widths: number[],
   opts: OptimizeOptions = {}
 ): string {
-  if (!url || !url.trim() || !isOptimizable(url)) return "";
+  if (!url || !url.trim()) return "";
   const unique = [...new Set(widths.filter((w) => Number.isFinite(w) && w > 0))].sort((a, b) => a - b);
   if (unique.length < 2) return "";
+  if (isWidthAddressable(url)) {
+    return unique.map((w) => `${thumbWidthSrc(url, w)} ${w}w`).join(", ");
+  }
+  if (!isOptimizable(url)) return "";
   return unique.map((w) => `${optimizedImageSrc(url, { ...opts, width: w })} ${w}w`).join(", ");
 }
 

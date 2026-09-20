@@ -33,23 +33,60 @@ function decodeCode(code: string): ThumbCode | null {
 /** Max width we hand out: covers are stored at full upload size (some are
  *  3–4 MB), which is wasteful for a card, a hero and an og:image alike. */
 const MAX_WIDTH = Number(process.env.COVER_MAX_WIDTH ?? 1600);
+/** Narrowest variant we will serve, so `?w=1` cannot be used to make the
+ *  server encode a thousand near-identical twigs. */
+const MIN_WIDTH = 64;
 const JPEG_QUALITY = Number(process.env.COVER_JPEG_QUALITY ?? 78);
 
 /**
- * Shrink an oversized cover in-flight. Resizing here (rather than shipping the
- * multi-MB original to every card, hero, social crawler and PWA cache) is what
- * keeps image egress, mobile data use and TTI down. Falls back to the original
- * bytes when sharp isn't available or refuses the image.
+ * Read a requested width off the query string.
+ *
+ * Returns `null` for "no preference", which is the behaviour every existing
+ * caller gets: the cover is capped at `MAX_WIDTH` and that is that. A width is
+ * clamped rather than rejected — an out-of-range value is a caller asking for
+ * "small" or "as big as you have", and answering that is friendlier than a 400
+ * that renders as a broken image on a card.
  */
-async function shrink(bytes: Uint8Array, mime: string): Promise<{ bytes: Uint8Array; mime: string }> {
-  if (bytes.byteLength < 300 * 1024) return { bytes, mime };
+function parseWidth(raw: string | null): number | null {
+  if (!raw) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(Math.max(Math.round(n), MIN_WIDTH), MAX_WIDTH);
+}
+
+/**
+ * Shrink an oversized cover in-flight, optionally to a caller-chosen width.
+ *
+ * Resizing here (rather than shipping the multi-MB original to every card,
+ * hero, social crawler and PWA cache) is what keeps image egress, mobile data
+ * use and TTI down. Falls back to the original bytes when sharp isn't available
+ * or refuses the image.
+ *
+ * The old rule was a byte threshold — "only shrink if it is over 300 KB" —
+ * which answered the wrong question. A 250 KB cover is still 1600px wide, and a
+ * phone rendering it at 390 CSS pixels was downloading four times the pixels it
+ * could show. The rule is now about *pixels*: if the source is already at or
+ * below the width being asked for there is nothing to gain, so the original is
+ * returned untouched. That also keeps a small transparent PNG a PNG, rather than
+ * re-encoding it to JPEG for no benefit.
+ */
+async function shrink(
+  bytes: Uint8Array,
+  mime: string,
+  requestedWidth: number | null
+): Promise<{ bytes: Uint8Array; mime: string }> {
+  const width = requestedWidth ?? MAX_WIDTH;
   try {
     const sharp = (await import("sharp")).default;
-    const pipeline = sharp(bytes, { failOn: "none" }).rotate().resize({
-      width: MAX_WIDTH,
-      withoutEnlargement: true,
-    });
-    const out = await pipeline.jpeg({ quality: JPEG_QUALITY, mozjpeg: true }).toBuffer();
+    const image = sharp(bytes, { failOn: "none" });
+    const meta = await image.metadata().catch(() => null);
+    if (meta?.width && meta.width <= width) return { bytes, mime };
+
+    const out = await image
+      .rotate()
+      .resize({ width, withoutEnlargement: true })
+      .jpeg({ quality: JPEG_QUALITY, mozjpeg: true })
+      .toBuffer();
     if (out.byteLength === 0 || out.byteLength >= bytes.byteLength) return { bytes, mime };
     return { bytes: new Uint8Array(out), mime: "image/jpeg" };
   } catch {
@@ -109,7 +146,7 @@ function decodeDataUri(value: string): { mime: string; bytes: Uint8Array } | nul
  * into HTML, RSC payloads and og:image tags. When a post has no cover we paint
  * the branded fallback from its title/category/author.
  */
-async function postCover(id: string): Promise<Response> {
+async function postCover(id: string, width: number | null): Promise<Response> {
   if (!/^[A-Za-z0-9_-]{6,40}$/.test(id)) {
     return NextResponse.json({ error: "Invalid post id" }, { status: 400 });
   }
@@ -134,7 +171,7 @@ async function postCover(id: string): Promise<Response> {
   if (cover && isInlineImage(cover)) {
     const decoded = decodeDataUri(cover);
     if (decoded) {
-      const shrunk = await shrink(decoded.bytes, decoded.mime);
+      const shrunk = await shrink(decoded.bytes, decoded.mime, width);
       return new Response(shrunk.bytes as unknown as BodyInit, {
         status: 200,
         headers: {
@@ -150,7 +187,7 @@ async function postCover(id: string): Promise<Response> {
     // broken card), and proxying lets us cache, resize and stay same-origin.
     const remote = await fetchRemoteCover(cover);
     if (remote) {
-      const shrunk = await shrink(remote.bytes, remote.mime);
+      const shrunk = await shrink(remote.bytes, remote.mime, width);
       return new Response(shrunk.bytes as unknown as BodyInit, {
         status: 200,
         headers: {
@@ -184,13 +221,17 @@ async function postCover(id: string): Promise<Response> {
  * instead of only where raw <img> tags were used.
  */
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ p: string[] }> }
 ) {
   const { p } = await params;
 
   if (p[0] === "post" && p[1]) {
-    return postCover(p[1]);
+    // `?w=` is what makes a stored cover responsive. Without it a phone
+    // downloading a 1600px cover for a 390px card would be the single largest
+    // byte cost on the page, and it is the one image every page renders.
+    const width = parseWidth(new URL(request.url).searchParams.get("w"));
+    return postCover(p[1], width);
   }
 
   const data = p.length > 0 ? decodeCode(p[0] ?? "") : null;

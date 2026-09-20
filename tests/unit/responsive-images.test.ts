@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   isOptimizable,
+  isWidthAddressable,
   optimizedImageSrc,
   responsiveSrcSet,
   sizesForPreset,
+  thumbWidthSrc,
   widthsForPreset,
 } from "@/lib/image-src";
 
@@ -115,5 +117,62 @@ describe("the single-size path still works", () => {
     expect(src).toContain("w=96");
     expect(src).toContain("h=96");
     expect(src).not.toContain(",");
+  });
+});
+
+/**
+ * Stored covers.
+ *
+ * `/api/thumb/post/<id>` is the one image every page renders — the heaviest
+ * asset on each of them — and it was the single exception to the srcset fix,
+ * because it was treated as "already optimal" and passed through at whatever
+ * width the server felt like. It now takes a `?w=`, so it belongs on the same
+ * responsive path as everything else. The generated branded thumbnail does not:
+ * it is an SVG, and its query-free URL is what lets it through the image
+ * optimizer and the CDN.
+ */
+const STORED_COVER = "/api/thumb/post/cmu89a20y0001ju04qu162nhi";
+const GENERATED = "/api/thumb/eyJ0IjoiSGVsbG8ifQ";
+
+describe("stored covers are width-addressable", () => {
+  it("recognises the stored-cover route and nothing else", () => {
+    expect(isWidthAddressable(STORED_COVER)).toBe(true);
+    expect(isWidthAddressable(`${STORED_COVER}?w=400`)).toBe(true);
+    expect(isWidthAddressable(GENERATED)).toBe(false);
+    expect(isWidthAddressable(COVER)).toBe(false);
+    expect(isWidthAddressable(null)).toBe(false);
+  });
+
+  it("asks the route for a width instead of routing it to the optimizer", () => {
+    const src = optimizedImageSrc(STORED_COVER, { preset: "cover", width: 640 });
+    expect(src).toBe(`${STORED_COVER}?w=640`);
+    expect(src).not.toContain("/api/optimize");
+  });
+
+  it("leaves a cover alone when the caller is not asking for a width", () => {
+    expect(optimizedImageSrc(STORED_COVER, { preset: "cover" })).toBe(STORED_COVER);
+  });
+
+  it("offers a real choice of widths", () => {
+    const entries = responsiveSrcSet(STORED_COVER, [400, 640, 960, 1280], { preset: "cover" }).split(", ");
+    expect(entries).toHaveLength(4);
+    expect(entries[0]).toBe(`${STORED_COVER}?w=400 400w`);
+    expect(entries[3]).toBe(`${STORED_COVER}?w=1280 1280w`);
+  });
+
+  it("keeps the generated thumbnail a query-free URL", () => {
+    // Appending a query would stop it being the URL that sails through
+    // next/image and the image cache, and an SVG gains nothing from a width.
+    expect(responsiveSrcSet(GENERATED, [400, 800], { preset: "cover" })).toBe("");
+    expect(optimizedImageSrc(GENERATED, { preset: "cover", width: 400 })).toBe(GENERATED);
+  });
+
+  it("clamps a width the route would refuse rather than emitting a broken URL", () => {
+    expect(thumbWidthSrc(STORED_COVER, 1)).toBe(`${STORED_COVER}?w=64`);
+    expect(thumbWidthSrc(STORED_COVER, 99999)).toBe(`${STORED_COVER}?w=1600`);
+  });
+
+  it("appends rather than clobbers an existing query", () => {
+    expect(thumbWidthSrc(`${STORED_COVER}?v=2`, 400)).toBe(`${STORED_COVER}?v=2&w=400`);
   });
 });
