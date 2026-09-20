@@ -33,8 +33,28 @@ const DEFAULT_ORIGIN = "https://connectplusapp.vercel.app";
 /** Static build output never changes under a given filename. */
 const IMMUTABLE_PREFIXES = ["/_next/static/", "/fonts/", "/screenshots/"];
 const IMMUTABLE_EXT =
-  /\.(?:js|mjs|css|woff2?|ttf|otf|png|jpe?g|webp|avif|gif|svg|ico|txt|xml|map)$/i;
+  /\.(?:js|mjs|css|woff2?|ttf|otf|png|jpe?g|webp|avif|gif|svg|ico|txt|xml|map|webmanifest)$/i;
 const IMMUTABLE_TTL = 60 * 60 * 24 * 365;
+
+/**
+ * The syndication surface — feeds, sitemaps, robots.
+ *
+ * These were the single biggest thing reaching the origin uncached, and the
+ * reason is subtle: none of them is `text/html`, and the store check only
+ * accepted html/json/image/css/js — so every crawler, every partner's feed
+ * reader and every search engine hit `MISS-UNCACHEABLE` and landed on Vercel,
+ * which then ran a database query for a document that is identical for
+ * everyone. `/sitemap.xml` alone is a `force-dynamic` route that reads up to
+ * 2000 posts and 500 authors *per crawl*.
+ *
+ * They are cached, not stored under the immutable rule: a feed must pick up a
+ * new story and a sitemap a new article. Short TTLs keep them fresh while
+ * collapsing a crawler storm into one origin fetch per window.
+ */
+const FEED_TTL = 10 * 60;
+/** Crawlers do not need a sitemap fresher than this, and the query behind it is
+ *  the heaviest read on the public site. */
+const SITEMAP_TTL = 60 * 60 * 6;
 
 /**
  * Files served from the app root (`/favicon.ico`, the PWA icons, `/sw.js`,
@@ -635,6 +655,13 @@ function variantKey(request) {
 
 /** TTL for a path, or 0 when this proxy should not cache it at all. */
 function ttlFor(pathname, response) {
+  // The syndication surface is checked first, because these paths would
+  // otherwise fall all the way through to the content-type check at the bottom
+  // and score zero — which is how the feeds and the sitemap spent their whole
+  // life uncached. A feed is not HTML, so it needs its own rule to be cached at
+  // all.
+  if (pathname === "/feed.xml" || pathname.startsWith("/feed/")) return FEED_TTL;
+  if (pathname === "/sitemap.xml" || /^\/sitemap[^/]*\.xml$/.test(pathname)) return SITEMAP_TTL;
   // Checked before the immutable rule: a root file with a "static" extension
   // is still mutable, and a year is far too long to be wrong about.
   if (isRootFile(pathname) && IMMUTABLE_EXT.test(pathname)) return ROOT_TTL;
@@ -663,7 +690,20 @@ function cacheableResponse(response) {
     type.includes("application/json") ||
     type.startsWith("image/") ||
     type.includes("text/css") ||
-    type.includes("javascript")
+    type.includes("javascript") ||
+    // The syndication surface. `application/json` already covers the JSON feed
+    // (`application/feed+json` is not a substring of it), so the feed family
+    // and the XML/text documents are named explicitly. Status is already known
+    // to be 200 and `Set-Cookie` absent, and each of these only earns a TTL
+    // from the syndication rule above — an API returning `text/plain` still
+    // scores zero there and is not stored.
+    type.includes("application/xml") ||
+    type.includes("application/rss+xml") ||
+    type.includes("application/atom+xml") ||
+    type.includes("application/feed+json") ||
+    type.includes("application/manifest+json") ||
+    type.includes("text/plain") ||
+    type.includes("text/xml")
   );
 }
 

@@ -160,6 +160,89 @@ describe("edge cache policy", () => {
   });
 });
 
+/**
+ * The syndication surface — feeds, sitemap, robots, the PWA manifest.
+ *
+ * None of these is `text/html`, so before this every fetch by a crawler, a
+ * partner's feed reader or a search engine answered `MISS-UNCACHEABLE` and ran
+ * a database query for a document identical to every other reader's. The
+ * sitemap is the worst of them: a `force-dynamic` route reading up to 2000
+ * posts and 500 authors on *every* crawl.
+ *
+ * These pin that each is stored, that a repeat is a HIT, and that the TTL is
+ * short enough to pick up a new story — the freshness half is as important as
+ * the caching half, or a feed silently freezes.
+ */
+describe("edge cache — the syndication surface", () => {
+  it("caches the RSS feed and picks a new story up within the window", async () => {
+    originReturns("<rss></rss>", "application/rss+xml; charset=utf-8");
+
+    const first = await request("/feed.xml");
+    expect(first.headers.get("x-edge-cache")).toBe("MISS");
+    expect(ttlOf(first)).toBe(10 * 60);
+
+    const second = await request("/feed.xml");
+    expect(second.headers.get("x-edge-cache")).toBe("HIT");
+    expect(originFetches).toHaveLength(1);
+  });
+
+  it("caches the JSON feed, which is not a substring of application/json", async () => {
+    originReturns('{"items":[]}', "application/feed+json; charset=utf-8");
+
+    const res = await request("/feed.xml?format=json");
+    expect(res.headers.get("x-edge-cache")).toBe("MISS");
+    expect(ttlOf(res)).toBe(10 * 60);
+  });
+
+  it("caches a per-category feed, which has no file extension to match on", async () => {
+    // `/feed/technology` is the shape that fell through every rule: not a root
+    // file, no extension, not an allowlisted API — it has to be named.
+    originReturns("<rss></rss>", "application/rss+xml; charset=utf-8");
+
+    const res = await request("/feed/technology");
+    expect(res.headers.get("x-edge-cache")).toBe("MISS");
+    expect(ttlOf(res)).toBe(10 * 60);
+
+    const second = await request("/feed/technology");
+    expect(second.headers.get("x-edge-cache")).toBe("HIT");
+  });
+
+  it("caches the sitemap for long enough to stop re-running its query", async () => {
+    originReturns("<urlset></urlset>", "application/xml");
+
+    const res = await request("/sitemap.xml");
+    expect(res.headers.get("x-edge-cache")).toBe("MISS");
+    // Hours, not minutes: the query behind it is the heaviest public read and a
+    // crawler does not need an article indexed the minute it publishes.
+    expect(ttlOf(res)).toBe(6 * 60 * 60);
+
+    const second = await request("/sitemap.xml");
+    expect(second.headers.get("x-edge-cache")).toBe("HIT");
+  });
+
+  it("caches robots.txt and the PWA manifest", async () => {
+    originReturns("User-agent: *", "text/plain");
+    const robots = await request("/robots.txt");
+    expect(robots.headers.get("x-edge-cache")).toBe("MISS");
+    expect(ttlOf(robots)).toBe(60 * 60);
+
+    originReturns("{}", "application/manifest+json; charset=utf-8");
+    const manifest = await request("/manifest.webmanifest");
+    expect(manifest.headers.get("x-edge-cache")).toBe("MISS");
+    expect(ttlOf(manifest)).toBe(60 * 60);
+  });
+
+  it("still refuses to store a non-200 feed", async () => {
+    // A category slug that does not exist answers 404 — storing that under a
+    // real slug's key would keep a broken feed alive for every partner.
+    originReturns("Category not found", "text/plain", { status: 404 });
+
+    const res = await request("/feed/nope");
+    expect(res.headers.get("x-edge-cache")).toBe("MISS-UNCACHEABLE");
+    expect(stored.size).toBe(0);
+  });
+});
+
 describe("livescore edge tier", () => {
   const LIVE_URL = "/__livescore?sport=football&date=2026-09-13";
 
