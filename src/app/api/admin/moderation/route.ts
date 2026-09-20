@@ -19,23 +19,68 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url);
-    const status = searchParams.get("status") || "all";
+    // The queue opens on the work, not on the archive. `review` is PENDING +
+    // FLAGGED — the items a human actually has to decide on. Before this, the
+    // default was `all`, which returned every post in the table (an approved
+    // story from months ago is not a moderation task) and buried the handful
+    // that were.
+    const status = searchParams.get("status") || "review";
 
-    const validStatuses = ["PENDING", "APPROVED", "FLAGGED", "REJECTED"];
-    if (status !== "all" && !validStatuses.includes(status)) {
+    const validStatuses = ["review", "all", "PENDING", "APPROVED", "FLAGGED", "REJECTED"];
+    if (!validStatuses.includes(status)) {
       return NextResponse.json({ error: "Invalid status" }, { status: 400 });
     }
 
-    const posts = await prisma.post.findMany({
-      where: status === "all" ? {} : { moderationStatus: status },
-      include: {
-        author: { select: { id: true, name: true, username: true, avatar: true } },
-        moderationLogs: { orderBy: { createdAt: "desc" }, take: 1 },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+    // Bounded like every other read here: the table grows without limit, and an
+    // unpaginated query with a `moderationLogs` join per row is a payload that
+    // gets slower every week. The console only ever renders a scroll box.
+    const takeParam = Number(searchParams.get("take"));
+    const take = Number.isFinite(takeParam) ? Math.min(Math.max(Math.trunc(takeParam), 1), 500) : 200;
 
-    return NextResponse.json({ posts });
+    const where =
+      status === "all"
+        ? {}
+        : status === "review"
+          ? { moderationStatus: { in: ["PENDING", "FLAGGED"] } }
+          : { moderationStatus: status.toUpperCase() };
+
+    const [posts, grouped, total] = await Promise.all([
+      prisma.post.findMany({
+        where,
+        include: {
+          author: { select: { id: true, name: true, username: true, avatar: true } },
+          moderationLogs: { orderBy: { createdAt: "desc" }, take: 1 },
+        },
+        // Actionable first. The stored values sort descending as
+        // PENDING > FLAGGED, which is the order a reviewer wants them in.
+        orderBy: [{ moderationStatus: "desc" }, { createdAt: "desc" }],
+        take,
+      }),
+      // Counts come from the whole table, so a tab badge stays truthful even
+      // though the list itself is capped to one page.
+      prisma.post.groupBy({ by: ["moderationStatus"], _count: { _all: true } }),
+      prisma.post.count({ where }),
+    ]);
+
+    const counts = { review: 0, pending: 0, flagged: 0, rejected: 0, approved: 0, all: 0 };
+    for (const g of grouped) {
+      const n = g._count._all;
+      counts.all += n;
+      if (g.moderationStatus === "PENDING") counts.pending += n;
+      else if (g.moderationStatus === "FLAGGED") counts.flagged += n;
+      else if (g.moderationStatus === "REJECTED") counts.rejected += n;
+      else if (g.moderationStatus === "APPROVED") counts.approved += n;
+    }
+    counts.review = counts.pending + counts.flagged;
+
+    return NextResponse.json({
+      posts,
+      counts,
+      total,
+      take,
+      // The console renders this rather than silently implying it saw everything.
+      truncated: total > posts.length,
+    });
   } catch (error) {
     console.error("Error fetching moderation queue:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

@@ -32,29 +32,49 @@ interface ModerationItem {
   };
 }
 
-type FilterTab = "all" | "pending" | "flagged" | "rejected" | "approved";
+type FilterTab = "review" | "pending" | "flagged" | "rejected" | "approved";
+
+type FilterCounts = Record<FilterTab, number>;
+
+const EMPTY_COUNTS: FilterCounts = { review: 0, pending: 0, flagged: 0, rejected: 0, approved: 0 };
 
 export default function ModerationQueue() {
   const [items, setItems] = useState<ModerationItem[]>([]);
+  const [counts, setCounts] = useState<FilterCounts>(EMPTY_COUNTS);
+  const [truncated, setTruncated] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeFilter, setActiveFilter] = useState<FilterTab>("all");
+  // Opens on the review queue (pending + flagged) rather than the whole table:
+  // those are the only rows that need a decision.
+  const [activeFilter, setActiveFilter] = useState<FilterTab>("review");
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [selectedDetail, setSelectedDetail] = useState<ModerationItem | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchItems();
-  }, []);
+    fetchItems(activeFilter);
+  }, [activeFilter]);
 
-  async function fetchItems() {
+  async function fetchItems(filter: FilterTab) {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch("/api/admin/moderation?status=all", { credentials: "include" });
+      // The status is a server-side filter, so the payload is one page of one
+      // bucket rather than every post in the platform.
+      const res = await fetch(`/api/admin/moderation?status=${filter}`, { credentials: "include" });
       if (!res.ok) throw new Error(`Failed to fetch moderation queue (${res.status})`);
       const data = await res.json();
+      if (data.counts) {
+        setCounts({
+          review: data.counts.review ?? 0,
+          pending: data.counts.pending ?? 0,
+          flagged: data.counts.flagged ?? 0,
+          rejected: data.counts.rejected ?? 0,
+          approved: data.counts.approved ?? 0,
+        });
+      }
+      setTruncated(Boolean(data.truncated));
       const posts = Array.isArray(data) ? data : data.posts ?? [];
       setItems(
         posts.map((p: {
@@ -97,18 +117,15 @@ export default function ModerationQueue() {
         body: JSON.stringify({ postId: id, action, reason }),
       });
       if (!res.ok) throw new Error("Action failed");
-      setItems((prev) =>
-        prev.map((item) =>
-          item.id === id
-            ? { ...item, status: action === "approve" ? "approved" : action === "reject" ? "rejected" : "flagged", updatedAt: new Date().toISOString() }
-            : item
-        )
-      );
+      // Refetch the active bucket instead of patching in place: a decided item
+      // leaves the review queue, and the tab badges have changed. Patching only
+      // the row would leave the console showing work that is already done.
+      const decided = action === "approve" ? "approved" : action === "reject" ? "rejected" : "flagged";
       if (selectedDetail?.id === id) {
-        setSelectedDetail((prev) =>
-          prev ? { ...prev, status: action === "approve" ? "approved" : action === "reject" ? "rejected" : "flagged" } : prev
-        );
+        setSelectedDetail((prev) => (prev ? { ...prev, status: decided } : prev));
       }
+      setItems((prev) => prev.filter((item) => item.id !== id));
+      await fetchItems(activeFilter);
     } catch {
     } finally {
       setActionLoading(null);
@@ -124,13 +141,13 @@ export default function ModerationQueue() {
   }
 
   const filteredItems = items.filter((item) => {
-    const matchesFilter = activeFilter === "all" || item.status === activeFilter;
-    const matchesSearch =
+    // Status is filtered server-side now; only the free-text search is local.
+    return (
       !searchQuery ||
       item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.author.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.author.username.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesFilter && matchesSearch;
+      item.author.username.toLowerCase().includes(searchQuery.toLowerCase())
+    );
   });
 
   const toggleSelect = (id: string) => {
@@ -150,16 +167,10 @@ export default function ModerationQueue() {
     }
   };
 
-  const filterCounts = {
-    all: items.length,
-    pending: items.filter((i) => i.status === "pending").length,
-    flagged: items.filter((i) => i.status === "flagged").length,
-    rejected: items.filter((i) => i.status === "rejected").length,
-    approved: items.filter((i) => i.status === "approved").length,
-  };
+  const filterCounts = counts;
 
   const filterTabs: { label: string; value: FilterTab }[] = [
-    { label: "All", value: "all" },
+    { label: "Review", value: "review" },
     { label: "Pending", value: "pending" },
     { label: "Flagged", value: "flagged" },
     { label: "Rejected", value: "rejected" },
@@ -191,7 +202,7 @@ export default function ModerationQueue() {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={fetchItems}
+              onClick={() => fetchItems(activeFilter)}
               disabled={loading}
               className="rounded-lg bg-surface-900 border border-surface-800 p-2 text-surface-400 transition-colors hover:text-surface-50"
             >
@@ -218,7 +229,7 @@ export default function ModerationQueue() {
             <AlertTriangle className="mb-3 h-8 w-8 text-danger-strong" />
             <p className="text-sm text-danger-strong">{error}</p>
             <button
-              onClick={fetchItems}
+              onClick={() => fetchItems(activeFilter)}
               className="mt-4 rounded-lg bg-surface-800 border border-surface-700 px-4 py-2 text-xs text-surface-300 transition-colors hover:text-surface-50"
             >
               Retry
@@ -268,6 +279,14 @@ export default function ModerationQueue() {
                 </div>
               </div>
             </div>
+
+            {/* Capped list notice — the console says what it is not showing. */}
+            {truncated && (
+              <div className="rounded-lg border border-surface-800 bg-surface-900/60 px-4 py-2.5 text-xs text-surface-400">
+                Showing the first page of this bucket. Narrow the filter to see the rest — the
+                counts above are the full totals.
+              </div>
+            )}
 
             {/* Bulk Actions */}
             {selectedItems.size > 0 && (
