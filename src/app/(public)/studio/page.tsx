@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { ArrowLeft, Eye, EyeOff, Upload, Loader2, X, PenLine, AlertCircle, Clock, AlignLeft, Wand2 } from "lucide-react";
 import { StudioToolbar } from "@/components/studio/StudioToolbar";
 import { StudioPreview } from "@/components/studio/StudioPreview";
-import { StudioSidebar } from "@/components/studio/StudioSidebar";
+import { StudioSidebar, type ArticleAssistState } from "@/components/studio/StudioSidebar";
 import { CheckedEditor } from "@/components/studio/CheckedEditor";
 import { applySuggestion, applySuggestions, type WritingSuggestion } from "@/lib/writing-checks";
 import {
@@ -23,7 +23,6 @@ import {
   type PilotOp,
 } from "@/lib/brain-pilot";
 import { PilotReview } from "@/components/studio/PilotReview";
-import { InlineAssist, type AssistArticleState } from "@/components/studio/InlineAssist";
 import { forgeArticle, type ArticleAsk, type ForgedArticle } from "@/lib/article-forge";
 import type { EditorRange } from "@/components/studio/CheckedEditor";
 
@@ -117,7 +116,7 @@ export default function StudioPage() {
    * composer. Only its summary lives in state, so a 1,200-word draft does not
    * re-render the page on every progress tick.
    */
-  const [article, setArticle] = useState<AssistArticleState>({
+  const [article, setArticle] = useState<ArticleAssistState>({
     busy: false,
     progress: null,
     error: null,
@@ -660,8 +659,8 @@ export default function StudioPage() {
     const selection = readSelection(); const promptText = usePrompt ? copilotPrompt.trim() : "";
     if (action === "assist" && !promptText) { setCopilotError("Type a question first."); return; }
     setCopilotBusy(usePrompt ? action + ":prompt" : action); setCopilotError(null);
-    try { const res = await fetch("/api/ai/studio", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ action, title, content, prompt: promptText || undefined, selection: selection || undefined }) }); const data = await res.json(); if (!res.ok) throw new Error(data.error || "The brain could not answer."); setCopilotResult({ action, text: data.text ?? "", alternatives: data.alternatives ?? [], meta: data.meta }); } catch (err) { setCopilotError(err instanceof Error ? err.message : "The brain could not answer."); } finally { setCopilotBusy(null); }
-  }, [content, title, copilotPrompt, readSelection]);
+    try { const res = await fetch("/api/ai/studio", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ action, title, content, excerpt, tags, category: categoryName, prompt: promptText || undefined, selection: selection || undefined }) }); const data = await res.json(); if (!res.ok) throw new Error(data.error || "The brain could not answer."); setCopilotResult({ action, text: data.text ?? "", alternatives: data.alternatives ?? [], meta: data.meta }); } catch (err) { setCopilotError(err instanceof Error ? err.message : "The brain could not answer."); } finally { setCopilotBusy(null); }
+  }, [content, title, excerpt, tags, categoryName, copilotPrompt, readSelection]);
 
   const applyCopilot = useCallback((result: NonNullable<typeof copilotResult>) => {
     const ta = contentRef.current; const { action, text, meta } = result;
@@ -671,7 +670,15 @@ export default function StudioPage() {
     if (action === "tags") { const next = text.split(",").map((t) => t.trim().toLowerCase().replace(/^#/, "").replace(/\s+/g, "-")).filter(Boolean).slice(0, 10); setTags((prev) => [...new Set([...prev, ...next])].slice(0, 10)); setTagInput(""); setCopilotResult(null); return; }
     if (action === "rewrite") { if (selected && ta) { setContent(ta.value.slice(0, start) + text + ta.value.slice(end)); requestAnimationFrame(() => { ta.focus(); ta.setSelectionRange(start, start + text.length); }); } else { setContent(text); } setCopilotResult(null); return; }
     if (action === "continue") { setContent((prev) => prev.trimEnd() + "\n\n" + (meta?.heading ? meta.heading + "\n\n" : "") + text); setCopilotResult(null); return; }
-    if (ta) { if (selected) { setContent(ta.value.slice(0, start) + text + "\n\n" + ta.value.slice(end)); } else { const pos = ta.selectionStart ?? ta.value.length; const suffix = pos > 0 && !/\n$/.test(ta.value.slice(0, pos)) ? "\n\n" : ""; setContent(ta.value.slice(0, pos) + suffix + text + "\n\n" + ta.value.slice(pos)); } requestAnimationFrame(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }); } else { setContent((prev) => prev.trimEnd() + "\n\n" + text); }
+    /*
+     * Reports stop here.
+     *
+     * An SEO audit, a plagiarism check, a curation brief or a chat answer has no
+     * composer field — it is something to read. The old fallthrough pasted it at
+     * the caret, which is how a writer asking "how is this ranking?" ended up
+     * with a markdown report spliced into their article. Closing the panel is the
+     * only correct outcome for these actions.
+     */
     setCopilotResult(null);
   }, []);
 
@@ -853,34 +860,14 @@ export default function StudioPage() {
                 </div>
 
                 {/*
-                  The copilot, in the composer.
+                  The copilot lives in the sidebar, not here.
 
-                  It sits below the review panel so that a proposal always lands
-                  closest to the text it changes, and it reads the live selection
-                  from the editor itself when an action fires — the pilot's own
-                  ranges are measured at that moment rather than from a state
-                  value that may have moved on.
+                  A floating panel inside the composer put a second assistant on
+                  the same screen as the text it was changing, with its own
+                  loading state and its own result surface. The quick edits, the
+                  Article Forge and the SEO audit are now one panel in the
+                  sidebar; every edit still lands in this review panel below.
                 */}
-                <InlineAssist
-                  title={title}
-                  content={content}
-                  excerpt={excerpt}
-                  tags={tags}
-                  selection={selectionRange}
-                  checks={writingChecks}
-                  checksBusy={checksBusy}
-                  pilotBusy={pilotBusy}
-                  onApplySuggestion={applyWritingCheck}
-                  onApplyAllSuggestions={applyAllWritingChecks}
-                  onDismissSuggestion={dismissWritingCheck}
-                  onPilot={(action, instruction) => void runPilot(action, instruction)}
-                  article={article}
-                  defaultTopic={(title.trim() || tags[0] || "").slice(0, 120)}
-                  onWriteArticle={writeArticle}
-                  onUseArticle={useForgedArticle}
-                  onDiscardArticle={discardForgedArticle}
-                />
-
                 <div className="space-y-2">
                   <label className="text-xs font-semibold text-surface-300 flex items-center gap-1.5"><AlignLeft className="w-3 h-3 text-accent-strong" />Excerpt</label>
                   <textarea placeholder="A brief summary of your story (shown in feeds and search results)..." value={excerpt} onChange={(e) => setExcerpt(e.target.value)} rows={3} maxLength={300} className="w-full bg-surface-800/80 border border-surface-700/50 rounded-xl px-4 py-3 text-sm text-editor font-medium placeholder-editor placeholder:font-normal focus:outline-none focus:border-brand-500/40 focus:ring-1 focus:ring-brand-500/20 resize-none leading-relaxed transition-all" />
@@ -890,7 +877,7 @@ export default function StudioPage() {
             )}
           </div>
 
-          <StudioSidebar title={title} content={content} tags={tags} setTags={setTags} tagInput={tagInput} setTagInput={setTagInput} handleAddTag={handleAddTag} handleRemoveTag={handleRemoveTag} handleTagKeyDown={handleTagKeyDown} aiSuggestions={aiSuggestions} setAiSuggestions={setAiSuggestions} assistWithPost={assistWithPost} categoryId={categoryId} setCategoryId={setCategoryId} categoryName={categoryName} setCategoryName={setCategoryName} categoriesList={categoriesList} categoryOpen={categoryOpen} setCategoryOpen={setCategoryOpen} scheduledFor={scheduledFor} setScheduledFor={setScheduledFor} now={now} wordCount={wordCount} readTime={readTime} myStories={myStories} storiesLoading={storiesLoading} storiesUnauth={storiesUnauth} editingId={editingId} openStory={openStory} newStory={newStory} deletePost={deletePost} copilotBusy={copilotBusy} runCopilot={runCopilot} copilotPrompt={copilotPrompt} setCopilotPrompt={setCopilotPrompt} copilotError={copilotError} setCopilotError={setCopilotError} copilotResult={copilotResult} setCopilotResult={setCopilotResult} applyCopilot={applyCopilot} writingChecks={writingChecks} checksBusy={checksBusy} applyWritingCheck={applyWritingCheck} applyAllWritingChecks={applyAllWritingChecks} dismissWritingCheck={dismissWritingCheck} error={error} setError={setError} />
+          <StudioSidebar title={title} content={content} tags={tags} setTags={setTags} tagInput={tagInput} setTagInput={setTagInput} handleAddTag={handleAddTag} handleRemoveTag={handleRemoveTag} handleTagKeyDown={handleTagKeyDown} aiSuggestions={aiSuggestions} setAiSuggestions={setAiSuggestions} assistWithPost={assistWithPost} categoryId={categoryId} setCategoryId={setCategoryId} categoryName={categoryName} setCategoryName={setCategoryName} categoriesList={categoriesList} categoryOpen={categoryOpen} setCategoryOpen={setCategoryOpen} scheduledFor={scheduledFor} setScheduledFor={setScheduledFor} now={now} wordCount={wordCount} readTime={readTime} myStories={myStories} storiesLoading={storiesLoading} storiesUnauth={storiesUnauth} editingId={editingId} openStory={openStory} newStory={newStory} deletePost={deletePost} copilotBusy={copilotBusy} runCopilot={runCopilot} copilotPrompt={copilotPrompt} setCopilotPrompt={setCopilotPrompt} copilotError={copilotError} setCopilotError={setCopilotError} copilotResult={copilotResult} setCopilotResult={setCopilotResult} applyCopilot={applyCopilot} writingChecks={writingChecks} checksBusy={checksBusy} applyWritingCheck={applyWritingCheck} applyAllWritingChecks={applyAllWritingChecks} dismissWritingCheck={dismissWritingCheck} excerpt={excerpt} pilotBusy={pilotBusy} runPilot={(action, instruction) => void runPilot(action, instruction)} article={article} defaultTopic={(title.trim() || tags[0] || "").slice(0, 120)} onWriteArticle={writeArticle} onUseArticle={useForgedArticle} onDiscardArticle={discardForgedArticle} error={error} setError={setError} />
         </div>
       </div>
     </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, type Dispatch, type SetStateAction } from "react";
+import { useState, useCallback, useMemo, type Dispatch, type SetStateAction } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import {
@@ -26,10 +26,42 @@ import {
   Check,
 } from "lucide-react";
 import type { WritingSuggestion } from "@/lib/writing-checks";
+import { PILOT_QUICK_ACTIONS, type PilotAction } from "@/lib/brain-pilot";
+import { analyzeSeo } from "@/lib/seo-analyzer";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
+
+export interface ArticleAssistSummary {
+  title: string;
+  words: number;
+  sections: number;
+  repairs: string[];
+  degraded: boolean;
+}
+
+/**
+ * The Article Forge's live state.
+ *
+ * Lives here rather than in a panel of its own because the forge is a copilot
+ * capability, not a screen: the sidebar is where the writer asks for a piece,
+ * and the composer's review panel is where it lands.
+ */
+export interface ArticleAssistState {
+  busy: boolean;
+  /** "Section 3 of 5 — What the numbers say", or null when idle. */
+  progress: string | null;
+  error: string | null;
+  summary: ArticleAssistSummary | null;
+}
+
+/** How long the forge should aim for, as a writer thinks about it. */
+const ARTICLE_LENGTHS = [
+  { words: 600, label: "Short · ~600 words" },
+  { words: 1_200, label: "Standard · ~1,200 words" },
+  { words: 1_800, label: "Long read · ~1,800 words" },
+];
 
 interface Category {
   id: string;
@@ -69,6 +101,22 @@ interface AISuggestions {
   trendingTopics: { title: string; mentions: number }[];
   confidence: number;
 }
+
+/**
+ * The copilot actions whose answer belongs in a composer field.
+ *
+ * Everything else — an SEO audit, a plagiarism check, a curation brief, a chat
+ * answer — is a report. Reports can be copied, but they are never inserted: a
+ * report pasted at the caret reads as a corrupted draft to the writer, and there
+ * is no obvious way back from it.
+ */
+const COPILOT_TEXT_ACTIONS: CopilotResult["action"][] = [
+  "rewrite",
+  "continue",
+  "headline",
+  "summarize",
+  "tags",
+];
 
 const DEFAULT_CATEGORIES = [
   "Technology", "Culture", "Business", "Lifestyle",
@@ -153,6 +201,22 @@ interface StudioSidebarProps {
   applyWritingCheck: (suggestion: WritingSuggestion) => void;
   applyAllWritingChecks: () => void;
   dismissWritingCheck: (id: string) => void;
+  excerpt: string;
+  /*
+   * The Brain Pilot.
+   *
+   * `runPilot` returns structured *ops*, not text, and every one of them is
+   * staged as a diff in the composer before it can land. That review step is
+   * why the quick edits live here and the proposal renders over there.
+   */
+  pilotBusy: PilotAction | null;
+  runPilot: (action: PilotAction, instruction?: string) => void;
+  /* The Article Forge — one bounded generation per section. */
+  article: ArticleAssistState;
+  defaultTopic: string;
+  onWriteArticle: (topic: string, targetWords: number) => void;
+  onUseArticle: () => void;
+  onDiscardArticle: () => void;
   /* Error */
   error: string | null;
   setError: Dispatch<SetStateAction<string | null>>;
@@ -172,6 +236,7 @@ export function StudioSidebar(props: StudioSidebarProps) {
       {/* Mobile trigger button */}
       <button
         onClick={openDrawer}
+        data-copilot-open=""
         className="lg:hidden fixed bottom-20 right-4 z-40 flex items-center gap-2 rounded-full bg-gradient-to-r from-brand-500 to-accent-coral px-4 py-2.5 text-xs font-semibold text-white shadow-glow-lg hover:scale-105 transition-transform"
       >
         <Menu className="w-4 h-4" />
@@ -219,6 +284,7 @@ type SidebarContentProps = StudioSidebarProps & {
 function SidebarContent(props: SidebarContentProps) {
   const {
     railTab, setRailTab,
+    title,
     content,
     tags, setTags, tagInput, setTagInput, handleAddTag, handleRemoveTag, handleTagKeyDown,
     assistWithPost,
@@ -231,7 +297,21 @@ function SidebarContent(props: SidebarContentProps) {
     copilotBusy, runCopilot, copilotPrompt, setCopilotPrompt,
     copilotError, setCopilotError, copilotResult, setCopilotResult, applyCopilot,
     writingChecks, checksBusy, applyWritingCheck, applyAllWritingChecks, dismissWritingCheck,
+    excerpt,
+    pilotBusy, runPilot,
+    article, defaultTopic, onWriteArticle, onUseArticle, onDiscardArticle,
   } = props;
+
+  /* The quick-edit instruction box, the forge's controls, and the local SEO
+     audit. All three are view state: nothing here is sent anywhere until the
+     writer asks for it. */
+  const [editInstruction, setEditInstruction] = useState("");
+  const [articleTopic, setArticleTopic] = useState("");
+  const [articleWords, setArticleWords] = useState(1_200);
+  const seoAudit = useMemo(
+    () => buildSeoAudit(title, excerpt, content),
+    [title, excerpt, content]
+  );
 
   // Wraps the (async) suggest call so the button can show progress. Previously
   // the click fired a request and the panel rendered nothing at all — no
@@ -284,7 +364,9 @@ function SidebarContent(props: SidebarContentProps) {
 
       {/* ── AI Brain Tab ──────────────────────── */}
       {railTab === "ai" && (
-        <div className="space-y-4">
+        /* Addressed by tests: this panel is the copilot — the single surface
+           that reads the draft and writes back into it. */
+        <div className="space-y-4" data-copilot="">
           {/* Live writing checks — issues addressed by range, applied in place */}
           <WritingChecksPanel
             checks={writingChecks}
@@ -316,15 +398,14 @@ function SidebarContent(props: SidebarContentProps) {
               Reads your draft and writes back into the editor.
             </p>
 
-            {/*
-              Reports, not edits.
+            {            /*
+              The copilot's judgement-level actions.
 
-              The pilot's inline actions moved into the composer's assist widget
-              — the panel the writer is actually looking at while typing — so
-              this column keeps only the actions that return *text*: a rewrite to
-              read, an outline to follow, an SEO report, a plagiarism check. Two
-              rows of the same buttons in two places was the integration problem,
-              not a convenience.
+              These return *text* to read or place by hand: a rewrite to review,
+              an outline to follow, an SEO report, a plagiarism check. The
+              structured edits — the ones that write into the composer — are the
+              Quick edits below, and they land as diffs rather than as prose.
+              One panel, one place, one review flow.
             */}
             <div className="grid grid-cols-2 gap-2">
               <CopilotButton
@@ -500,20 +581,236 @@ function SidebarContent(props: SidebarContentProps) {
                     ))}
                   </div>
                 )}
-                <button
-                  onClick={() => applyCopilot(copilotResult)}
-                  className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-accent-violet to-brand-500 px-3 py-2 type-meta text-white shadow-glow hover:scale-[1.02] transition-all"
-                >
-                  <Wand2 className="h-3 w-3" />
-                  {copilotResult.action === "headline" ? "Use as title"
-                    : copilotResult.action === "summarize" ? "Use as excerpt"
-                    : copilotResult.action === "tags" ? "Add tags"
-                    : copilotResult.action === "rewrite" ? "Replace draft"
-                    : copilotResult.action === "continue" ? "Append to draft"
-                    : "Insert into editor"}
-                </button>
+                {COPILOT_TEXT_ACTIONS.includes(copilotResult.action) ? (
+                  <button
+                    onClick={() => applyCopilot(copilotResult)}
+                    className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-accent-violet to-brand-500 px-3 py-2 type-meta text-white shadow-glow hover:scale-[1.02] transition-all"
+                  >
+                    <Wand2 className="h-3 w-3" />
+                    {copilotResult.action === "headline" ? "Use as title"
+                      : copilotResult.action === "summarize" ? "Use as excerpt"
+                      : copilotResult.action === "tags" ? "Add tags"
+                      : copilotResult.action === "rewrite" ? "Replace draft"
+                      : "Append to draft"}
+                  </button>
+                ) : (
+                  <p className="mt-2.5 rounded-lg border border-surface-800 bg-surface-950/50 px-2.5 py-2 type-caption text-surface-500">
+                    This is a report — read it, or copy it above. It never writes into your draft.
+                  </p>
+                )}
               </div>
             )}
+          </div>
+
+          {/*
+            Quick edits — the Brain Pilot.
+
+            These return *ops*, not prose, and every op is staged as a diff in
+            the composer before it can land. That is what keeps "Tighten" from
+            being a button that quietly rewrites a paragraph the writer liked:
+            the change arrives as something to read, keep or throw away.
+          */}
+          <div className="rounded-2xl bg-surface-900/60 border border-accent-violet/20 p-5 shadow-card">
+            <h3 className="text-xs font-semibold text-accent-violet uppercase tracking-wider mb-1.5 flex items-center gap-2">
+              <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-gradient-to-br from-accent-violet/25 to-brand-500/15 border border-accent-violet/20">
+                <Wand2 className="w-3 h-3 text-accent-violet" />
+              </span>
+              Quick edits
+            </h3>
+            <p className="type-caption text-surface-500 mb-3">
+              Rewrites the passage you have selected — or the whole draft when nothing is selected. Every change
+              comes back as a diff to keep or discard.
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {PILOT_QUICK_ACTIONS.filter((a) => a.id !== "ask").map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  title={a.hint}
+                  disabled={pilotBusy !== null || content.trim().length < 20}
+                  onClick={() => runPilot(a.id)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-accent-violet/25 bg-accent-violet/10 px-2.5 py-1.5 type-caption font-medium text-accent-violet transition-colors hover:bg-accent-violet/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {pilotBusy === a.id ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                  {a.label}
+                </button>
+              ))}
+            </div>
+            <form
+              className="mt-2.5 flex items-center gap-1.5"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const wanted = editInstruction.trim();
+                if (!wanted) return;
+                runPilot("ask", wanted);
+                setEditInstruction("");
+              }}
+            >
+              <input
+                value={editInstruction}
+                onChange={(e) => setEditInstruction(e.target.value)}
+                placeholder="Tell the pilot what to change…"
+                aria-label="Instruction for the pilot"
+                className="min-w-0 flex-1 rounded-lg border border-surface-700/50 bg-surface-800/60 px-2.5 py-1.5 type-caption text-surface-200 placeholder:text-surface-600 focus:border-accent-violet/40 focus:outline-none transition-colors"
+              />
+              <button
+                type="submit"
+                disabled={pilotBusy !== null || !editInstruction.trim() || content.trim().length < 20}
+                className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-gradient-to-r from-accent-violet to-brand-500 px-2.5 py-1.5 type-caption font-semibold text-white shadow-glow transition hover:scale-[1.02] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+              >
+                {pilotBusy === "ask" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                Ask
+              </button>
+            </form>
+          </div>
+
+          {/*
+            The Article Forge.
+
+            A commission, not an edit: it plans the piece, writes every section
+            in order (finishing each before starting the next), then stages the
+            whole thing — body, headline, excerpt, tags — as four separate diffs
+            in the composer. Nothing reaches the draft until the writer says so.
+          */}
+          <div className="rounded-2xl bg-surface-900/60 border border-accent-coral/20 p-5 shadow-card">
+            <h3 className="text-xs font-semibold text-accent-coral uppercase tracking-wider mb-1.5 flex items-center gap-2">
+              <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-gradient-to-br from-accent-coral/25 to-brand-500/15 border border-accent-coral/20">
+                <PenLine className="w-3 h-3 text-accent-coral" />
+              </span>
+              Write an article
+            </h3>
+            <p className="type-caption text-surface-500 mb-3">
+              Plans the piece, writes it a section at a time — finishing each one before moving on — then hands you
+              the headline, draft, excerpt and tags to review.
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              <input
+                value={articleTopic}
+                onChange={(e) => setArticleTopic(e.target.value)}
+                placeholder={defaultTopic || "What should the article be about?"}
+                aria-label="Article topic"
+                className="min-w-0 flex-1 rounded-lg border border-surface-700/50 bg-surface-800/60 px-2.5 py-1.5 type-caption text-surface-200 placeholder:text-surface-600 focus:border-accent-coral/40 focus:outline-none transition-colors"
+              />
+              <select
+                value={articleWords}
+                onChange={(e) => setArticleWords(Number(e.target.value))}
+                aria-label="Article length"
+                className="shrink-0 rounded-lg border border-surface-700/50 bg-surface-800/60 px-2 py-1.5 type-caption text-surface-300 focus:border-accent-coral/40 focus:outline-none transition-colors"
+              >
+                {ARTICLE_LENGTHS.map((l) => (
+                  <option key={l.words} value={l.words}>
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              disabled={article.busy || (articleTopic.trim() || defaultTopic).length < 4}
+              onClick={() => onWriteArticle(articleTopic.trim() || defaultTopic, articleWords)}
+              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-accent-coral/20 to-brand-500/15 border border-accent-coral/25 px-3 py-2 type-caption font-semibold text-accent-coral transition-all hover:from-accent-coral/30 hover:to-brand-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {article.busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
+              {article.busy ? "Writing…" : "Write the full article"}
+            </button>
+
+            {article.busy && article.progress ? (
+              <p className="mt-2.5 flex items-center gap-2 type-caption text-accent-coral">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                {article.progress}
+              </p>
+            ) : null}
+
+            {article.error ? (
+              <p className="mt-2.5 rounded-lg border border-red-500/25 bg-red-500/10 px-2.5 py-2 type-caption text-red-300">
+                {article.error}
+              </p>
+            ) : null}
+
+            {article.summary ? (
+              <div className="mt-2.5 rounded-xl border border-surface-800 bg-surface-950/50 p-3">
+                <p className="type-meta font-semibold text-surface-200">{article.summary.title}</p>
+                <p className="mt-0.5 type-caption text-surface-400">
+                  {article.summary.words} words · {article.summary.sections} sections
+                  {article.summary.repairs.length > 0
+                    ? ` · ${article.summary.repairs.length} repair${article.summary.repairs.length === 1 ? "" : "s"}`
+                    : ""}
+                </p>
+                {article.summary.repairs.length > 0 ? (
+                  <ul className="mt-1.5 space-y-0.5">
+                    {article.summary.repairs.slice(0, 6).map((r) => (
+                      <li key={r} className="type-caption text-surface-500">
+                        • {r}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={onUseArticle}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 type-caption font-semibold text-emerald-300 transition-colors hover:bg-emerald-500/20"
+                  >
+                    <Check className="h-3 w-3" />
+                    Review before it lands
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onDiscardArticle}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-surface-700 px-2.5 py-1.5 type-caption font-medium text-surface-300 transition-colors hover:text-surface-50"
+                  >
+                    <X className="h-3 w-3" />
+                    Discard
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          {/*
+            The live SEO audit.
+
+            Deterministic and provider-free, so it can run on every keystroke:
+            the numbers a writer sees while typing are instant, free and the same
+            on every deployment. The judgement-level work stays on the buttons
+            above.
+          */}
+          <div className="rounded-2xl bg-surface-900/60 border border-accent-cyan/20 p-5 shadow-card">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-semibold text-accent-cyan uppercase tracking-wider flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-gradient-to-br from-accent-cyan/25 to-brand-500/15 border border-accent-cyan/20">
+                  <Gauge className="w-3 h-3 text-accent-cyan" />
+                </span>
+                SEO audit
+              </h3>
+              <span className="type-caption font-semibold text-surface-300">
+                {seoAudit.score}/100
+              </span>
+            </div>
+            <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-surface-800">
+              <div
+                className={cn(
+                  "h-full rounded-full transition-[width] duration-300",
+                  seoAudit.score >= 75 ? "bg-emerald-500" : seoAudit.score >= 55 ? "bg-amber-500" : "bg-red-500"
+                )}
+                style={{ width: `${Math.max(3, seoAudit.score)}%` }}
+              />
+            </div>
+            <ul className="space-y-1.5">
+              {seoAudit.checks.map((c) => (
+                <li key={c.id} className="flex items-start gap-2 type-meta">
+                  <span
+                    className={cn(
+                      "mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full",
+                      c.state === "ok" ? "bg-emerald-500" : c.state === "warn" ? "bg-amber-500" : "bg-red-500"
+                    )}
+                  />
+                  <span className="text-surface-300">
+                    <span className="font-semibold text-surface-200">{c.label}</span> — {c.detail}
+                  </span>
+                </li>
+              ))}
+            </ul>
           </div>
 
           {/* Writing Tips */}
@@ -1048,4 +1345,113 @@ function timeAgo(iso: string): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+/**
+ * The SEO checks a writer can act on, in the order they matter.
+ *
+ * Every line is derived from the draft itself rather than from a model, so the
+ * panel updates as the words arrive and never needs a request. The ranges are
+ * the well-known ones: a headline under ~60 characters survives a search result
+ * intact, a description of 120–160 characters is the snippet, and a body needs
+ * its primary keyword early and a subheading structure to be scannable.
+ */
+export function buildSeoAudit(
+  title: string,
+  excerpt: string,
+  content: string
+): { score: number; grade: string; checks: { id: string; label: string; detail: string; state: "ok" | "warn" | "bad" }[] } {
+  const seo = analyzeSeo(title, content, excerpt);
+  const checks: { id: string; label: string; detail: string; state: "ok" | "warn" | "bad" }[] = [];
+  const words = seo.contentLength.words;
+
+  const titleLength = title.trim().length;
+  checks.push({
+    id: "title-length",
+    label: "Headline",
+    detail:
+      titleLength === 0
+        ? "not written yet"
+        : titleLength <= 60
+          ? `${titleLength} characters — fits a search result`
+          : titleLength <= 90
+            ? `${titleLength} characters — search engines will truncate it`
+            : `${titleLength} characters — too long, aim for 60`,
+    state: titleLength === 0 ? "bad" : titleLength <= 60 ? "ok" : titleLength <= 90 ? "warn" : "bad",
+  });
+
+  const excerptLength = excerpt.trim().length;
+  checks.push({
+    id: "description",
+    label: "Description",
+    detail:
+      excerptLength === 0
+        ? "missing — this is the snippet readers see"
+        : excerptLength < 120
+          ? `${excerptLength} characters — 120 to 160 reads best`
+          : excerptLength <= 300
+            ? `${excerptLength} characters`
+            : `${excerptLength} characters — trim it under 160`,
+    state: excerptLength === 0 ? "bad" : excerptLength < 120 ? "warn" : excerptLength <= 300 ? "ok" : "warn",
+  });
+
+  checks.push({
+    id: "length",
+    label: "Length",
+    detail: words === 0 ? "nothing written yet" : `${words} words · ${seo.contentLength.paragraphs} paragraphs`,
+    state: words === 0 ? "bad" : words < 300 ? "warn" : "ok",
+  });
+
+  checks.push({
+    id: "readability",
+    label: "Readability",
+    detail: words === 0 ? "—" : `${seo.readabilityGrade} (${seo.readabilityScore}/100)`,
+    state: words === 0 ? "warn" : seo.readabilityScore >= 60 ? "ok" : "warn",
+  });
+
+  const headings = seo.headingStructure.filter((h) => h.level <= 3).length;
+  checks.push({
+    id: "structure",
+    label: "Structure",
+    detail: headings === 0 ? "no subheadings — add two or three" : `${headings} subheading${headings === 1 ? "" : "s"}`,
+    state: headings === 0 ? "warn" : "ok",
+  });
+
+  if (seo.keywordDensity.length > 0) {
+    const top = seo.keywordDensity[0]!;
+    checks.push({
+      id: "keyword",
+      label: "Primary keyword",
+      detail: `“${top.keyword}” appears ${top.count} times (${top.density}%)${
+        top.density > 4 ? " — that reads as stuffing" : ""
+      }`,
+      state: top.density > 4 ? "warn" : top.density >= 0.5 ? "ok" : "warn",
+    });
+  }
+
+  checks.push({
+    id: "media",
+    label: "Media",
+    detail:
+      seo.imageCount === 0
+        ? "no images in the body"
+        : `${seo.imageCount} image${seo.imageCount === 1 ? "" : "s"}, ${seo.imagesWithAlt} with alt text`,
+    state: seo.imageCount === 0 ? "warn" : seo.imagesWithAlt === seo.imageCount ? "ok" : "warn",
+  });
+
+  checks.push({
+    id: "links",
+    label: "Links",
+    detail: `${seo.internalLinks} internal · ${seo.externalLinks} external`,
+    state: seo.internalLinks + seo.externalLinks > 0 ? "ok" : "warn",
+  });
+
+  checks.push({
+    id: "opening",
+    label: "Opening paragraph",
+    detail: words === 0 ? "—" : seo.firstParagraph.hasKeyword ? "carries the keyword early" : "the keyword is missing from the opening",
+    state: words === 0 ? "warn" : seo.firstParagraph.hasKeyword ? "ok" : "warn",
+  });
+
+  return { score: seo.score, grade: seo.grade, checks };
 }

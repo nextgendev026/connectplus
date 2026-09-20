@@ -146,17 +146,19 @@ const headline = (page: Page) => page.getByRole("textbox", { name: "Your story t
 const review = (page: Page) => page.locator('[aria-label="Proposed edits"]');
 
 /**
- * The inline assist widget — the copilot, in the composer.
+ * The copilot — one panel, in the sidebar.
  *
- * Addressed by its own label because the sidebar carries quick-edit buttons
- * with the same names, so "Improve" on its own is ambiguous — scoping to the
- * panel is what makes these clicks test the composer's assistant rather than
- * the sidebar's.
+ * There is no longer an assistant inside the composer: the quick edits, the
+ * Article Forge and the SEO audit are a single surface here, and every edit it
+ * proposes still lands in the composer's review panel.
+ *
+ * `:visible` because the sidebar is rendered twice on a phone — the hidden
+ * desktop column and the open drawer — and only one of them is ever on screen.
  */
-const copilot = (page: Page) => page.locator('[aria-label="Copilot panel"]');
+const copilot = (page: Page) => page.locator("[data-copilot]:visible");
 
-/** The widget's collapsible header, which is the part that sticks on a phone. */
-const copilotHeader = (page: Page) => page.locator("[data-copilot-header]");
+/** On a phone the sidebar is a drawer; this is the button that opens it. */
+const copilotOpener = (page: Page) => page.locator("[data-copilot-open]");
 
 /**
  * Select the opening passage the way a writer does.
@@ -165,8 +167,8 @@ const copilotHeader = (page: Page) => page.locator("[data-copilot-header]");
  * on font metrics and the browser's text layout), and the behaviour under test
  * is what the app does *with* a selection, not how the browser made it. The
  * `mouseup`/`keyup` pair is what React's select-event plugin listens for, so the
- * component sees a genuine selection event, and the assertion below proves the
- * bar actually appeared rather than assuming it.
+ * component sees a genuine selection event — the pilot measures the range at
+ * click time, so "selected" here means what the app itself will read.
  */
 async function selectOpening(page: Page) {
   await editor(page).evaluate((el, needle) => {
@@ -327,55 +329,25 @@ test("a dropped image lands as markdown at the caret", async ({ page }) => {
 test.describe("on a phone", () => {
   test.use({ viewport: { width: 320, height: 757 } });
 
-  test("the copilot stays in reach above the bottom navigation", async ({ page }) => {
+  test("the copilot opens from the tools drawer and still reviews its edits", async ({ page }) => {
     await stubApi(page);
     await writeDraft(page);
+
+    // At this width the sidebar is a drawer, so the copilot has to be opened
+    // before it can be used. The trigger sits above the fixed bottom navigation,
+    // which is the band the old floating bar used to slide under.
+    const opener = copilotOpener(page);
+    await expect(opener).toBeVisible();
+    await opener.click();
+    await expect(copilot(page)).toBeVisible();
+
+    const place = await copilot(page).evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
+    });
+    expect(place.width, "the drawer must hold the panel").toBeGreaterThan(200);
+
     await selectOpening(page);
-
-    // The widget's header row is sticky inside the editor, and the bottom nav is
-    // fixed across the viewport at a higher z-index. Pinned to the editor's
-    // bottom corner the row sat inside the nav's strip and every control's centre
-    // hit a nav label — picking "Improve" used to navigate Home.
-    //
-    // The worst case is the bottom of the page, where the sticky row rests at its
-    // offset and has nowhere left to move. That is where it is measured: clear of
-    // the nav, and the topmost element at its own centre (which is what a tap
-    // resolves to). Polled, because the app shows a full-screen boot screen for
-    // its first ~1.4s on any hard load and everything is behind it until then.
-    // Wait out the boot screen rather than racing it: for its first ~1.4s it is
-    // the topmost element on the page and every hit test lands on it.
-    await page.waitForFunction(
-      () => !Array.from(document.querySelectorAll("div")).some((d) => String(d.className).includes("z-[80]"))
-    );
-    // Scroll until sticky is actually holding the row: past this point the row's
-    // natural position would be off the bottom of the screen, so it rests at its
-    // offset. This is the instant the old bar slid under the nav — the
-    // document's very bottom is no test at all, because there the widget has long
-    // since scrolled past the top of the screen.
-    await page.evaluate(() => {
-      const el = document.querySelector("[data-copilot-header]");
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      window.scrollBy(0, Math.round(rect.bottom - window.innerHeight + 160));
-    });
-    await page.waitForTimeout(250);
-
-    const place = await copilotHeader(page).evaluate((el) => {
-      const rect = el.getBoundingClientRect();
-      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-      const nav = document.querySelector('nav[aria-label="Mobile navigation"]');
-      return {
-        isSelf: hit === el || el.contains(hit as Node),
-        clearOfNav: nav ? rect.bottom <= nav.getBoundingClientRect().top : true,
-        hitText: (hit?.textContent ?? "").trim().slice(0, 24),
-      };
-    });
-
-    expect(place.hitText, "what the tap would hit").toContain("Copilot");
-    expect(place.isSelf, `the header must not be covered (hit: "${place.hitText}")`).toBe(true);
-    expect(place.clearOfNav, "the header must sit above the bottom navigation").toBe(true);
-
-    // ...and the panel it opens is usable from there.
     await copilot(page).getByRole("button", { name: "Improve", exact: true }).click();
     await expect(review(page)).toBeVisible();
   });
@@ -390,7 +362,6 @@ test("writes a whole article and hands it over for review, section by section", 
   await hydrated;
   await dismissConsent(page);
 
-  await copilot(page).getByRole("button", { name: "Write" }).click();
   await copilot(page).getByRole("textbox", { name: "Article topic" }).fill("the Kibera market fire");
   await copilot(page).getByRole("button", { name: "Write the full article" }).click();
 
@@ -424,7 +395,7 @@ test("writes a whole article and hands it over for review, section by section", 
     "Three months after the fire, the county's pledge has not broken ground."
   );
 
-  // The tags landed too, and the SEO tab acknowledges them.
-  await copilot(page).getByRole("button", { name: "SEO" }).click();
-  await expect(copilot(page).getByText("kibera", { exact: true })).toBeVisible();
+  // The tags landed too, and the sidebar's tag panel shows them.
+  await page.getByRole("button", { name: "SEO & Tags" }).click();
+  await expect(page.getByText("#kibera")).toBeVisible();
 });

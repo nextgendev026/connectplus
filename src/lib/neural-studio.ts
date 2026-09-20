@@ -344,7 +344,7 @@ export async function runStudioBrain(req: StudioRequest): Promise<StudioResult> 
           "",
           `**Suggested tags:** ${plan.tags.join(", ")}`,
           "",
-          "_Open **Write** in the assist panel and I will draft every section in order — finishing each one before moving on — then hand you the finished piece to review._",
+          "_Open **Write an article** in the copilot panel and I will draft every section in order — finishing each one before moving on — then hand you the finished piece to review._",
         ];
         return {
           action,
@@ -385,7 +385,10 @@ export async function runStudioBrain(req: StudioRequest): Promise<StudioResult> 
     }
 
     case "seo": {
-      const analysis = analyzeSeo(title, content, prompt);
+      // The description is what search engines show, so the audit has to read the
+      // excerpt the writer actually wrote. `prompt` is only a fallback for the
+      // callers that send no excerpt at all.
+      const analysis = analyzeSeo(title, content, excerpt || prompt);
       const lines: string[] = [`**SEO Analysis — Score: ${analysis.score}/100 (${analysis.grade})**`, ""];
       if (analysis.keywordDensity.length > 0) {
         lines.push("**Top Keywords:**");
