@@ -51,6 +51,36 @@
       ]
     },
     {
+      "source": "/feed.xml",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, s-maxage=600, stale-while-revalidate=3600" }
+      ]
+    },
+    {
+      "source": "/feed/:category*",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, s-maxage=600, stale-while-revalidate=3600" }
+      ]
+    },
+    {
+      "source": "/sitemap.xml",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, s-maxage=21600, stale-while-revalidate=3600" }
+      ]
+    },
+    {
+      "source": "/robots.txt",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, s-maxage=3600, stale-while-revalidate=3600" }
+      ]
+    },
+    {
+      "source": "/manifest.webmanifest",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, s-maxage=3600, stale-while-revalidate=3600" }
+      ]
+    },
+    {
       "source": "/(.*)",
       "headers": [
         { "key": "X-DNS-Prefetch-Control", "value": "on" },
