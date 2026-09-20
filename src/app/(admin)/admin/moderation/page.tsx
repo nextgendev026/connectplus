@@ -241,7 +241,7 @@ export default function ModerationQueue() {
           <>
             {/* Filter Tabs & Search */}
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-1 rounded-lg bg-surface-900 border border-surface-800 p-1">
+              <div className="flex w-full flex-wrap items-center gap-1 rounded-lg bg-surface-900 border border-surface-800 p-1 sm:w-auto">
                 {filterTabs.map((tab) => (
                   <button
                     key={tab.value}
@@ -267,14 +267,14 @@ export default function ModerationQueue() {
                   </button>
                 ))}
               </div>
-              <div className="flex items-center gap-3">
-                <div className="relative">
+              <div className="flex w-full items-center gap-3 sm:w-auto">
+                <div className="relative flex-1">
                   <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-surface-500" />
                   <input
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search content..."
-                    className="h-8 w-56 rounded-lg bg-surface-900 border border-surface-800 pl-9 pr-3 text-xs text-surface-50 placeholder-surface-500 outline-none transition-colors focus:border-brand-500/50"
+                    className="h-9 w-full rounded-lg bg-surface-900 border border-surface-800 pl-9 pr-3 text-sm text-surface-50 placeholder-surface-500 outline-none transition-colors focus:border-brand-500/50 sm:h-8 sm:w-56 sm:text-xs"
                   />
                 </div>
               </div>
@@ -290,19 +290,19 @@ export default function ModerationQueue() {
 
             {/* Bulk Actions */}
             {selectedItems.size > 0 && (
-              <div className="flex items-center gap-3 rounded-lg bg-brand-500/5 border border-brand-500/20 px-4 py-2.5">
+              <div className="flex flex-wrap items-center gap-3 rounded-lg bg-brand-500/5 border border-brand-500/20 px-4 py-2.5">
                 <span className="text-xs text-accent-strong font-medium">
                   {selectedItems.size} selected
                 </span>
                 <button
                   onClick={() => handleBulkAction("approve")}
-                  className="rounded-md bg-brand-500/10 px-3 py-1 text-xs font-medium text-accent-strong transition-colors hover:bg-brand-500/20"
+                  className="rounded-md bg-brand-500/10 px-3 py-1.5 text-xs font-medium text-accent-strong transition-colors hover:bg-brand-500/20"
                 >
                   Approve All
                 </button>
                 <button
                   onClick={() => handleBulkAction("reject")}
-                  className="rounded-md bg-red-500/10 px-3 py-1 text-xs font-medium text-danger-strong transition-colors hover:bg-red-500/20"
+                  className="rounded-md bg-red-500/10 px-3 py-1.5 text-xs font-medium text-danger-strong transition-colors hover:bg-red-500/20"
                 >
                   Reject All
                 </button>
@@ -318,8 +318,33 @@ export default function ModerationQueue() {
             <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-6">
               {/* Moderation List */}
               <div className="space-y-3">
-                {/* Table Header */}
-                <div className="overflow-x-auto rounded-lg">
+                {/* Select-all, reachable on a phone.
+                 *
+                 * The only place to select everything was the table header, and
+                 * that is hidden below `lg` (it is an 880px row). Bulk moderation
+                 * therefore existed on desktop only. This keeps the ability where
+                 * the reader can reach it. */}
+                <div className="flex items-center gap-2 px-2 lg:hidden">
+                  <input
+                    type="checkbox"
+                    checked={selectedItems.size === filteredItems.length && filteredItems.length > 0}
+                    onChange={toggleSelectAll}
+                    className="h-4 w-4 rounded border-surface-700 bg-surface-800 accent-brand-500"
+                    aria-label="Select all items in this view"
+                  />
+                  <span className="text-xs text-surface-400">
+                    {selectedItems.size > 0 ? `${selectedItems.size} selected` : "Select all"}
+                  </span>
+                </div>
+
+                {/* Table Header — desktop only.
+                 *
+                 * It used to render at every width inside an `overflow-x-auto`,
+                 * so a phone had to pan an 880px row sideways to reach the
+                 * Approve and Reject buttons in the last column. Panning to act
+                 * on a moderation queue is not a workable layout; the list below
+                 * becomes cards at this width instead. */}
+                <div className="hidden overflow-x-auto rounded-lg lg:block">
                 <div className="grid min-w-[880px] grid-cols-[32px_1fr_140px_100px_80px_100px] gap-4 rounded-lg bg-surface-900 border border-surface-800 px-4 py-2.5 text-xs font-medium text-surface-400">
                   <div>
                     <input
@@ -345,67 +370,94 @@ export default function ModerationQueue() {
                       key={item.id}
                       onClick={() => setSelectedDetail(item)}
                       className={cn(
-                        "group grid min-w-[880px] grid-cols-[32px_1fr_140px_100px_80px_100px] gap-4 rounded-lg border px-4 py-3 transition-all duration-200 cursor-pointer",
+                        "group cursor-pointer rounded-lg border px-4 py-3 transition-all duration-200",
+                        // Stacked card on a phone, the dense row from `lg` up. The
+                        // two layouts share one DOM tree so there is no second
+                        // copy of the moderation logic to keep in step.
+                        "lg:grid lg:min-w-[880px] lg:grid-cols-[32px_1fr_140px_100px_80px_100px] lg:items-center lg:gap-4",
                         selectedDetail?.id === item.id
                           ? "border-brand-500/30 bg-surface-900/80"
                           : "border-surface-800 bg-surface-900/50 hover:border-surface-700 hover:bg-surface-900/70",
                         item.status === "approved" && "opacity-60"
                       )}
                     >
-                      <div className="flex items-start pt-0.5">
+                      <div className="hidden lg:flex lg:items-start lg:pt-0.5">
                         <input
                           type="checkbox"
                           checked={selectedItems.has(item.id)}
                           onChange={() => toggleSelect(item.id)}
                           onClick={(e) => e.stopPropagation()}
-                          className="h-3.5 w-3.5 rounded border-surface-700 bg-surface-800 accent-brand-500"
+                          className="h-4 w-4 rounded border-surface-700 bg-surface-800 accent-brand-500 lg:h-3.5 lg:w-3.5"
+                          aria-label={`Select ${item.title}`}
                         />
                       </div>
                       <div className="min-w-0">
+                        <div className="flex items-start gap-2.5">
+                          {/* The checkbox rides with the title on a phone rather
+                              than owning a row of its own. */}
+                          <input
+                            type="checkbox"
+                            checked={selectedItems.has(item.id)}
+                            onChange={() => toggleSelect(item.id)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="mt-0.5 h-4 w-4 shrink-0 rounded border-surface-700 bg-surface-800 accent-brand-500 lg:hidden"
+                            aria-label={`Select ${item.title}`}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <p className="truncate text-sm font-medium text-surface-50">
+                                {item.title}
+                              </p>
+                              {item.status === "approved" && (
+                                <CheckCircle className="h-3.5 w-3.5 shrink-0 text-accent-strong" />
+                              )}
+                              {item.status === "rejected" && (
+                                <XCircle className="h-3.5 w-3.5 shrink-0 text-danger-strong" />
+                              )}
+                            </div>
+                            <p className="mt-0.5 truncate type-caption text-surface-500">
+                              {item.content?.slice(0, 80) ?? ""}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      {/* Author, status and time share one wrapped row on a phone
+                          and dissolve into their own grid columns on desktop —
+                          `lg:contents` is what lets one tree be both. */}
+                      <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 lg:contents">
                         <div className="flex items-center gap-2">
-                          <p className="truncate text-sm font-medium text-surface-50">
-                            {item.title}
-                          </p>
-                          {item.status === "approved" && (
-                            <CheckCircle className="h-3.5 w-3.5 shrink-0 text-accent-strong" />
-                          )}
-                          {item.status === "rejected" && (
-                            <XCircle className="h-3.5 w-3.5 shrink-0 text-danger-strong" />
-                          )}
+                          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-surface-700 type-caption font-bold text-surface-200">
+                            {item.author.name.charAt(0)}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-medium text-surface-200">
+                              {item.author.name}
+                            </p>
+                            <p className="type-caption text-surface-400">
+                              @{item.author.username}
+                            </p>
+                          </div>
                         </div>
-                        <p className="mt-0.5 truncate type-caption text-surface-500">
-                          {item.content?.slice(0, 80) ?? ""}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-surface-700 type-caption font-bold text-surface-200">
-                          {item.author.name.charAt(0)}
+                        <div>
+                          <span
+                            className={cn(
+                              "inline-flex items-center rounded-full px-2 py-0.5 type-caption border",
+                              st.bg,
+                              st.color,
+                              st.border
+                            )}
+                          >
+                            {item.status}
+                          </span>
                         </div>
-                        <div className="min-w-0">
-                          <p className="truncate text-xs font-medium text-surface-200">
-                            {item.author.name}
-                          </p>
-                          <p className="type-caption text-surface-400">
-                            @{item.author.username}
-                          </p>
+                        <div>
+                          <p className="text-xs font-medium text-surface-300">{timeAgo(item.createdAt)}</p>
                         </div>
                       </div>
-                      <div>
-                        <span
-                          className={cn(
-                            "inline-flex items-center rounded-full px-2 py-0.5 type-caption border",
-                            st.bg,
-                            st.color,
-                            st.border
-                          )}
-                        >
-                          {item.status}
-                        </span>
-                      </div>
-                      <div>
-                        <p className="text-xs font-medium text-surface-300">{timeAgo(item.createdAt)}</p>
-                      </div>
-                      <div className="flex items-center gap-1">
+                      {/* Labelled, full-width buttons on a phone — an icon-only
+                          control is not reliably tappable at this size, and the
+                          decision being made here is not one to guess at. */}
+                      <div className="mt-3 flex items-center gap-2 border-t border-surface-800/70 pt-3 lg:mt-0 lg:gap-1 lg:border-0 lg:pt-0">
                         {item.status !== "approved" && item.status !== "rejected" && (
                           <>
                             <button
@@ -414,10 +466,11 @@ export default function ModerationQueue() {
                                 handleAction(item.id, "approve");
                               }}
                               disabled={actionLoading === item.id}
-                              className="rounded-md p-1.5 text-surface-500 transition-colors hover:bg-brand-500/10 hover:text-accent-strong disabled:opacity-50"
+                              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-brand-500/20 bg-brand-500/10 px-3 py-2 type-meta font-medium text-accent-strong transition-colors hover:bg-brand-500/20 disabled:opacity-50 lg:flex-none lg:border-0 lg:bg-transparent lg:p-1.5 lg:text-surface-500 lg:hover:bg-brand-500/10 lg:hover:text-accent-strong"
                               title="Approve"
                             >
-                              <CheckCircle className="h-3.5 w-3.5" />
+                              <CheckCircle className="h-4 w-4 lg:h-3.5 lg:w-3.5" />
+                              <span className="lg:hidden">Approve</span>
                             </button>
                             <button
                               onClick={(e) => {
@@ -425,10 +478,11 @@ export default function ModerationQueue() {
                                 handleAction(item.id, "reject");
                               }}
                               disabled={actionLoading === item.id}
-                              className="rounded-md p-1.5 text-surface-500 transition-colors hover:bg-red-500/10 hover:text-danger-strong disabled:opacity-50"
+                              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 type-meta font-medium text-danger-strong transition-colors hover:bg-red-500/20 disabled:opacity-50 lg:flex-none lg:border-0 lg:bg-transparent lg:p-1.5 lg:text-surface-500 lg:hover:bg-red-500/10 lg:hover:text-danger-strong"
                               title="Reject"
                             >
-                              <XCircle className="h-3.5 w-3.5" />
+                              <XCircle className="h-4 w-4 lg:h-3.5 lg:w-3.5" />
+                              <span className="lg:hidden">Reject</span>
                             </button>
                           </>
                         )}

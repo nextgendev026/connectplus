@@ -169,6 +169,20 @@ export default function Navbar() {
               </div>
             )}
 
+            {/* The bell, reachable on a phone.
+             *
+             * It used to live only inside the `sm:flex` account group, so below
+             * 640px a signed-in reader saw a logo, a search button and a menu —
+             * and nothing at all when an alert was waiting for them. On the
+             * device where push most often drives the visit, the notification
+             * affordance was simply absent. Desktop keeps the one in the account
+             * row, so the two never both appear. */}
+            {session && (
+              <div className="flex items-center sm:hidden">
+                <NotificationBell />
+              </div>
+            )}
+
             <IconButton
               label={mobileOpen ? "Close menu" : "Open menu"}
               onClick={() => setMobileOpen((open) => !open)}

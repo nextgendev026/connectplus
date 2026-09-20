@@ -102,7 +102,9 @@ interface StudioSidebarProps {
   handleTagKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   aiSuggestions: AISuggestions | null;
   setAiSuggestions: Dispatch<SetStateAction<AISuggestions | null>>;
-  assistWithPost: () => void;
+  /* Declared as possibly-async so the button can show a real busy state rather
+   * than looking inert for the length of a network round-trip. */
+  assistWithPost: () => void | Promise<void>;
   /* Category */
   categoryId: string | null;
   setCategoryId: (id: string | null) => void;
@@ -218,8 +220,9 @@ function SidebarContent(props: SidebarContentProps) {
   const {
     railTab, setRailTab,
     content,
-    tags, tagInput, setTagInput, handleAddTag, handleRemoveTag, handleTagKeyDown,
+    tags, setTags, tagInput, setTagInput, handleAddTag, handleRemoveTag, handleTagKeyDown,
     assistWithPost,
+    aiSuggestions, setAiSuggestions,
     categoryId, setCategoryId, categoryName, setCategoryName, categoriesList,
     categoryOpen, setCategoryOpen,
     scheduledFor, setScheduledFor, now, wordCount, readTime,
@@ -229,6 +232,29 @@ function SidebarContent(props: SidebarContentProps) {
     copilotError, setCopilotError, copilotResult, setCopilotResult, applyCopilot,
     writingChecks, checksBusy, applyWritingCheck, applyAllWritingChecks, dismissWritingCheck,
   } = props;
+
+  // Wraps the (async) suggest call so the button can show progress. Previously
+  // the click fired a request and the panel rendered nothing at all — no
+  // spinner, no result, no error — which is indistinguishable from a dead
+  // control, and is exactly how it was reported.
+  const [assistBusy, setAssistBusy] = useState(false);
+  const runAssist = useCallback(async () => {
+    setAssistBusy(true);
+    try {
+      await assistWithPost();
+    } finally {
+      setAssistBusy(false);
+    }
+  }, [assistWithPost]);
+
+  const addSuggestedTag = useCallback(
+    (raw: string) => {
+      const tag = raw.trim().toLowerCase();
+      if (!tag) return;
+      setTags((prev) => (prev.length >= 10 || prev.includes(tag) ? prev : [...prev, tag]));
+    },
+    [setTags]
+  );
 
   return (
     <>
@@ -632,14 +658,123 @@ function SidebarContent(props: SidebarContentProps) {
                 <Plus className="w-3.5 h-3.5" />
               </button>
               <button
-                onClick={assistWithPost}
-                className="p-2 rounded-lg bg-surface-800/60 border border-brand-500/20 text-accent-strong hover:text-brand-700 transition-all"
+                onClick={runAssist}
+                disabled={assistBusy}
+                className="p-2 rounded-lg bg-surface-800/60 border border-brand-500/20 text-accent-strong hover:text-brand-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                 title="AI assist — suggest tags & category"
+                aria-label="AI assist — suggest tags and category"
               >
-                <Lightbulb className="h-3.5 w-3.5" />
+                {assistBusy ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Lightbulb className="h-3.5 w-3.5" />
+                )}
               </button>
             </div>
             <p className="type-caption text-surface-600 mt-2">Press Enter to add · {tags.length}/10 tags</p>
+
+            {/* The suggestion result panel.
+             *
+             * This is the piece that was missing: the lightbulb ran the whole
+             * analysis — keyword extraction, tag and category inference, a live
+             * trends fetch — and wrote it into state that no component ever
+             * read. Wiring it here is what turns the control from "does
+             * nothing" into an assistant, and every value on screen is one the
+             * writer can act on with a single tap. */}
+            {aiSuggestions && (
+              <div className="mt-3 rounded-xl border border-brand-500/20 bg-brand-500/[0.06] p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-1.5 type-meta font-semibold text-accent-strong">
+                    <Sparkles className="h-3 w-3" />
+                    Suggestions
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="type-caption text-surface-500">
+                      {Math.round(aiSuggestions.confidence * 100)}% match
+                    </span>
+                    <button
+                      onClick={() => setAiSuggestions(null)}
+                      className="p-1 rounded text-surface-500 hover:text-surface-200 transition-colors"
+                      title="Dismiss suggestions"
+                      aria-label="Dismiss suggestions"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                </div>
+
+                {aiSuggestions.tags.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {aiSuggestions.tags.map((t) => {
+                      const tag = t.trim().toLowerCase();
+                      const already = tags.includes(tag);
+                      const full = tags.length >= 10;
+                      return (
+                        <button
+                          key={t}
+                          onClick={() => addSuggestedTag(t)}
+                          disabled={already || full}
+                          className="rounded-full border border-brand-500/25 bg-surface-800/60 px-2 py-1 type-caption font-medium text-surface-300 hover:border-brand-500/50 hover:text-accent-strong disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                          title={
+                            already
+                              ? "Already applied"
+                              : full
+                                ? "Tag limit reached (10)"
+                                : `Add "${tag}"`
+                          }
+                        >
+                          {already ? "✓" : "+"} {tag}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="type-caption text-surface-500">
+                    Write a little more and the tags will get sharper.
+                  </p>
+                )}
+
+                {aiSuggestions.category && aiSuggestions.category !== categoryName && (
+                  <button
+                    onClick={() => {
+                      const wanted = aiSuggestions.category?.toLowerCase();
+                      const match = categoriesList.find((c) => c.name.toLowerCase() === wanted);
+                      if (match) {
+                        setCategoryId(match.id);
+                        setCategoryName(match.name);
+                      } else {
+                        setCategoryName(aiSuggestions.category as string);
+                      }
+                    }}
+                    className="mt-2 flex w-full items-center justify-between gap-2 rounded-lg border border-surface-700/60 bg-surface-900/50 px-2.5 py-1.5 type-caption text-surface-300 hover:border-brand-500/40 hover:text-accent-strong transition-all"
+                  >
+                    <span className="truncate">Use category: {aiSuggestions.category}</span>
+                    <Check className="h-3 w-3 shrink-0" />
+                  </button>
+                )}
+
+                {aiSuggestions.trendingTopics.length > 0 && (
+                  <div className="mt-3 border-t border-surface-800/60 pt-2">
+                    <p className="type-caption text-surface-500 mb-1.5">
+                      Trending now — tap to tag
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {aiSuggestions.trendingTopics.map((topic) => (
+                        <button
+                          key={topic.title}
+                          onClick={() => addSuggestedTag(topic.title)}
+                          disabled={tags.length >= 10}
+                          className="rounded-full border border-surface-700/60 bg-surface-800/40 px-2 py-0.5 type-caption text-surface-400 hover:border-accent-coral/40 hover:text-accent-coral disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                          title={`${topic.mentions} published ${topic.mentions === 1 ? "story" : "stories"} under this topic`}
+                        >
+                          {topic.title}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

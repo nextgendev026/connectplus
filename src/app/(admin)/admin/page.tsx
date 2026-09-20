@@ -43,13 +43,28 @@ const defaultNodes = [
   { city: "Accra", status: "idle" as const },
 ];
 
-const trendingTopics = [
-  { topic: "AfroTech Summit 2026", mentions: 1247, trend: "+34%" },
-  { topic: "Nairobi Night Markets", mentions: 892, trend: "+21%" },
-  { topic: "East African Fintech", mentions: 743, trend: "+18%" },
-  { topic: "Kampala Food Scene", mentions: 681, trend: "+15%" },
-  { topic: "Rwanda Smart City", mentions: 534, trend: "+12%" },
-];
+/**
+ * Trending topics are fetched, never declared.
+ *
+ * This panel used to render a hardcoded list — invented topic names, invented
+ * "mentions" counts, and invented "+34%" trend arrows — labelled "Regional
+ * Trends" and shown to the person running the platform. That is worse than an
+ * empty panel, because an operator acts on it: you would schedule coverage
+ * around a summit nobody was talking about and a growth figure nobody measured.
+ *
+ * The shape below is `/api/trending/topics`, which ranks tags by real engagement
+ * (post count, views, comments, likes and freshness) over published stories.
+ */
+interface TrendTopic {
+  id: string;
+  name: string;
+  slug: string;
+  postCount: number;
+  totalViews: number;
+  heat: number;
+  topPostTitle: string | null;
+  topPostSlug: string | null;
+}
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
@@ -59,6 +74,9 @@ function formatNumber(n: number): string {
 
 export default function AdminCommandCenter() {
   const [stats, setStats] = useState<StatsData | null>(null);
+  // `null` means "not loaded yet", `[]` means "loaded and genuinely empty". The
+  // render below needs to tell those apart, or a quiet platform looks broken.
+  const [trends, setTrends] = useState<TrendTopic[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState("");
@@ -87,10 +105,20 @@ export default function AdminCommandCenter() {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch("/api/admin/stats", { credentials: "include" });
-      if (!res.ok) throw new Error(`Failed to fetch stats (${res.status})`);
-      const data = await res.json();
+      const [statsRes, trendsRes] = await Promise.all([
+        fetch("/api/admin/stats", { credentials: "include" }),
+        // Same public endpoint the reader-facing sidebar uses, so the console and
+        // the site can never disagree about what is trending.
+        fetch("/api/trending/topics?limit=5", {
+          credentials: "include",
+          headers: { "Cache-Control": "no-cache" },
+        }),
+      ]);
+      if (!statsRes.ok) throw new Error(`Failed to fetch stats (${statsRes.status})`);
+      const data = await statsRes.json();
       setStats(data.stats);
+      // One panel failing must not blank the whole dashboard.
+      setTrends(trendsRes.ok ? ((await trendsRes.json()).topics ?? []) : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load stats");
     } finally {
@@ -312,29 +340,39 @@ export default function AdminCommandCenter() {
                   </h2>
                 </div>
                 <div className="space-y-3">
-                  {trendingTopics.map((topic, i) => (
-                    <div
-                      key={topic.topic}
-                      className="group flex items-center justify-between rounded-lg border border-surface-800 bg-surface-800/30 p-3 transition-all duration-200 hover:border-surface-700 hover:bg-surface-800/60"
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-surface-700 type-caption font-bold text-surface-300">
-                          {i + 1}
-                        </span>
-                        <div>
-                          <p className="text-sm font-medium text-surface-50">
-                            {topic.topic}
-                          </p>
-                          <p className="text-xs font-medium text-surface-400">
-                            {topic.mentions.toLocaleString()} mentions
-                          </p>
+                  {trends === null ? (
+                    <p className="py-6 text-center text-sm text-surface-400">Loading trends…</p>
+                  ) : trends.length === 0 ? (
+                    <p className="py-6 text-center text-sm text-surface-400">
+                      Nothing trending yet — topics appear once tagged stories are published.
+                    </p>
+                  ) : (
+                    trends.map((topic, i) => (
+                      <Link
+                        key={topic.id}
+                        href={`/tag/${topic.slug}`}
+                        className="group flex items-center justify-between rounded-lg border border-surface-800 bg-surface-800/30 p-3 transition-all duration-200 hover:border-surface-700 hover:bg-surface-800/60"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-surface-700 type-caption font-bold text-surface-300">
+                            {i + 1}
+                          </span>
+                          <div>
+                            <p className="text-sm font-medium text-surface-50">{topic.name}</p>
+                            <p className="text-xs font-medium text-surface-400">
+                              {topic.postCount} {topic.postCount === 1 ? "story" : "stories"} ·{" "}
+                              {formatNumber(topic.totalViews)} views
+                            </p>
+                          </div>
                         </div>
-                      </div>
-                      <span className="rounded-full bg-brand-500/10 px-2 py-0.5 type-caption text-accent-strong">
-                        {topic.trend}
-                      </span>
-                    </div>
-                  ))}
+                        {/* The endpoint's real ranking score — not a fabricated
+                            growth percentage. */}
+                        <span className="rounded-full bg-brand-500/10 px-2 py-0.5 type-caption text-accent-strong">
+                          heat {Math.round(topic.heat)}
+                        </span>
+                      </Link>
+                    ))
+                  )}
                 </div>
               </div>
             </div>

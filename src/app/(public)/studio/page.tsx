@@ -298,8 +298,27 @@ export default function StudioPage() {
     else if (keywords.some((k) => k.keyword.toLowerCase().includes("sports"))) suggestedCategory = "Sports";
     else if (keywords.some((k) => k.keyword.toLowerCase().includes("music"))) suggestedCategory = "Music";
     else if (keywords.some((k) => k.keyword.toLowerCase().includes("lifestyle"))) suggestedCategory = "Lifestyle";
+    // Real topics from the public endpoint the reader-facing sidebar uses — the
+    // same data the admin console now reads, so the three surfaces can never
+    // disagree. This previously called an admin-only route and then threw the
+    // response away in favour of two hardcoded strings, so the panel offered
+    // writers "trending" topics with invented mention counts, and non-admins
+    // simply got a 403 they never saw.
     let trendingTopics: { title: string; mentions: number }[] = [];
-    try { const res = await fetch("/api/admin/stats", { credentials: "include" }); if (res.ok) trendingTopics = [{ title: "Africa Tech Summit", mentions: 1247 }, { title: "East African Startups", mentions: 892 }]; } catch {}
+    try {
+      const res = await fetch("/api/trending/topics?limit=5", {
+        credentials: "omit",
+        headers: { "Cache-Control": "no-cache" },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        trendingTopics = ((data?.topics ?? []) as { name: string; postCount: number }[]).map((t) => ({
+          title: t.name,
+          // Stories filed under the topic — the honest reading of the number.
+          mentions: t.postCount,
+        }));
+      }
+    } catch {}
     setAiSuggestions({ tags: suggestedTags, category: suggestedCategory, trendingTopics, confidence: Math.min(keywords.length / 10, 1) });
   }, [title, content]);
 
