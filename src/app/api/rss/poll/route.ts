@@ -1,11 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 import { triggerRssPoll } from "@/lib/inngest-trigger";
 
-// Manual trigger endpoint for admin panel
+/**
+ * Manual trigger — admin only.
+ *
+ * The comment on this handler always said "for admin panel", and nothing ever
+ * checked. `POST {"trigger":"rss-poll"}` with no session set the entire
+ * ingestion pipeline running on demand, so any anonymous visitor could burn
+ * feed fetches, image work and database writes at will. On a platform whose
+ * budget is a set of free tiers, an unauthenticated "do expensive work now"
+ * button is the cheapest possible denial of service.
+ *
+ * The scheduled path does not come through here — the cron and Inngest call
+ * `triggerRssPoll` directly — so gating this costs automation nothing.
+ */
+async function requireAdmin(): Promise<NextResponse | null> {
+  const session = await auth();
+  if (!session?.user) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  }
+  const role = (session.user as { role?: string }).role;
+  if (role !== "ADMIN" && role !== "SUPER_ADMIN") {
+    return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+  }
+  return null;
+}
+
 // Body: { trigger: "rss-poll" } or { trigger: "rss-poll-feed", feedId: "feed_123" }
 
 export async function POST(request: NextRequest) {
   try {
+    const denied = await requireAdmin();
+    if (denied) return denied;
+
     const body = await request.json().catch(() => ({}));
     const { trigger, feedId } = body;
 

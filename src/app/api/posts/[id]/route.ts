@@ -45,7 +45,46 @@ export async function GET(
       return NextResponse.json({ error: "Post not found" }, { status: 404 });
     }
 
-    if (post.status === "PUBLISHED") {
+    /**
+     * An unpublished story is not public — and this route did not check.
+     *
+     * It answered for any id *or slug* with no session at all, so a draft, a
+     * rejected story or a queued one could be read by anyone holding its id, and
+     * by anyone who could guess its slug. Slugs are derived from headlines and
+     * are effectively public, which made this the shortest path to another
+     * person's unpublished work. The studio editor loads drafts through exactly
+     * this call (`/api/posts/<id>`), so the leak sat one request away from the
+     * surface that made it easy to reach.
+     */
+    const isPublic = post.status === "PUBLISHED" && post.moderationStatus === "APPROVED";
+
+    if (!isPublic) {
+      const session = await auth();
+      const viewerId = session?.user?.id ?? null;
+      let allowed = false;
+      if (viewerId) {
+        if (viewerId === post.authorId) {
+          allowed = true;
+        } else {
+          // Paid for only off the public path, so anonymous reads of published
+          // stories keep costing exactly one query. The session's own role is
+          // not trusted here: it is a snapshot from sign-in, and this decides
+          // whether a stranger may read someone's unfinished work.
+          const viewer = await prisma.user.findUnique({
+            where: { id: viewerId },
+            select: { role: true },
+          });
+          allowed = viewer?.role === "ADMIN" || viewer?.role === "SUPER_ADMIN";
+        }
+      }
+      if (!allowed) {
+        // 404 rather than 403 on purpose: a 403 confirms the id exists, which is
+        // itself a disclosure about a story nobody has seen yet.
+        return NextResponse.json({ error: "Post not found" }, { status: 404 });
+      }
+    }
+
+    if (isPublic) {
       await prisma.post.update({
         where: { id: post.id },
         data: { viewCount: { increment: 1 } },
@@ -56,7 +95,7 @@ export async function GET(
       post: {
         ...post,
         coverImage: postCoverSrc(post.id),
-        viewCount: post.status === "PUBLISHED" ? post.viewCount + 1 : post.viewCount,
+        viewCount: isPublic ? post.viewCount + 1 : post.viewCount,
       },
     });
   } catch (error) {
@@ -282,7 +321,6 @@ export async function DELETE(
     }
 
     const userId = session.user.id;
-    const userRole = session.user.role;
     const { id } = await params;
 
     const existingPost = await prisma.post.findUnique({
@@ -294,8 +332,20 @@ export async function DELETE(
       return NextResponse.json({ error: "Post not found" }, { status: 404 });
     }
 
-    if (existingPost.authorId !== userId && userRole !== "ADMIN" && userRole !== "SUPER_ADMIN") {
-      return NextResponse.json({ error: "You do not have permission to delete this post" }, { status: 403 });
+    if (existingPost.authorId !== userId) {
+      // Read the role from the database rather than trusting the session copy.
+      // The JWT refreshes its role at most once every five minutes, so a recently
+      // demoted moderator still carried ADMIN here — and a destructive permission
+      // is the wrong one to leave cached even briefly. PUT already resolves the
+      // authoritative role; this now matches it.
+      const viewer = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { role: true },
+      });
+      const isModerator = viewer?.role === "ADMIN" || viewer?.role === "SUPER_ADMIN";
+      if (!isModerator) {
+        return NextResponse.json({ error: "You do not have permission to delete this post" }, { status: 403 });
+      }
     }
 
     await prisma.post.delete({ where: { id } });
