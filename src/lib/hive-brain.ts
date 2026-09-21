@@ -4,6 +4,8 @@ import { extractKeywords, analyzeSentiment, extractEntities, summarizeText, stri
 import { createLogger } from "@/lib/logger";
 import { generateText } from "@/lib/ai-provider";
 import { rankMemories } from "@/lib/knowledge-retention";
+import { retrieveMemories } from "@/lib/retrieval";
+import type { Audience } from "@/lib/memory-provenance";
 
 export interface HivePostInput {
   id: string;
@@ -402,7 +404,23 @@ class HiveBrain {
     };
   }
 
-  async recall(query: string, limit = 6) {
+  /**
+   * Recall, from the ranked read path.
+   *
+   * The SQL still narrows by term — a database cannot be asked to score
+   * provenance — but everything after the fetch is `lib/retrieval.ts`: visibility
+   * filtering by audience, provenance-weighted scoring, contradiction-aware
+   * reranking, a context budget, and a reason recorded for each memory that was
+   * kept.
+   *
+   * `audience` defaults to `operator`, which is what every current caller is
+   * (the admin console's neural chat, the brain's own diagnosis). It is a
+   * parameter rather than a constant because the answer to "may this be shown"
+   * depends on who is reading, and a public surface added later must be able to
+   * ask the question — with the default left as-is, adding one cannot silently
+   * widen what existing callers receive.
+   */
+  async recall(query: string, limit = 6, options: { audience?: Audience; maxChars?: number; includeExpired?: boolean } = {}) {
     const keywords = extractKeywords(query, 6).map(k => k.keyword);
     const terms = [query.trim(), ...keywords].filter(t => t.length >= 2);
     const where: { OR: object[] } = { OR: [] };
@@ -416,29 +434,45 @@ class HiveBrain {
     // relevant, and a pool of exactly `limit` leaves it nothing to choose
     // between. Taking `limit * 2` and then slicing meant the ranking could only
     // reorder what the *database* already guessed at.
+    //
+    // The pool is larger than it used to be because the read path now discards:
+    // duplicates, contradicting members and invisible scopes all consume pool
+    // slots that only the ranking can adjudicate.
     const candidates = await prisma.neuralMemory.findMany({
       where,
       orderBy: [{ accessCount: "desc" }, { createdAt: "desc" }],
-      take: limit * 4,
+      take: limit * 8,
     });
 
-    // Rank by standing — decayed confidence, extended by reinforcement — rather
-    // than by raw use count, so a memory read a hundred times two years ago does
-    // not permanently outrank what the hive learned this week. Decay only
-    // reorders; it never rewrites the stored confidence.
-    const memories = rankMemories(candidates, new Date()).slice(0, limit);
+    const result = retrieveMemories(candidates, {
+      query,
+      limit,
+      audience: options.audience ?? "operator",
+      maxChars: options.maxChars,
+      includeExpired: options.includeExpired,
+    });
+
+    if (result.summary.rejected > 0) {
+      this.log.warn("rejected memories reached retrieval", { rejected: result.summary.rejected });
+    }
+    if (result.contradictionsSurfaced.length > 0) {
+      this.log.warn("conflicting memories withheld from recall", {
+        groups: result.contradictionsSurfaced.length,
+        query: query.slice(0, 80),
+      });
+    }
 
     // Reinforce only what was actually returned. The previous shape incremented
     // every row it *fetched*, which credited memories the caller never saw and
     // made a broad query inflate rows at random.
-    if (memories.length > 0) {
+    if (result.memories.length > 0) {
       await prisma.neuralMemory.updateMany({
-        where: { id: { in: memories.map(m => m.id) } },
+        where: { id: { in: result.memories.map(m => m.id) } },
         data: { accessCount: { increment: 1 }, lastAccessedAt: new Date() },
       });
     }
 
-    return memories;
+    return result.memories;
   }
 
   async status(): Promise<HiveStatus> {

@@ -163,6 +163,36 @@ export async function runHiveSweep(): Promise<{
   };
 }
 
+/**
+ * Analytics retention: roll up daily metrics, then prune what has expired.
+ *
+ * Scheduled separately from `hive-sweep` rather than folded into it, and the
+ * separation is the point: the hive sweep runs the AI's *memory* retention,
+ * this runs the *analytics* retention, and the two have different windows (a
+ * memory decays, a page view expires). Sharing one job would tie a 90-day
+ * analytics prune to a nightly AI training pass that can fail — and a failure
+ * there would silently skip the prune, or worse, prune without having written
+ * the rollup.
+ *
+ * The window is `analytics-retention.ts`'s to decide, not this function's: it
+ * derives the rollup window from the longest table-specific retention so the
+ * aggregate always covers what is about to be deleted. A caller passing `days`
+ * here overrides that only for a deliberate backfill.
+ */
+export async function runAnalyticsRetention(days?: number): Promise<{
+  rolledUp: number;
+  totalDeleted: number;
+  tables: { table: string; deleted: number; retentionDays: number | null }[];
+}> {
+  const { runAnalyticsRetention: run } = await import("@/lib/analytics-retention");
+  const report = await run(days === undefined ? {} : { rollupDays: days });
+  return {
+    rolledUp: report.rolledUp,
+    totalDeleted: report.totalDeleted,
+    tables: report.pruned.map((p) => ({ table: p.table, deleted: p.deleted, retentionDays: p.retentionDays })),
+  };
+}
+
 /** Semantic index maintenance: embed published posts missing or stale. */
 export async function runEmbedPosts(limit = 400): Promise<{ embedded: number }> {
   const { indexPublishedPosts } = await import("@/lib/neural-vector");

@@ -383,14 +383,30 @@ export function applyLearnedAliases(
   return best;
 }
 
-export function classifyIntent(input: string): { intent: Intent; confidence: number; matchedPatterns: string[] } {
+export interface IntentScore {
+  intent: Intent;
+  score: number;
+  matchedPatterns: string[];
+}
+
+/**
+ * Every pattern's score, best first.
+ *
+ * Split out of `classifyIntent` so the *runner-up* is available. The old
+ * classifier returned a winner and a confidence and threw the rest away, which
+ * made ambiguity invisible: "system status report for content" scores two
+ * intents almost equally, and nothing downstream could tell that apart from a
+ * query that clearly meant one of them.
+ *
+ * `sort` is stable in every engine this runs on, so patterns with equal scores
+ * keep their declared order — which is what makes the winner deterministic and
+ * therefore testable.
+ */
+export function scoreAllIntents(input: string): IntentScore[] {
   const lowerInput = input.toLowerCase().replace(/[^\w\s]/g, "");
   const tokens = lowerInput.split(/\s+/);
 
-  let bestIntent: Intent = "general_platform";
-  let bestScore = 0;
-  let bestMatches: string[] = [];
-
+  const scored: IntentScore[] = [];
   for (const pattern of INTENT_PATTERNS) {
     let score = 0;
     const matched: string[] = [];
@@ -416,18 +432,308 @@ export function classifyIntent(input: string): { intent: Intent; confidence: num
       }
     }
 
-    if (score > bestScore) {
-      bestScore = score;
-      bestIntent = pattern.intent;
-      bestMatches = matched;
-    }
+    scored.push({ intent: pattern.intent, score, matchedPatterns: matched });
   }
 
-  const confidence = bestScore > 0 ? Math.min(bestScore / 6, 1.0) : 0;
-  if (bestScore < 1.5) {
+  scored.sort((a, b) => b.score - a.score);
+  return scored;
+}
+
+export function classifyIntent(input: string): { intent: Intent; confidence: number; matchedPatterns: string[] } {
+  const ranked = scoreAllIntents(input);
+  const best = ranked[0];
+  if (!best || best.score < 1.5) {
     return { intent: "unknown", confidence: 0, matchedPatterns: [] };
   }
-  return { intent: bestIntent, confidence, matchedPatterns: bestMatches };
+  const confidence = best.score > 0 ? Math.min(best.score / 6, 1.0) : 0;
+  return { intent: best.intent, confidence, matchedPatterns: best.matchedPatterns };
+}
+
+// ── Confidence calibration, ambiguity and the mutation guard ────────────────
+
+/**
+ * Version of the classifier's rule set.
+ *
+ * Recorded alongside any learned alias so a correction can be attributed to the
+ * rules it was judged against. Without a version, "the alias was wrong" and "the
+ * classifier changed under it" are indistinguishable, and an operator cannot
+ * decide which to fix.
+ */
+export const INTENT_CLASSIFIER_VERSION = "intent-2026.09.1";
+
+/**
+ * Intents that change state.
+ *
+ * The distinction this list draws is the safety property §13 of the brief asks
+ * for: an ambiguous request must not trigger a mutation. A wrong read-only
+ * classification costs a regenerated report. A wrong mutation writes to the
+ * platform. So the guard treats those two outcomes as different in kind rather
+ * than as two mistakes of different size.
+ *
+ * This is a *second* barrier, not the only one — `brain-approvals.ts` requires a
+ * human decision for anything that writes, and `lib/policies` derives the
+ * authority to act from an authenticated role. This list exists so an ambiguous
+ * request never even reaches the point of filing a proposal a human then has to
+ * reject.
+ */
+export const MUTATING_INTENTS: readonly Intent[] = [
+  "memory_manage",
+  "run_sweep",
+  "write_content",
+  "rewrite_content",
+  "expand_content",
+  "curate_content",
+  "mind_action",
+  "external_learn",
+] as const;
+
+export function isMutatingIntent(intent: Intent): boolean {
+  return MUTATING_INTENTS.includes(intent);
+}
+
+/**
+ * Below this, ask rather than act.
+ *
+ * Chosen from the scoring scale rather than from intuition: one keyword is 1
+ * point, one phrase is 3, and confidence is `score / 6`. So 0.5 means "about
+ * three keywords agreed" (3.0/6). Anything less is a guess dressed as a
+ * classification.
+ */
+export const CLARIFICATION_CONFIDENCE = 0.5;
+
+/**
+ * How close the runner-up must be before the request counts as ambiguous.
+ *
+ * Relative, not absolute: 3.0 against 2.9 is a coin flip, while 6.0 against 3.0
+ * is a decision. An absolute margin would call the first case confident because
+ * the absolute gap is the same as a 1.0-vs-0.9 comparison.
+ */
+export const AMBIGUITY_RATIO = 0.8;
+
+export interface GuardedClassification {
+  intent: Intent;
+  confidence: number;
+  matchedPatterns: string[];
+  /** The runner-up and its score, present when there was one. */
+  runnerUp?: { intent: Intent; score: number };
+  /** True when the runner-up is close enough that the choice is a guess. */
+  ambiguous: boolean;
+  /** A question to put back to the asker, present when `ambiguous` or low confidence. */
+  clarification?: string;
+  /** False when the request must not be allowed to change state. */
+  mayMutate: boolean;
+  /** Why mutation was refused, for the audit record. */
+  guardReason?: string;
+}
+
+/**
+ * Classification plus the guard.
+ *
+ * Three rules, each of which is a way the old classifier could cause harm:
+ *
+ *   1. A low-confidence request asks for clarification instead of proceeding.
+ *   2. An ambiguous request — one where the runner-up is close — is treated as
+ *      low confidence even when the winner's score looks strong, because a
+ *      6-to-5 split is more dangerous than a 2-to-0 one: the winner looks
+ *      certain and the choice is nearly even.
+ *   3. Mutation is refused unless the intent is both confident and unambiguous.
+ */
+export function classifyWithGuard(input: string): GuardedClassification {
+  const ranked = scoreAllIntents(input).filter((r) => r.score > 0);
+  const best = ranked[0];
+
+  if (!best) {
+    return {
+      intent: "unknown",
+      confidence: 0,
+      matchedPatterns: [],
+      ambiguous: false,
+      mayMutate: false,
+      guardReason: "no intent pattern matched, so no action may be taken",
+      clarification: "I could not tell what you are asking for. Could you say which report or action you mean?",
+    };
+  }
+
+  const confidence = Math.min(best.score / 6, 1.0);
+  const second = ranked[1];
+  const ambiguous = Boolean(second && second.score / best.score >= AMBIGUITY_RATIO);
+  const lowConfidence = best.score < 1.5 || confidence < CLARIFICATION_CONFIDENCE;
+
+  const result: GuardedClassification = {
+    intent: lowConfidence ? "unknown" : best.intent,
+    confidence: lowConfidence ? 0 : confidence,
+    matchedPatterns: best.matchedPatterns,
+    runnerUp: second ? { intent: second.intent, score: second.score } : undefined,
+    ambiguous,
+    mayMutate: false,
+  };
+
+  if (lowConfidence) {
+    result.clarification = "I am not confident I understood that. Could you confirm which of these you meant?" + describeRunnerUp(second);
+    result.guardReason = `classification confidence ${confidence.toFixed(2)} is below the ${CLARIFICATION_CONFIDENCE} threshold`;
+    return result;
+  }
+
+  if (ambiguous && isMutatingIntent(best.intent)) {
+    result.clarification =
+      `That could mean ${humanise(best.intent)} or ${humanise(second!.intent)}, and one of those changes the platform. ` +
+      "Which did you mean?";
+    result.guardReason = `ambiguous between "${best.intent}" (${best.score}) and "${second!.intent}" (${second!.score}), and one is a mutating intent`;
+    return result;
+  }
+
+  // An ambiguous but read-only request is allowed through at reduced confidence:
+  // reporting the wrong analysis costs a re-ask, and blocking every close call
+  // would make the assistant unusable on ordinary questions.
+  if (ambiguous) {
+    result.confidence = Math.min(result.confidence, 0.5);
+    result.guardReason = `ambiguous between "${best.intent}" and "${second!.intent}" but neither changes state`;
+  }
+
+  result.mayMutate = isMutatingIntent(best.intent) && !ambiguous;
+  return result;
+}
+
+function describeRunnerUp(second?: IntentScore): string {
+  return second ? ` (closest guess was "${humanise(second.intent)}")` : "";
+}
+
+function humanise(intent: Intent): string {
+  return intent.replace(/_/g, " ");
+}
+
+/**
+ * Resolve the intent, combining the static classifier with learned aliases.
+ *
+ * The invariant §13 asks for: **a learned alias must not override a
+ * high-confidence static classification.** An alias is derived from what an
+ * operator typed once, so it encodes one person's phrasing at one moment; the
+ * static rules encode the intent vocabulary. Letting a single past conversation
+ * rewrite how every future request is interpreted is exactly the failure mode
+ * the brief calls out — and it is unrecoverable in the sense that matters,
+ * because the behaviour change is invisible.
+ *
+ * A learned alias wins only when the static classifier had nothing to say, and
+ * `overrode` records when it did not get its way, so an operator can see that a
+ * correction is being ignored and why.
+ */
+export interface ResolvedIntent extends GuardedClassification {
+  source: "static" | "learned" | "none";
+  /** Set when a learned alias disagreed with a confident static decision. */
+  overrode?: { alias: Intent; reason: string };
+  /** Version of the rule set this decision was made under. */
+  classifierVersion: string;
+}
+
+export function resolveIntent(
+  input: string,
+  learned: { phrase: string; intent: Intent }[] = []
+): ResolvedIntent {
+  const guarded = classifyWithGuard(input);
+  const alias = applyLearnedAliases(input, learned);
+  const classifierVersion = INTENT_CLASSIFIER_VERSION;
+
+  // The static decision is "decisive" when it produced a real intent with no
+  // ambiguity. Only then can it not be overridden.
+  const decisive = guarded.intent !== "unknown" && !guarded.ambiguous;
+
+  if (!alias) {
+    return { ...guarded, source: guarded.intent === "unknown" ? "none" : "static", classifierVersion };
+  }
+
+  if (decisive) {
+    return {
+      ...guarded,
+      source: "static",
+      overrode: {
+        alias,
+        reason: `static classification "${guarded.intent}" is confident (${guarded.confidence.toFixed(2)}) and unambiguous; a learned alias may not override it`,
+      },
+      classifierVersion,
+    };
+  }
+
+  // The alias gets its chance only where the static classifier was silent or
+  // unsure — and it may not introduce a mutation there.
+  //
+  // That restriction is the whole reason aliases are safe to enable. An alias is
+  // learned from what an operator typed *once*, so a single conversation could
+  // otherwise teach the mind that an unheard-of phrase means "clear the cache",
+  // and every future use of that phrase would file a mutating proposal. §10.10
+  // of the brief forbids exactly that ("do not allow one mistaken conversation
+  // to permanently rewrite intent behaviour"), and §13.5 requires that an unknown
+  // intent must not trigger a mutation. So a mutating alias is only honoured when
+  // the static rules independently agree the request is about that intent —
+  // otherwise the alias is recorded as refused and the safe reading is kept.
+  const aliasIsMutating = isMutatingIntent(alias);
+  const staticCorroborates = aliasIsMutating && guarded.intent === alias;
+  const aliasMutationRefused = aliasIsMutating && !staticCorroborates;
+
+  return {
+    ...guarded,
+    intent: aliasMutationRefused ? guidedFallback(guarded) : alias,
+    source: "learned",
+    mayMutate: staticCorroborates && !guarded.ambiguous,
+    guardReason: aliasMutationRefused
+      ? `learned alias "${alias}" is a mutating intent and the static classifier did not independently reach it, so the alias is not applied — an alias learned from one conversation must not create a mutation`
+      : guidedFallbackReason(guarded, alias),
+    classifierVersion,
+  };
+}
+
+/** Keeps the safe static reading when a learned alias is refused. */
+function guidedFallback(guarded: GuardedClassification): Intent {
+  return guarded.intent === "unknown" ? "general_platform" : guarded.intent;
+}
+
+function guidedFallbackReason(guarded: GuardedClassification, alias: Intent): string | undefined {
+  return guarded.intent === "unknown"
+    ? `no static pattern matched, so the learned alias "${alias}" was applied`
+    : `static classification was ambiguous, so the learned alias "${alias}" was applied`;
+}
+
+/**
+ * Per-intent accuracy, for the operator-facing report §13 asks for.
+ *
+ * In-memory and bounded, in the same shape as the query-budget and cache-policy
+ * logs: enough to answer "is intent classification getting worse" without a
+ * metrics backend, and honest about being per-instance rather than global.
+ * A durable series belongs in Phase O with the rest of the observability work.
+ */
+interface IntentCounters {
+  total: number;
+  correct: number;
+}
+
+const OUTCOME_LIMIT = 200;
+const outcomes: { intent: Intent; correct: boolean; at: string }[] = [];
+const counters = new Map<Intent, IntentCounters>();
+
+/** Record whether the resolved intent turned out to be what the asker meant. */
+export function recordIntentOutcome(intent: Intent, correct: boolean): void {
+  const current = counters.get(intent) ?? { total: 0, correct: 0 };
+  counters.set(intent, { total: current.total + 1, correct: current.correct + (correct ? 1 : 0) });
+  outcomes.push({ intent, correct, at: new Date().toISOString() });
+  if (outcomes.length > OUTCOME_LIMIT) outcomes.shift();
+}
+
+export function intentAccuracyReport(): {
+  perIntent: { intent: Intent; total: number; correct: number; accuracy: number }[];
+  overall: { total: number; correct: number; accuracy: number };
+} {
+  const perIntent = [...counters.entries()]
+    .map(([intent, c]) => ({ intent, total: c.total, correct: c.correct, accuracy: c.total > 0 ? c.correct / c.total : 0 }))
+    .sort((a, b) => b.total - a.total);
+
+  const total = perIntent.reduce((s, r) => s + r.total, 0);
+  const correct = perIntent.reduce((s, r) => s + r.correct, 0);
+  return { perIntent, overall: { total, correct, accuracy: total > 0 ? correct / total : 0 } };
+}
+
+/** Test seam — the counters are process-global and would otherwise leak between tests. */
+export function resetIntentMetrics(): void {
+  counters.clear();
+  outcomes.length = 0;
 }
 
 export function extractUrls(text: string): string[] {

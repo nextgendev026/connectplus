@@ -1,4 +1,5 @@
 import { createLogger } from "@/lib/logger";
+import { safeFetch } from "@/lib/safe-fetch";
 
 const log = createLogger("web-research");
 
@@ -28,22 +29,38 @@ export interface ResearchFinding extends SearchResult {
   text: string;
 }
 
-/** Fetch with a hard timeout so one slow host cannot stall a chat turn. */
-async function timedFetch(url: string, ms: number, init?: RequestInit): Promise<Response | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), ms);
-  try {
-    return await fetch(url, {
-      ...init,
-      signal: ctrl.signal,
-      redirect: "follow",
-      headers: { "User-Agent": UA, Accept: "text/html,application/json;q=0.9,*/*;q=0.8", ...(init?.headers ?? {}) },
-    });
-  } catch {
+/**
+ * Fetch a URL through the SSRF guard.
+ *
+ * Every address this module reads is either one we chose (DuckDuckGo, Wikipedia)
+ * or one that arrived from a *search result* — and a search result is
+ * attacker-influenced evidence, because nothing stops a page from ranking for a
+ * query and pointing at `http://169.254.169.254/`. `fetchPageText` is therefore
+ * the real entry point this guard exists for: before it, `redirect: "follow"`
+ * meant the URL we checked was not the URL we fetched.
+ *
+ * The timeout is enforced inside `safeFetch` (per request, and again per
+ * redirect hop), so one slow host still cannot stall a chat turn.
+ */
+async function fetchText(
+  url: string,
+  options: { timeoutMs: number; maxBytes?: number; accept?: readonly string[] }
+): Promise<string | null> {
+  const result = await safeFetch(url, {
+    timeoutMs: options.timeoutMs,
+    maxBytes: options.maxBytes ?? 512 * 1024,
+    accept: options.accept,
+    // A user agent is not a security control; it is what makes publisher sites
+    // answer at all instead of serving a bot wall.
+    headers: { "User-Agent": UA },
+  });
+  if (!result.ok) {
+    // A refusal is worth saying out loud: several in a row mean something is
+    // pointing the reader at addresses it should not reach.
+    log.warn("fetch refused", { url: url.slice(0, 160), reason: result.reason, detail: result.detail });
     return null;
-  } finally {
-    clearTimeout(timer);
   }
+  return result.text;
 }
 
 function decodeEntities(s: string): string {
@@ -72,12 +89,11 @@ function unwrapDdg(href: string): string {
 }
 
 async function duckduckgo(query: string, limit: number): Promise<SearchResult[]> {
-  const res = await timedFetch(
+  const html = await fetchText(
     `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}&kl=ke-en`,
-    8000
+    { timeoutMs: 8000, accept: ["text/html"] }
   );
-  if (!res || !res.ok) return [];
-  const html = await res.text();
+  if (!html) return [];
 
   const results: SearchResult[] = [];
   // Each result block carries class="result__a" (link) and "result__snippet".
@@ -97,15 +113,15 @@ async function duckduckgo(query: string, limit: number): Promise<SearchResult[]>
 }
 
 async function wikipedia(query: string, limit: number): Promise<SearchResult[]> {
-  const search = await timedFetch(
+  const raw = await fetchText(
     `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(
       query
     )}&format=json&origin=*&srlimit=${limit}`,
-    7000
+    { timeoutMs: 7000, accept: ["application/json", "text/plain"] }
   );
-  if (!search || !search.ok) return [];
+  if (!raw) return [];
   try {
-    const data = (await search.json()) as {
+    const data = JSON.parse(raw) as {
       query?: { search?: { title: string; snippet: string }[] };
     };
     return (data.query?.search ?? []).slice(0, limit).map((r) => ({
@@ -159,12 +175,22 @@ export function extractReadable(html: string): string {
 }
 
 export async function fetchPageText(url: string, maxChars = 4000): Promise<string> {
-  const res = await timedFetch(url, 9000);
-  if (!res || !res.ok) return "";
-  const type = res.headers.get("content-type") ?? "";
-  if (!/text\/html|text\/plain|application\/json/.test(type)) return "";
-  const raw = await res.text();
-  const text = /json/.test(type) ? raw.slice(0, maxChars) : extractReadable(raw);
+  const result = await safeFetch(url, {
+    timeoutMs: 9000,
+    // Generous enough for a real article page, bounded enough that a hostile
+    // endpoint cannot make us buffer an unbounded body.
+    maxBytes: 1_500_000,
+    accept: ["text/html", "text/plain", "application/json"],
+    headers: { "User-Agent": UA },
+  });
+
+  if (!result.ok) {
+    log.warn("page refused", { url: url.slice(0, 160), reason: result.reason, detail: result.detail });
+    return "";
+  }
+
+  const isJson = (result.contentType ?? "").includes("json");
+  const text = isJson ? result.text : extractReadable(result.text);
   return text.slice(0, maxChars);
 }
 

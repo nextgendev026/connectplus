@@ -1,88 +1,58 @@
 /**
- * Standardised API response helpers.
+ * @deprecated Superseded by `@/lib/contracts` (successes) and `@/lib/errors`
+ * (failures). Kept as a thin shim so the file cannot circulate a *third*
+ * response shape: both functions below now emit the same envelope every
+ * `/api/v1` route emits.
  *
- * The problem: every route formats its own error. One returns `{ message: "..." }`,
- * another returns `{ error: "..." }`, a third returns `{ detail: "..." }`. The
- * frontend has to guess which shape a given endpoint uses, and the error-tracking
- * pipeline cannot aggregate them because they are all different.
- *
- * These helpers fix that by making every API response — success or failure —
- * follow the same shape. Every success carries `ok: true`, every failure
- * carries `ok: false` and a machine-readable `code`.
- *
- * The helpers also add a request id when one is present (Next.js sets
- * `x-request-id` on every incoming request), so a 4xx in the logs can be
- * matched to the 4xx the user saw without searching by timestamp.
+ * The history is worth keeping. This module was written to unify error shapes
+ * and then never imported — so the repo ended up with its own intent recorded in
+ * a file nothing used, while 396 call sites hand-rolled `{ error: "..." }`
+ * anyway. A shared helper that nobody calls is not a standard; a shape enforced
+ * by a wrapper (see `apiHandler`) is. New code should not import this file.
  */
 
 import { NextResponse } from "next/server";
+import { type ApiErrorCode, errorPayload, ERROR_STATUS } from "@/lib/errors";
+import { anonymousContext } from "@/lib/request-context";
+import { okResponse, type ApiOkPayload } from "@/lib/contracts";
 
-export type ApiOk<T> = { ok: true; data: T };
+export type ApiOk<T> = ApiOkPayload<T>;
 
-export type ApiError = {
-  ok: false;
-  error: string;
-  code: string;
-  details?: unknown;
-};
-
-export type ApiResponse<T> = ApiOk<T> | ApiError;
-
-/**
- * A successful response.
- *
- * `data` can be anything — a list, a single object, null. The wrapper
- * guarantees the consumer always gets `{ ok: true, data }`.
- */
-export function apiOk<T>(data: T, status = 200): NextResponse<ApiOk<T>> {
-  return NextResponse.json({ ok: true, data }, { status });
+/** @deprecated Use `okResponse(data, ctx)` from `@/lib/contracts`. */
+export function apiOk<T>(data: T, status = 200): NextResponse<ApiOkPayload<T>> {
+  return okResponse(data, anonymousContext(), { status });
 }
 
 /**
- * A standardised error response.
- *
- * `code` is a stable machine-readable slug (e.g. `not_found`, `forbidden`,
- * `validation_failed`) that the frontend can switch on rather than matching
- * free-form error strings. `message` is the human-readable explanation.
+ * @deprecated Prefer throwing an `AppError` from `@/lib/errors` and letting
+ * `apiHandler` shape the response. This exists for callers that must *return* a
+ * failure rather than throw one.
  */
 export function apiError(
   message: string,
   status: 400 | 401 | 403 | 404 | 409 | 422 | 429 | 500,
   code?: string
-): NextResponse<ApiError> {
+): NextResponse<ReturnType<typeof errorPayload>> {
+  // Map the legacy status-first signature onto the code-first vocabulary, so the
+  // two entry points cannot disagree about what a 403 is called.
+  const mapped: ApiErrorCode =
+    code && (code.toUpperCase() in ERROR_STATUS)
+      ? (code.toUpperCase() as ApiErrorCode)
+      : STATUS_CODES[status] ?? "INTERNAL_ERROR";
+
   return NextResponse.json(
-    {
-      ok: false,
-      error: message,
-      code: code ?? statusToCode(status),
-    },
+    errorPayload(mapped, message, [], anonymousContext().requestId),
     { status }
   );
 }
 
-function statusToCode(status: number): string {
-  const map: Record<number, string> = {
-    400: "bad_request",
-    401: "unauthenticated",
-    403: "forbidden",
-    404: "not_found",
-    409: "conflict",
-    422: "unprocessable",
-    429: "rate_limited",
-    500: "internal_error",
-  };
-  return map[status] ?? "error";
-}
-
-/**
- * Convenience: throw on unexpected errors with a consistent shape.
- *
- *   try {
- *     await doSomething();
- *   } catch (error) {
- *     return apiThrow("The operation failed", 500);
- *   }
- */
-export function apiThrow(message: string, status: 500): NextResponse<ApiError> {
-  return apiError(message, status);
-}
+const STATUS_CODES: Record<number, ApiErrorCode> = {
+  400: "VALIDATION_ERROR",
+  401: "AUTHENTICATION_REQUIRED",
+  403: "FORBIDDEN",
+  404: "NOT_FOUND",
+  409: "CONFLICT",
+  422: "VALIDATION_ERROR",
+  429: "RATE_LIMITED",
+  500: "INTERNAL_ERROR",
+};

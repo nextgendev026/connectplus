@@ -19,8 +19,26 @@ import {
   stationSources,
 } from "@/lib/radio-stations";
 import type { RadioStation } from "@/lib/radio-stations";
+import { reconnectDelayMs, shouldRetry } from "@/lib/radio-reconnect";
 
-export type StreamState = "idle" | "connecting" | "playing" | "error";
+export type StreamState =
+  | "idle"
+  | "connecting"
+  | "playing"
+  /** A failure we are still working on. The UI may say "reconnecting". */
+  | "error"
+  /**
+   * A failure we have stopped working on.
+   *
+   * Separate from `error` because the two demand opposite things of the
+   * listener. `error` means a retry is already in flight and there is nothing to
+   * do but wait; `failed` means nothing is happening and nothing will, until
+   * they act. Before this existed the UI said "Reconnecting…" for both — which is
+   * a lie in the second case, and the reason a dead station could sit there
+   * claiming to reconnect forever while the platform quietly re-opened a session
+   * against a third party every sixty seconds.
+   */
+  | "failed";
 
 /**
  * How the current channel reaches the browser.
@@ -79,6 +97,16 @@ interface RadioPlayerContextValue {
   playSource: (source: number) => void;
   togglePlay: () => void;
   stop: () => void;
+  /**
+   * Try again after the player has given up.
+   *
+   * The counterpart to the attempt cap: bounding the retries would be a dead end
+   * on its own, because a listener staring at "stream unavailable" needs a way to
+   * ask again — a station that was down for two minutes is often back. Resets the
+   * counters so the new set of attempts gets the full backoff budget rather than
+   * inheriting an exhausted one.
+   */
+  retry: () => void;
   setVolume: (v: number) => void;
   toggleFavorite: (stationId: string) => void;
   skip: (dir: 1 | -1) => void;
@@ -242,9 +270,27 @@ export function RadioPlayerProvider({
   // pre-roll spot at the start of each one — so a fast reconnect loop did not
   // merely retry, it replayed the same advert over and over and buried the
   // music. Backing off also stops a flapping mount from being hammered.
-  const RECONNECT_FLOOR_MS = 8000;
   const scheduleReconnect = useCallback(() => {
-    const delay = Math.min(RECONNECT_FLOOR_MS * 2 ** retryCount.current, 60_000);
+    // Give up after a bounded number of attempts, rather than retrying until the
+    // tab closes.
+    //
+    // Backing off was already right; not stopping was the bug. The delay curve
+    // reached its 60s ceiling on attempt four and then stayed there forever, so a
+    // station that was simply off the air was re-opened every minute for as long
+    // as the page stayed up — worst on exactly the hosts this player otherwise
+    // treats carefully, since a relay that sells listener time plays a pre-roll
+    // at the start of every new session.
+    //
+    // The policy itself lives in `@/lib/radio-reconnect` so the curve and the
+    // terminus are testable as functions rather than only observable by leaving a
+    // tab open. This is the wiring; that module is the rule.
+    if (!shouldRetry(retryCount.current)) {
+      streamFailed.current = true;
+      setIsPlaying(false);
+      setStreamState("failed");
+      return;
+    }
+    const delay = reconnectDelayMs(retryCount.current);
     retryCount.current += 1;
     if (retryTimer.current) clearTimeout(retryTimer.current);
     retryTimer.current = setTimeout(() => {
@@ -271,6 +317,41 @@ export function RadioPlayerProvider({
   useEffect(() => {
     scheduleReconnectRef.current = scheduleReconnect;
   }, [scheduleReconnect]);
+
+  /**
+   * Try the current station again, on demand.
+   *
+   * Fired from the player bar once the attempts are spent. It tunes immediately
+   * rather than going through `scheduleReconnect`, because the listener has
+   * already waited out the backoff and asked — making them sit through another
+   * eight seconds to reach the same request would be a worse answer than the
+   * automatic path it replaces.
+   */
+  const retry = useCallback(() => {
+    const current = stationRef.current;
+    const audio = audioRef.current;
+    if (!current || !audio) return;
+    // An explicit request to play, so the paused flag the reconnect path checks
+    // before acting is cleared first — otherwise nothing below would run.
+    pausedByUser.current = false;
+    retryCount.current = 0;
+    streamFailed.current = false;
+    setAdBreakSuspected(false);
+    setIsPlaying(true);
+    setStreamState("connecting");
+    const resumeSource = playedSourceRef.current ?? preferredSourceIndex(current);
+    sourceRef.current = resumeSource;
+    const target = resolveStream(current, resumeSource);
+    transportRef.current = target.transport;
+    setSignal((prev) => ({
+      ...prev,
+      source: resumeSource,
+      transport: target.transport,
+      directCapable: target.directCapable,
+    }));
+    audio.src = target.url;
+    audio.play().catch(() => scheduleReconnectRef.current());
+  }, [resolveStream]);
 
   // Drop pending reconnect work on unmount / manual stop.
   useEffect(() => {
@@ -684,8 +765,9 @@ export function RadioPlayerProvider({
       setVolume,
       toggleFavorite,
       skip,
+      retry,
     }),
-    [station, isPlaying, streamState, volume, favorites, recentlyPlayed, nowPlaying, signal, adBreakSuspected, playStation, playSource, togglePlay, stop, setVolume, toggleFavorite, skip]
+    [station, isPlaying, streamState, volume, favorites, recentlyPlayed, nowPlaying, signal, adBreakSuspected, playStation, playSource, togglePlay, stop, setVolume, toggleFavorite, skip, retry]
   );
 
   return (

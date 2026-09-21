@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Sparkles, X } from "lucide-react";
+import { AlertTriangle, Check, Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PilotEditReview, PilotField } from "@/lib/brain-pilot";
 import { PILOT_QUICK_ACTIONS, type PilotAction } from "@/lib/brain-pilot";
@@ -121,6 +121,9 @@ export function PilotReview({
   reply,
   reviews,
   busy = false,
+  stale = null,
+  forced = false,
+  onApplyAnyway,
   onAccept,
   onReject,
   onAcceptAll,
@@ -131,6 +134,11 @@ export function PilotReview({
   reply: string;
   reviews: PilotEditReview[];
   busy?: boolean;
+  /** Set when the draft moved since these edits were written. Null when in sync. */
+  stale?: string | null;
+  /** True once the writer has chosen to land them anyway. */
+  forced?: boolean;
+  onApplyAnyway?: () => void;
   onAccept: (index: number) => void;
   onReject: (index: number) => void;
   onAcceptAll: () => void;
@@ -164,6 +172,44 @@ export function PilotReview({
           <X className="h-3.5 w-3.5" />
         </button>
       </header>
+
+      {/*
+        The conflict banner goes above the diffs on purpose.
+
+        Every diff below is rendered against the text these edits were written
+        for, not the text now in the editor, so on a stale reply the whole list is
+        subtly misleading — it shows what would have landed on a draft the writer
+        has since changed. Saying so before they read the diffs is the difference
+        between a warning and an afterthought.
+      */}
+      {stale ? (
+        <div
+          role="status"
+          className="mt-2.5 rounded-lg border border-warning-strong/30 bg-warning-strong/10 p-2.5"
+        >
+          <p className="flex items-start gap-1.5 type-meta leading-relaxed text-warning-strong">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              These edits may be out of date — {stale}. Applying them replaces what you have
+              written since; keeping them updates the whole draft below the line, so undo restores
+              what is here now.
+            </span>
+          </p>
+          {onApplyAnyway && !forced ? (
+            <button
+              type="button"
+              onClick={onApplyAnyway}
+              className="mt-2 rounded-lg border border-warning-strong/40 bg-warning-strong/15 px-2.5 py-1 type-caption font-semibold text-warning-strong transition hover:bg-warning-strong/25"
+            >
+              I understand — apply against the current draft
+            </button>
+          ) : (
+            <p className="mt-2 type-caption font-medium text-warning-strong">
+              Applying against the current draft. Undo will return you here.
+            </p>
+          )}
+        </div>
+      ) : null}
 
       {reply ? <p className="mt-2 type-meta text-surface-400">{reply}</p> : null}
 

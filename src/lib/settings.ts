@@ -2,6 +2,17 @@ import { prisma } from "./prisma";
 import { cacheGet, cacheSet, redisDel } from "./redis";
 import { DEFAULT_OG_IMAGE } from "./brand";
 import { buildAnalyticsSnippet, sanitizeIntegrationHtml } from "./integration-scripts";
+import { routableProviderIds } from "./providers/registry";
+
+/**
+ * The provider list, read from the registry rather than written here.
+ *
+ * This module used to be the second of three places that answered "which AI
+ * providers exist", and it was the one that offered fields for providers the
+ * gateway could not call. Reading the registry removes the possibility of that
+ * disagreement rather than relying on the next editor to keep two lists in step.
+ */
+const ROUTABLE_PROVIDER_IDS = routableProviderIds();
 
 /**
  * Platform settings store — the backbone of the Admin "Settings & Integrations"
@@ -472,15 +483,29 @@ export const SETTINGS_CATALOG: SettingDef[] = [
     defaultValue: "builtin",
     group: "api",
     label: "AI provider",
-    hint: "builtin (self-contained) or one of the free gateways: openrouter / opencode. Paid providers are not offered.",
+    // Derived from the registry, so a provider added there appears in this hint
+    // without a second edit — and a provider the gateway cannot route can never
+    // be advertised here. `tests/unit/docs-drift.test.ts` asserts the two agree.
+    hint: `builtin (self-contained) or one of: ${ROUTABLE_PROVIDER_IDS.join(" / ")}. A provider the gateway has no adapter for is not offered.`,
     type: "text",
   },
+  // The hints below were wrong in a way that mattered, and the corrections come
+  // from `lib/providers/registry.ts` rather than from memory:
+  //
+  //   • `openaiApiKey` said it was "used for AI headline/excerpt generation when
+  //     provider is openai". There is no `openai` provider — the hint was
+  //     corrected from a reader that does exist (`visual-studio.ts`, image
+  //     generation). The key is live; the label was not.
+  //   • `anthropicApiKey` said "used when provider is anthropic". No module reads
+  //     it at all, so the field is retained for compatibility with stored values
+  //     but is explicitly marked as read by nothing, instead of inviting an
+  //     operator to believe it enables something.
   {
     key: "openaiApiKey",
     defaultValue: "",
     group: "api",
-    label: "OpenAI API key",
-    hint: "Used for AI headline/excerpt generation when provider is openai.",
+    label: "OpenAI API key (image generation)",
+    hint: "Enables full-quality image generation in the Visual Studio. It does NOT let the AI gateway call OpenAI — text models route through OpenRouter or OpenCode.",
     type: "secret",
     isSecret: true,
   },
@@ -488,8 +513,8 @@ export const SETTINGS_CATALOG: SettingDef[] = [
     key: "anthropicApiKey",
     defaultValue: "",
     group: "api",
-    label: "Anthropic API key",
-    hint: "Used when provider is anthropic.",
+    label: "Anthropic API key (not in use)",
+    hint: "Nothing reads this key: the gateway has no Anthropic adapter. Route Claude through OpenRouter, or add a gateway record in lib/ai-provider.ts. Retained so an existing value is visible rather than silently orphaned.",
     type: "secret",
     isSecret: true,
   },
@@ -497,16 +522,16 @@ export const SETTINGS_CATALOG: SettingDef[] = [
     key: "openaiModel",
     defaultValue: "",
     group: "api",
-    label: "OpenAI model",
-    hint: "Optional model override, e.g. gpt-5.4-mini.",
+    label: "OpenAI image model",
+    hint: "Optional override for the image generator's model, e.g. gpt-image-1.",
     type: "text",
   },
   {
     key: "anthropicModel",
     defaultValue: "",
     group: "api",
-    label: "Anthropic model",
-    hint: "Optional model override, e.g. claude-haiku-4-5.",
+    label: "Anthropic model (not in use)",
+    hint: "Nothing reads this, for the same reason as the key above.",
     type: "text",
   },
   {

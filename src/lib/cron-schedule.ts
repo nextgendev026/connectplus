@@ -7,6 +7,7 @@ import {
   type JobHeartbeat,
 } from "./job-heartbeat";
 import {
+  runAnalyticsRetention,
   runBrainDiagnosis,
   runEmbedPosts,
   runFeedHealth,
@@ -234,6 +235,30 @@ export const CRON_JOBS: readonly CronJobDef[] = [
     everyMinutes: 360,
     essential: false,
     run: () => runPlatformPulse(),
+  },
+  {
+    id: "analytics-retention",
+    name: "Analytics retention",
+    description:
+      "Rolls high-volume event tables up into daily metrics, then deletes rows past their retention window. Financial and moderation records are explicitly retained.",
+    // Daily at 02:30 UTC, one slot before the brain's own diagnosis. Ordered
+    // this way on purpose: the diagnosis reads job heartbeats, and a retention
+    // run that is still mid-delete while it is being measured would be reported
+    // as a stalled job rather than a busy one.
+    //
+    // The hour also matters for a subtler reason. This job deletes rows, and the
+    // only safe time to delete is when nobody is querying them; 02:30 UTC is
+    // inside the quiet window for this audience (05:30 in Nairobi, 04:30 in
+    // Lagos), and the daily buckets it writes are complete by then because it
+    // only rolls up days that have ended.
+    cron: "30 2 * * *",
+    everyMinutes: 1440,
+    // Not in the daily safety net. A retention pass that missed its slot is
+    // caught up the next night with no loss — it is a rolling window, not a
+    // point-in-time obligation — and a mid-day catch-up would run a large
+    // delete inside peak traffic.
+    essential: false,
+    run: () => runAnalyticsRetention(),
   },
   {
     id: "brain-diagnose",

@@ -14,7 +14,7 @@ import {
 import { useRadioPlayer } from "@/components/radio/RadioPlayerContext";
 
 export function RadioPlayerBar() {
-  const { station, isPlaying, streamState, nowPlaying, signal, playSource, togglePlay, stop, setVolume, volume, skip, adBreakSuspected } = useRadioPlayer();
+  const { station, isPlaying, streamState, nowPlaying, signal, playSource, togglePlay, stop, setVolume, volume, skip, adBreakSuspected, retry } = useRadioPlayer();
   const [isMuted, setIsMuted] = useState(false);
 
   if (!station) return null;
@@ -48,9 +48,11 @@ export function RadioPlayerBar() {
                 <p className="truncate text-xs text-surface-400 animate-marquee">
                   {adBreakSuspected
                     ? "Ad break on this station — skip to keep listening"
-                    : streamState === "error"
-                      ? "Stream reconnecting…"
-                      : songLine}
+                    : streamState === "failed"
+                      ? "Stream unavailable"
+                      : streamState === "error"
+                        ? "Stream reconnecting…"
+                        : songLine}
                 </p>
               </div>
             </div>
@@ -89,6 +91,19 @@ export function RadioPlayerBar() {
                 // it is and offer the exit.
                 <button onClick={() => skip(1)} className="text-amber-400 hover:underline">
                   Ad break — tap to skip to the next station
+                </button>
+              ) : streamState === "failed" ? (
+                /**
+                 * The terminal state, and the reason it needed saying.
+                 *
+                 * "Reconnecting…" was shown here too, which was false: the
+                 * attempts were exhausted and nothing was in flight. A listener
+                 * reading it would reasonably wait, and waiting was the one
+                 * response that could not help. Say what happened and give them
+                 * the action that does.
+                 */
+                <button onClick={retry} className="text-amber-400 hover:underline">
+                  Stream unavailable — tap to try again
                 </button>
               ) : streamState === "error" ? (
                 <button

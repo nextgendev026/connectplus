@@ -14,6 +14,7 @@ import { findDuplicate } from "@/lib/neural-vector";
 import { postCoverSrc } from "@/lib/thumb";
 import { convexViewCounts, mergeLiveViewCounts } from "@/lib/convex";
 import { checkPostsQuota, QuotaError } from "@/lib/plans";
+import { claimCreate, completeCreate, readIdempotencyKey, releaseClaim } from "@/lib/studio/save-ledger";
 
 // NOTE: `coverImage` is deliberately absent — stored covers can be multi-MB
 // base64 data URIs, and selecting them bloated every feed response (and the
@@ -220,6 +221,10 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  // Declared outside the try so the catch can release the claim. A create that
+  // threw must not leave a claim behind: without the release, the writer's retry
+  // would be refused by a claim belonging to an attempt that never succeeded.
+  let idempotencyKey: string | null = null;
   try {
     const session = await auth();
 
@@ -228,6 +233,67 @@ export async function POST(request: NextRequest) {
     }
 
     const userId = session.user.id;
+
+    // Idempotent create. The Studio sends the key `sessionId:revision:hash` on
+    // every save, derived rather than random, so a retry of the same intent — a
+    // lost response, a re-armed timer — is recognised instead of producing a
+    // second draft. A request without the header behaves exactly as before, so
+    // this is additive for every other client.
+    idempotencyKey = readIdempotencyKey(request);
+    if (idempotencyKey) {
+      const claim = await claimCreate(userId, idempotencyKey);
+      if (claim.status === "existing") {
+        const existing = await prisma.post.findUnique({
+          where: { id: claim.postId },
+          include: {
+            author: { select: { id: true, name: true, username: true, avatar: true } },
+            category: { select: { id: true, name: true, slug: true } },
+            tags: { select: { id: true, name: true, slug: true } },
+            _count: { select: { comments: true, likes: true } },
+          },
+        });
+        if (existing) {
+          // 200, not 201: nothing was created, and a client that branches on the
+          // status should be able to tell the difference.
+          return NextResponse.json(
+            { post: existing, moderationStatus: existing.moderationStatus, idempotent: true },
+            { status: 200 }
+          );
+        }
+        // The claim outlived its document, or pointed at a post since deleted.
+        // Reported honestly rather than silently creating a replacement, because
+        // the caller's intent is ambiguous at this point and guessing could
+        // produce exactly the duplicate this exists to prevent.
+        return NextResponse.json(
+          {
+            error: "This save was already attempted and the draft it created is gone.",
+            code: "SAVE_CLAIM_STALE",
+            message: "Reload the Studio and start a new draft.",
+          },
+          { status: 409 }
+        );
+      }
+      if (claim.status === "in_flight") {
+        // The claim exists but has no document yet: a concurrent request with the
+        // same key is mid-create. Refusing is the whole point — creating here
+        // would produce the duplicate draft.
+        return NextResponse.json(
+          {
+            error: "This save is already being processed.",
+            code: "SAVE_IN_FLIGHT",
+            message: "Retry in a moment.",
+          },
+          { status: 409, headers: { "Retry-After": "1" } }
+        );
+      }
+      if (claim.status === "unavailable") {
+        // The ledger could not be consulted. Proceeding is the right call — a
+        // duplicate-prevention feature must not become an outage — but the
+        // degradation is logged so it is visible rather than assumed away.
+        console.warn("draft idempotency unavailable, proceeding without a claim:", claim.reason);
+      }
+    }
+
     const body = await request.json();
     const { title, content, excerpt, coverImage, categoryId, tags, status, scheduledAt } = body;
 
@@ -389,6 +455,11 @@ export async function POST(request: NextRequest) {
         }
       });
     }
+    // The claim is completed only now, once a document actually exists. A
+    // claim completed earlier would answer a retry with a `postId` for a row
+    // that was never committed.
+    if (idempotencyKey) await completeCreate(idempotencyKey, post.id);
+
     await hiveBrain.ingestPost(post).catch(() => {});
 
     return NextResponse.json(
@@ -397,6 +468,8 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     console.error("Error creating post:", error);
+    // Release so the writer's retry is not blocked by a failed attempt.
+    if (idempotencyKey) await releaseClaim(idempotencyKey);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

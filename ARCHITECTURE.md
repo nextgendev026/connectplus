@@ -6,21 +6,21 @@ This document describes how ConnectPlus is built, why it is built that way, and 
 
 ## Overview
 
-ConnectPlus is a Next.js 15 App Router application backed by PostgreSQL (Supabase), with optional offloading to Convex for high-frequency view tracking and ad metrics. It runs as a single serverless deployment on Vercel, with a Cloudflare Worker providing the livescore data proxy.
+ConnectPlus is a Next.js 16 App Router application backed by PostgreSQL (Supabase), with optional offloading to Convex for high-frequency view tracking and ad metrics. It runs as a single serverless deployment on Vercel, with a Cloudflare Worker providing the livescore data proxy and the edge cache.
 
 **Stack:**
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| Frontend | Next.js 15, React 19, Tailwind CSS | Server-rendered pages, client interactivity |
-| API | Next.js Route Handlers (App Router) | 107 endpoints, serverless functions |
+| Frontend | Next.js 16, React 19, Tailwind CSS | Server-rendered pages, client interactivity |
+| API | Next.js Route Handlers (App Router) | One handler file per endpoint, serverless functions |
 | Database | PostgreSQL via Supabase + Prisma ORM | All persistent data |
 | Cache | Upstash Redis (or in-memory fallback) | Rate limiting, session caching, API SWR |
 | Offload | Convex (optional) | View counts, ad metrics — high-frequency writes |
-| AI | OpenAI / Anthropic / OpenRouter / Gemini | Content generation, analysis, copilot |
+| AI | OpenRouter (free tier) · OpenCode Zen · deterministic builtin fallback | Content generation, analysis, copilot. The `openaiApiKey` / `anthropicApiKey` settings exist but are **not** routable by the gateway — see `docs/MODERNIZATION-AUDIT.md` F-04 |
 | Push | Web Push (VAPID) | Browser notifications, sports alerts |
 | Media | Image optimizer (`/api/optimize`) | Resizing, compression, AVIF/WebP negotiation |
-| Scheduler | Inngest (serverless cron) | RSS intake, feed health, nightly sweeps |
+| Scheduler | Inngest (owns every cadence) · Vercel safety-net cron · Cloudflare Worker cron triggers · cron-job.org (legacy) | RSS intake, feed health, nightly sweeps, live scores. All four derive from `src/lib/cron-schedule.ts` |
 
 ---
 
@@ -32,7 +32,7 @@ src/
 │   ├── (auth)/                 # Auth flows (sign in, sign up, error)
 │   ├── (admin)/admin/          # Admin console (health, neural, ads, etc.)
 │   ├── (public)/               # Public pages (home, feeds, sports, etc.)
-│   └── api/                    # 107 Route Handlers
+│   └── api/                    # Route Handlers, one file per endpoint (see `find src/app -name route.ts`)
 │       ├── admin/              # Admin-only endpoints
 │       ├── ai/                 # AI features (studio, generate, enhance)
 │       ├── brain/              # Brain approvals (chat-initiated writes)
@@ -144,7 +144,19 @@ Every image — covers, avatars, RSS imports, uploaded photos — goes through `
 
 ### 5. Cron parity
 
-Both the Inngest scheduler and the safety-net cron registry derive from the same `CRON_JOBS` array. A job that exists in one but not the other is caught by a test. The `cron-wiring.test.ts` file enforces this invariant.
+**Four** schedulers can run a job, and all of them read the same `CRON_JOBS` registry:
+
+| Scheduler | Owns |
+| --- | --- |
+| Inngest | every cadence — the intended owner |
+| Vercel cron (`vercel.json`) | exactly one entry: `/api/cron/safety-net`, daily at 00:15 UTC |
+| Cloudflare Worker (`workers/edge-cache`) | the five high-frequency jobs, every 2–360 minutes |
+| cron-job.org | legacy external trigger for `/api/cron?trigger=<id>` |
+
+A job that exists in the registry but not in the Inngest wiring is caught by a test, and the Vercel
+cron count is pinned by another. Before Phase A this section said Inngest was the only scheduler,
+which hid the fact that the edge Worker owns the two-minute board. See
+`docs/MODERNIZATION-AUDIT.md` for the full drift list.
 
 ---
 

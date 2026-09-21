@@ -165,8 +165,8 @@ describe("the copilot boundary", () => {
 
   it("imports no approvals, operations or action-executing module", () => {
     const forbidden = ["brain-approvals", "admin-intelligence", "mind-actions", "brain-repair"];
-    for (const module of forbidden) {
-      expect(imports.some((i) => i.endsWith(module)), `neural-studio imports ${module}`).toBe(false);
+    for (const banned of forbidden) {
+      expect(imports.some((i) => i.endsWith(banned)), `neural-studio imports ${banned}`).toBe(false);
     }
   });
 

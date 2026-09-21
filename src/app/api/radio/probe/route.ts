@@ -6,6 +6,7 @@ import {
   stationSources,
   type RadioStation,
 } from "@/lib/radio-stations";
+import { openValidatedStream } from "@/lib/radio-stream-guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,7 +14,6 @@ export const maxDuration = 30;
 
 export interface ProbeResult {
   index: number;
-  url: string;
   ok: boolean;
   status: number | null;
   contentType: string | null;
@@ -25,16 +25,14 @@ export interface ProbeResult {
 const PROBE_TTL_MS = 5 * 60 * 1000;
 const probeCache = new Map<string, { expiresAt: number; data: ProbeResult[] }>();
 
-async function probeSource(url: string, timeoutMs = 7000): Promise<Omit<ProbeResult, "index" | "url">> {
+async function probeSource(url: string, timeoutMs = 7000): Promise<Omit<ProbeResult, "index">> {
   const started = Date.now();
   try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     // Range request: enough to verify the channel speaks audio without
-    // downloading the stream. Fall back to a plain GET when Range is refused.
-    const res = await fetch(url, {
-      signal: ctrl.signal,
-      redirect: "follow",
+    // downloading the stream. Redirects are validated rather than followed —
+    // see `radio-stream-guard`. The body is drained below and never kept.
+    const opened = await openValidatedStream(url, {
+      timeoutMs,
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -42,7 +40,10 @@ async function probeSource(url: string, timeoutMs = 7000): Promise<Omit<ProbeRes
         Range: "bytes=0-4095",
       },
     });
-    clearTimeout(timer);
+    if (!opened.ok) {
+      return { ok: false, status: null, contentType: null, bitrateKbps: null, stationName: null, latencyMs: null };
+    }
+    const res = opened.response;
     const latencyMs = Date.now() - started;
     if (!res.ok && res.status !== 206) {
       return { ok: false, status: res.status, contentType: null, bitrateKbps: null, stationName: null, latencyMs };
@@ -91,7 +92,7 @@ export async function GET(request: NextRequest) {
   const sources = stationSources(station);
   const channels: ProbeResult[] = [];
   for (const [index, url] of sources.entries()) {
-    channels.push({ index, url, ...(await probeSource(url)) });
+    channels.push({ index, ...(await probeSource(url)) });
   }
   probeCache.set(station.id, { expiresAt: Date.now() + PROBE_TTL_MS, data: channels });
 

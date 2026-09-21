@@ -747,12 +747,41 @@ export const brainDiagnose = inngest.createFunction(
   }
 );
 
+/**
+ * Analytics retention — roll up daily metrics, then prune expired rows.
+ *
+ * A separate function from `hive-sweep` on purpose. That job runs the AI's
+ * *memory* retention (consolidate and decay); this runs the *analytics*
+ * retention (aggregate, then expire). Different windows, different failure
+ * modes, and neither should be able to skip the other.
+ */
+export const analyticsRetention = inngest.createFunction(
+  {
+    id: "analytics-retention",
+    name: "Analytics retention",
+    triggers: [{ event: "analytics-retention" }, { cron: "30 2 * * *" }],
+    // Single-flight: two concurrent retention passes would race on the same
+    // delete batches, and the second would spend its time deleting rows the
+    // first already removed while both held connections.
+    concurrency: 1,
+    retries: 1,
+  },
+  async ({ step }) => {
+    await step.run("heartbeat", () => recordHeartbeat("analytics-retention"));
+    return step.run("retain", async () => {
+      const { runAnalyticsRetention } = await import("@/lib/cron-jobs");
+      return runAnalyticsRetention();
+    });
+  }
+);
+
 export const functions = [
   publishScheduled,
   rssPoll,
   rssPollFeed,
   rssDrain,
   hiveSweep,
+  analyticsRetention,
   embedPosts,
   neuralLearn,
   radioStatusSweep,

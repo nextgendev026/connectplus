@@ -73,9 +73,19 @@ Vercel deploys:
 
 Vercel does **not** deploy:
 
-- Database migrations (run separately via `prisma migrate deploy`)
+- Database migrations — these are applied by the **`migrate` CI job**, not by Vercel. See the
+  warning below: that job only runs when the `check` job passes, so a red lint or test step silently
+  stops migrations from being applied at all.
 - Background workers (the Cloudflare worker is deployed independently)
 - Inngest functions (registered automatically when the app starts)
+
+> **Known defect, fixed in Phase A.** `npm run lint` previously failed on `main` with two errors,
+> which failed the `check` job it is gated behind — so `.github/workflows/webpack.yml`'s `migrate`
+> job never ran and `prisma migrate deploy` was not executing on push to `main`. Lint is green again
+> as of the `phase-a/baseline-audit-and-docs` branch; a required status check on `main` is still
+> pending (Phase O). Until both the migrations are confirmed applied and the status check exists,
+> run `npx prisma migrate status` before trusting that production carries the schema in
+> `prisma/schema.prisma`. See `docs/MODERNIZATION-AUDIT.md` F-02.
 
 ---
 
@@ -195,7 +205,8 @@ Environment variables are set in the Vercel dashboard under Settings → Environ
 | Variable | Feature it enables |
 |----------|-------------------|
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Browser push notifications |
-| `OPENAI_API_KEY` | AI content generation and copilot |
+| `OPENROUTER_API_KEY` | AI content generation and copilot (the routed provider) |
+| `OPENCODE_API_KEY` | AI content generation and copilot (the other routed provider) |
 | `SENTRY_DSN` | Error tracking in production |
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Distributed rate limiting |
 | `NEXT_PUBLIC_CONVEX_URL` | View count offloading |

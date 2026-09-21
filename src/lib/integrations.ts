@@ -21,6 +21,8 @@ import { cacheProbe } from "@/lib/redis";
  * is reporting.
  */
 
+import { providerCredentialStatus, routableProvider } from "@/lib/providers/registry";
+
 export type IntegrationStatus = "operational" | "degraded" | "down" | "unconfigured";
 
 export interface IntegrationField {
@@ -816,23 +818,39 @@ export async function getIntegrations(): Promise<IntegrationsReport> {
 
   /* ── AI providers ───────────────────────────────────────────────── */
   {
+    // Derived from `lib/providers/registry.ts` so this console cannot report a
+    // capability the gateway lacks. The previous version hand-built a key map
+    // including `openai` and `anthropic`, which meant an admin could see two extra
+    // providers "configured" with a status derived from credentials the AI pipeline
+    // never reads — the false-confirmation problem the registry exists to end.
     const provider = settings.aiProvider || "builtin";
-    const providerKeys: Record<string, string> = {
-      openai: settings.openaiApiKey || env("OPENAI_API_KEY"),
-      anthropic: settings.anthropicApiKey || env("ANTHROPIC_API_KEY"),
-      openrouter: settings.openrouterApiKey || env("OPENROUTER_API_KEY"),
-      opencode: settings.opencodeApiKey || env("OPENCODE_API_KEY"),
-      builtin: "builtin",
+    const credentialInput = {
+      settings: settings as unknown as Record<string, unknown>,
+      env: process.env as Record<string, string | undefined>,
     };
-    const active = providerKeys[provider] ?? "";
+    const credentials = providerCredentialStatus(credentialInput);
+    const routable = credentials.filter((c) => c.routable);
+    const nonGateway = credentials.filter((c) => !c.routable && c.source !== "absent");
+
+    const knownProvider = routable.some((c) => c.id === provider);
+    const activeCredential = routable.find((c) => c.id === provider && c.source !== "absent");
+
+    // `builtin` is always operational — it makes no external call. A named
+    // provider with no credential is degraded, and *an unrecognised provider name
+    // is degraded too*, which the old version missed: it looked up an arbitrary
+    // string in a fixed map and, finding nothing, reported the platform as
+    // degraded without saying that the name itself was wrong.
     const status: IntegrationStatus =
-      provider === "builtin" ? "operational" : active ? "operational" : "degraded";
+      provider === "builtin" ? "operational" : activeCredential ? "operational" : "degraded";
+
     const detail =
       provider === "builtin"
         ? "Self-contained generator and classifier — no external calls"
-        : active
-          ? `Provider "${provider}" configured`
-          : `Provider set to "${provider}" but no key is present — falling back to the builtin engine`;
+        : !knownProvider
+          ? `Provider is set to "${provider}", which the gateway cannot route. Known providers: ${routable.map((c) => c.id).join(", ")}. Falling back to the builtin engine.`
+          : activeCredential
+            ? `Provider "${provider}" configured from ${activeCredential.source === "setting" ? "the settings console" : `the environment (${activeCredential.sourceKey})`}`
+            : `Provider set to "${provider}" but no credential is present — falling back to the builtin engine`;
 
     integrations.push({
       id: "ai",
@@ -842,7 +860,7 @@ export async function getIntegrations(): Promise<IntegrationsReport> {
       status,
       detail,
       latencyMs: null,
-      verdict: verdictFor(status, false),
+      verdict: verdictFor(status, !knownProvider && provider !== "builtin"),
       fields: [
         {
           label: "Active provider",
@@ -850,41 +868,37 @@ export async function getIntegrations(): Promise<IntegrationsReport> {
           value: provider,
           required: false,
           managedBySetting: "aiProvider",
+          hint: knownProvider ? undefined : `Not a routable provider. Known: ${routable.map((c) => c.id).join(", ")}.`,
         },
-        {
-          label: "OpenAI key",
-          env: "OPENAI_API_KEY",
-          present: Boolean(providerKeys.openai),
-          value: providerKeys.openai && providerKeys.openai !== "builtin" ? maskValue(providerKeys.openai) : null,
+        // One field per *routable* provider, from the registry. A provider absent
+        // from this list cannot be offered a credential field at all.
+        ...routable.map((credential) => ({
+          label: `${credential.label} key`,
+          env: routableProvider(credential.id)?.envKeys[0],
+          present: credential.source !== "absent",
+          value: credential.maskedHint,
           required: false,
-          managedBySetting: "openaiApiKey",
-        },
-        {
-          label: "Anthropic key",
-          env: "ANTHROPIC_API_KEY",
-          present: Boolean(providerKeys.anthropic),
-          value: providerKeys.anthropic ? maskValue(providerKeys.anthropic) : null,
+          managedBySetting: routableProvider(credential.id)?.settingKeys[0],
+          hint:
+            credential.source === "absent"
+              ? credential.requirement
+              : `Supplied by ${credential.source === "setting" ? `the ${credential.sourceKey} setting` : credential.sourceKey}.`,
+        })),
+        // Credentials that exist but are not AI-gateway credentials, reported here
+        // so an operator is never left believing an image key makes the text
+        // pipeline able to call a provider it cannot.
+        ...nonGateway.map((credential) => ({
+          label: credential.label,
+          present: true,
+          value: credential.maskedHint,
           required: false,
-          managedBySetting: "anthropicApiKey",
-        },
-        {
-          label: "OpenRouter key",
-          env: "OPENROUTER_API_KEY",
-          present: Boolean(providerKeys.openrouter),
-          value: providerKeys.openrouter ? maskValue(providerKeys.openrouter) : null,
-          required: false,
-          managedBySetting: "openrouterApiKey",
-        },
-        {
-          label: "OpenCode key",
-          env: "OPENCODE_API_KEY",
-          present: Boolean(providerKeys.opencode),
-          value: providerKeys.opencode ? maskValue(providerKeys.opencode) : null,
-          required: false,
-          managedBySetting: "opencodeApiKey",
-        },
+          hint: credential.requirement,
+        })),
       ],
       links: [{ label: "AI pipeline", href: "/admin/ai" }],
+      notes: nonGateway.length > 0
+        ? "Some credentials listed here are not AI-gateway credentials and are labelled as such."
+        : undefined,
     });
   }
 

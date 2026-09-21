@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStationById, stationSources } from "@/lib/radio-stations";
+import { openValidatedStream } from "@/lib/radio-stream-guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,30 +53,35 @@ export async function GET(request: NextRequest) {
   } catch {
     // fall through with default host
   }
-  let upstreamRes: Response;
-  try {
-    const ctrl = new AbortController();
-    // Icecast/Shoutcast servers can take a while to negotiate; 25s covers
-    // slow regional hosts without hanging the proxy forever.
-    const timer = setTimeout(() => ctrl.abort(), 25_000);
-    // NOTE: no Icy-MetaData header at all — see contract note above.
-    upstreamRes = await fetch(upstream, {
-      signal: ctrl.signal,
-      redirect: "follow",
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        Accept: "*/*",
-        "Accept-Language": "en-US,en;q=0.9,sw;q=0.8",
-        Referer: `https://${upstreamHost}/`,
-        Origin: `https://${upstreamHost}`,
-        Connection: "keep-alive",
-      },
-    });
-    clearTimeout(timer);
-  } catch {
-    return NextResponse.json({ error: "Upstream unavailable" }, { status: 502 });
+  // Icecast/Shoutcast servers can take a while to negotiate; 25s covers slow
+  // regional hosts without hanging the proxy forever. NOTE: no Icy-MetaData
+  // header at all — see the contract note at the top of this file.
+  //
+  // `openValidatedStream` rather than `fetch`: it inspects every redirect
+  // destination instead of following it. The catalog is hardcoded, so this was
+  // never attacker-controlled — but the request leaves from inside our network,
+  // and a host that answers with a redirect into private address space would
+  // otherwise have had it followed. The body still streams 1:1; nothing is
+  // buffered.
+  const opened = await openValidatedStream(upstream, {
+    timeoutMs: 25_000,
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      Accept: "*/*",
+      "Accept-Language": "en-US,en;q=0.9,sw;q=0.8",
+      Referer: `https://${upstreamHost}/`,
+      Origin: `https://${upstreamHost}`,
+      Connection: "keep-alive",
+    },
+  });
+  if (!opened.ok) {
+    // A blocked destination is config/bad-faith, not an outage. 502 keeps the
+    // player's failover behaviour identical to a host being down, which is what
+    // we want: it should tune the next channel either way.
+    return NextResponse.json({ error: `Upstream refused (${opened.reason})` }, { status: 502 });
   }
+  const upstreamRes = opened.response;
 
   if (!upstreamRes.ok || !upstreamRes.body) {
     return NextResponse.json({ error: `Upstream error ${upstreamRes.status}` }, { status: 502 });

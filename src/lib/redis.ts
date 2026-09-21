@@ -16,6 +16,7 @@
  */
 
 import Redis from "ioredis";
+import { guardCacheWrite } from "@/lib/cache-policy";
 
 const PREFIX = "cp";
 const FAIL_THRESHOLD = 3;
@@ -370,6 +371,13 @@ export async function redisSetEx(
   value: string
 ): Promise<boolean> {
   if (Date.now() < disabledUntil) return false;
+
+  // The privacy check runs *here*, at the one write path every caller funnels
+  // through, rather than at each call site. A user-scoped or secret key is
+  // refused before any layer sees it, so a future call site cannot leak one
+  // reader's data into a shared cache by forgetting to call a guard.
+  if (guardCacheWrite(key, "redis") === null) return false;
+
   const safeTtl = Math.max(1, Math.min(ttlSeconds, MAX_TTL_SECONDS));
   const fullKey = cacheKey(key);
   try {

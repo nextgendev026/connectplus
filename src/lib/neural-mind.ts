@@ -15,6 +15,8 @@ import {
   type TrafficDepth,
 } from "@/lib/platform-intelligence";
 import { mindActions, type ActionResult } from "@/lib/mind-actions";
+import { dailySeries, platformTotals, regionalBreakdown, weeklyTrend } from "@/lib/queries/analytics";
+import { safeFetch } from "@/lib/safe-fetch";
 import { proposeAction, type ApprovalTool } from "@/lib/brain-approvals";
 import {
   composeDraft,
@@ -71,44 +73,34 @@ export interface UserAnalysis {
 class NeuralMindEngine {
   private readonly log = createLogger("neural-mind");
 
+  /**
+   * Platform totals and the regional breakdown.
+   *
+   * This method used to run `1 + 2N` queries, where N was the number of
+   * distinct cities in the `node` column — a count and an aggregate per city,
+   * with no `take` and therefore no bound at all. The cost of asking "how are
+   * our regions doing" grew with the size of the platform, permanently, without
+   * anyone editing this file. It is now two grouped scans regardless of how many
+   * regions exist; see `lib/queries/analytics.ts` for why they are two queries
+   * rather than one clever join.
+   */
   async getPlatformStats(): Promise<PlatformStats> {
-    const now = new Date();
-    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const [totals, regions] = await Promise.all([platformTotals(), regionalBreakdown()]);
 
-    const [totalUsers, totalPosts, totalComments, viewAgg, pendingModeration, usersThisWeek, postsThisWeek, usersByNode] =
-      await Promise.all([
-        prisma.user.count(),
-        prisma.post.count({ where: { status: "PUBLISHED" } }),
-        prisma.comment.count(),
-        prisma.post.aggregate({ _sum: { viewCount: true }, where: { status: "PUBLISHED" } }),
-        prisma.post.count({ where: { moderationStatus: "PENDING" } }),
-        prisma.user.count({ where: { createdAt: { gte: weekAgo } } }),
-        prisma.post.count({ where: { createdAt: { gte: weekAgo } } }),
-        prisma.user.groupBy({ by: ["node"], _count: { id: true }, where: { node: { not: null } } }),
-      ]);
-
-    const regionalBreakdown: Record<string, { users: number; posts: number; views: number }> = {};
-    for (const node of usersByNode) {
-      if (node.node) {
-        const postCount = await prisma.post.count({ where: { author: { node: node.node }, status: "PUBLISHED" } });
-        const viewSum = await prisma.post.aggregate({ _sum: { viewCount: true }, where: { author: { node: node.node }, status: "PUBLISHED" } });
-        regionalBreakdown[node.node] = {
-          users: node._count.id,
-          posts: postCount,
-          views: viewSum._sum.viewCount || 0,
-        };
-      }
+    const regional: Record<string, { users: number; posts: number; views: number }> = {};
+    for (const region of regions) {
+      regional[region.node] = { users: region.users, posts: region.posts, views: region.views };
     }
 
     return {
-      totalUsers,
-      totalPosts,
-      totalComments,
-      totalViews: viewAgg._sum.viewCount || 0,
-      pendingModeration,
-      usersThisWeek,
-      postsThisWeek,
-      regionalBreakdown,
+      totalUsers: totals.totalUsers,
+      totalPosts: totals.totalPosts,
+      totalComments: totals.totalComments,
+      totalViews: totals.totalViews,
+      pendingModeration: totals.pendingModeration,
+      usersThisWeek: totals.usersThisWeek,
+      postsThisWeek: totals.postsThisWeek,
+      regionalBreakdown: regional,
     };
   }
 
@@ -192,40 +184,47 @@ class NeuralMindEngine {
     };
   }
 
+  /**
+   * User growth and engagement.
+   *
+   * Two things changed here, both about payload rather than round trips.
+   *
+   * `activeAuthors` was computed by pulling `authorId` for **every published
+   * post on the platform** into memory and counting distinct values in a `Map`.
+   * That is a table-sized transfer to compute one integer, and it gets worse
+   * every day the platform is used. It is now `COUNT(DISTINCT "authorId")` in
+   * the database.
+   *
+   * The regional breakdown was another per-city loop, sharing the same unbounded
+   * failure described on `getPlatformStats`.
+   */
   async analyzeUsers(): Promise<UserAnalysis> {
     const now = new Date();
     const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
 
-    const [totalUsers, usersThisWeek, usersLastWeek, postsWithAuthors] = await Promise.all([
-      prisma.user.count(),
-      prisma.user.count({ where: { createdAt: { gte: weekAgo } } }),
+    // `platformTotals` already answers for the current week, so only the
+    // *previous* week needs its own query.
+    const [totals, usersLastWeek, regions] = await Promise.all([
+      platformTotals(),
       prisma.user.count({ where: { createdAt: { gte: twoWeeksAgo, lt: weekAgo } } }),
-      prisma.post.findMany({ where: { status: "PUBLISHED" }, select: { authorId: true } }),
+      regionalBreakdown(),
     ]);
 
+    const totalUsers = totals.totalUsers;
+    const usersThisWeek = totals.usersThisWeek;
     const weeklyGrowthRate = totalUsers > 0 ? (usersThisWeek / totalUsers) * 100 : 0;
-    const growthTrend = usersThisWeek > usersLastWeek * 1.2 ? "accelerating" : usersThisWeek < usersLastWeek * 0.8 ? "declining" : "steady";
+    const growthTrend =
+      usersThisWeek > usersLastWeek * 1.2 ? "accelerating" : usersThisWeek < usersLastWeek * 0.8 ? "declining" : "steady";
 
-    const postsByUser = new Map<string, number>();
-    for (const p of postsWithAuthors) {
-      postsByUser.set(p.authorId, (postsByUser.get(p.authorId) || 0) + 1);
-    }
-    const activeUsers = postsByUser.size;
+    const activeUsers = totals.activeAuthors;
     const inactiveUsers = Math.max(0, totalUsers - activeUsers);
 
-    const usersByNode = await prisma.user.groupBy({ by: ["node"], _count: { id: true }, where: { node: { not: null } } });
-    const topRegions = await Promise.all(
-      usersByNode.slice(0, 10).map(async (n) => {
-        const posts = await prisma.post.count({ where: { author: { node: n.node }, status: "PUBLISHED" } });
-        return { city: n.node || "Unknown", users: n._count.id, posts };
-      })
-    );
-    topRegions.sort((a, b) => b.users - a.users);
+    // Already sorted by users descending in `regionalBreakdown`, so the slice is
+    // the top ten without a re-sort.
+    const topRegions = regions.slice(0, 10).map((r) => ({ city: r.node, users: r.users, posts: r.posts }));
 
-    const totalPosts = postsWithAuthors.length;
-    const totalComments = await prisma.comment.count();
-    const engagementRate = totalPosts > 0 ? totalComments / totalPosts : 0;
+    const engagementRate = totals.totalPosts > 0 ? totals.totalComments / totals.totalPosts : 0;
 
     return {
       totalUsers,
@@ -304,66 +303,47 @@ class NeuralMindEngine {
     return { anomalies, recentViews, avgHourlyViews: Math.round(avgHourlyViews), recentPosts };
   }
 
+  /**
+   * Thirty-day growth series.
+   *
+   * This used to be **90 round trips** — three counts, for each of thirty days,
+   * issued concurrently. Ninety individually-fast queries is not a fast
+   * operation: on a serverless instance with a pool of ten, one dashboard render
+   * could occupy the entire pool and block every other request behind it.
+   *
+   * It is now three grouped scans. The day list is generated from the requested
+   * window rather than from the rows, so a quiet day reads as `0` instead of
+   * vanishing from the chart and compressing the x-axis.
+   */
   async getGrowthReport() {
-    const now = new Date();
-    const days: { label: string; date: Date }[] = [];
-    for (let i = 29; i >= 0; i--) {
-      const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
-      days.push({ label: d.toISOString().slice(0, 10), date: d });
-    }
-
-    const dailyData = await Promise.all(
-      days.map(async ({ label, date }) => {
-        const nextDay = new Date(date.getTime() + 24 * 60 * 60 * 1000);
-        const [users, posts, views] = await Promise.all([
-          prisma.user.count({ where: { createdAt: { gte: date, lt: nextDay } } }),
-          prisma.post.count({ where: { createdAt: { gte: date, lt: nextDay } } }),
-          prisma.pageView.count({ where: { createdAt: { gte: date, lt: nextDay } } }),
-        ]);
-        return { date: label, users, posts, views };
-      })
-    );
-
-    const week1 = dailyData.slice(0, 7);
-    const week2 = dailyData.slice(7, 14);
-    const week3 = dailyData.slice(14, 21);
-    const week4 = dailyData.slice(21, 28);
-
-    const weeklyAverages = [week1, week2, week3, week4].map(w => ({
-      avgUsers: w.reduce((s, d) => s + d.users, 0) / Math.max(w.length, 1),
-      avgPosts: w.reduce((s, d) => s + d.posts, 0) / Math.max(w.length, 1),
-      avgViews: w.reduce((s, d) => s + d.views, 0) / Math.max(w.length, 1),
-    }));
-
-    const lastWeekAvg = weeklyAverages[3]?.avgUsers || 0;
-    const prevWeekAvg = weeklyAverages[2]?.avgUsers || 1;
-    const weekOverWeekGrowth = prevWeekAvg > 0 ? ((lastWeekAvg - prevWeekAvg) / prevWeekAvg) * 100 : 0;
-
+    const dailyData = await dailySeries(30);
+    const { weeklyAverages, weekOverWeekGrowth } = weeklyTrend(dailyData);
     return { dailyData, weeklyAverages, weekOverWeekGrowth };
   }
 
+  /**
+   * Regional engagement, including the per-region ratios.
+   *
+   * The unbounded fan-out on this method was the worst instance of the pattern:
+   * two queries per city with **no slice on the city list at all**, so a
+   * question about regions cost more to answer every time a new region gained
+   * its first user. The `{users, posts, views}` totals now come from two grouped
+   * scans, and the ratios are derived in memory — which is the right place for
+   * them, because they are a presentation of the totals rather than a fact the
+   * database needs to compute.
+   */
   async getRegionalIntelligence() {
-    const nodes = await prisma.user.groupBy({ by: ["node"], _count: { id: true }, where: { node: { not: null } } });
+    const regions = await regionalBreakdown();
 
-    const regionalData = await Promise.all(
-      nodes.map(async (n) => {
-        const [posts, views] = await Promise.all([
-          prisma.post.count({ where: { author: { node: n.node }, status: "PUBLISHED" } }),
-          prisma.post.aggregate({ _sum: { viewCount: true }, where: { author: { node: n.node }, status: "PUBLISHED" } }),
-        ]);
-        const totalViews = views._sum.viewCount || 0;
-        return {
-          city: n.node || "Unknown",
-          users: n._count.id,
-          posts,
-          views: totalViews,
-          postsPerUser: n._count.id > 0 ? posts / n._count.id : 0,
-          viewsPerPost: posts > 0 ? totalViews / posts : 0,
-        };
-      })
-    );
+    const regionalData = regions.map((r) => ({
+      city: r.node,
+      users: r.users,
+      posts: r.posts,
+      views: r.views,
+      postsPerUser: r.users > 0 ? r.posts / r.users : 0,
+      viewsPerPost: r.posts > 0 ? r.views / r.posts : 0,
+    }));
 
-    regionalData.sort((a, b) => b.users - a.users);
     const mostEngaged = [...regionalData].sort((a, b) => b.viewsPerPost - a.viewsPerPost);
     const leastEngaged = [...regionalData].sort((a, b) => a.viewsPerPost - b.viewsPerPost);
 
@@ -374,8 +354,23 @@ class NeuralMindEngine {
 
   async learnFromRssArticles() {
     const startedAt = Date.now();
+    // The `notIn` list is the set of URLs the hive has already learned from, and
+    // it was loaded in full on every sweep: `source: "external"` with no `take`,
+    // so the payload grew with every article ever ingested and the generated SQL
+    // grew with it. Both are now bounded. The cap is deliberate and its cost is
+    // stated rather than hidden: past `lookback` URLs, an already-learned article
+    // can be re-learned. The nightly consolidation pass in knowledge-retention.ts
+    // merges the resulting duplicate by canonical key, so the consequence of the
+    // cap is a merge, not a growing pile — which is why bounding it is safe where
+    // leaving it unbounded is not.
+    const lookback = 5_000;
     const existingUrls = new Set(
-      (await prisma.neuralMemory.findMany({ where: { source: "external" }, select: { sourceUrl: true } }))
+      (await prisma.neuralMemory.findMany({
+        where: { source: "external", sourceUrl: { not: null } },
+        select: { sourceUrl: true },
+        orderBy: { createdAt: "desc" },
+        take: lookback,
+      }))
         .map(m => m.sourceUrl).filter(Boolean) as string[]
     );
 
@@ -412,19 +407,20 @@ class NeuralMindEngine {
         });
         memoriesCreated++;
 
-        for (const entity of entities.slice(0, 3)) {
-          await prisma.neuralMemory.create({
-            data: {
-              source: "external",
-              category: "entity",
-              content: `${entity.value} (${entity.type}) — found in: ${article.title}`,
-              tags: [entity.type, entity.value.toLowerCase(), ...keywords.slice(0, 3).map(k => k.keyword)].join(","),
-              confidence: 0.6,
-              sourceUrl: article.url,
-              sourceFeedId: article.feedId,
-            },
-          });
-        }
+        // One statement instead of one per entity. The old loop awaited up to
+        // four sequential inserts per article — inside a loop over fifty
+        // articles, that is two hundred round trips to ingest one batch, held
+        // for the whole duration of a scheduled sweep.
+        const entityRows = entities.slice(0, 3).map((entity) => ({
+          source: "external",
+          category: "entity",
+          content: `${entity.value} (${entity.type}) — found in: ${article.title}`,
+          tags: [entity.type, entity.value.toLowerCase(), ...keywords.slice(0, 3).map(k => k.keyword)].join(","),
+          confidence: 0.6,
+          sourceUrl: article.url,
+          sourceFeedId: article.feedId,
+        }));
+        if (entityRows.length > 0) await prisma.neuralMemory.createMany({ data: entityRows });
       } catch (err) {
         this.log.warn("rss learn skipped article", { url: article.url, error: err instanceof Error ? err.message : String(err) });
         // skip duplicates
@@ -435,16 +431,31 @@ class NeuralMindEngine {
     return { articlesAnalyzed: articles.length, memoriesCreated };
   }
 
+  /**
+   * Learn from a URL an operator pasted.
+   *
+   * The fetch goes through `safeFetch` rather than the global one, and that is a
+   * security fix rather than a refactor. This path takes a URL from a *human or
+   * a model* and reads it server-side, which is exactly the shape of an SSRF
+   * primitive: `http://169.254.169.254/latest/meta-data/` is a legal argument,
+   * and on a cloud instance the response is credentials. `safeFetch` refuses
+   * private, loopback and link-local addresses — including on every redirect
+   * hop, which `redirect: "follow"` could not — and caps the body before it is
+   * buffered rather than after.
+   */
   async learnFromUrl(url: string) {
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
-      const res = await fetch(url, { signal: controller.signal, headers: { "User-Agent": "ConnectPlus NeuralMind/1.0" } });
-      clearTimeout(timeout);
+      const result = await safeFetch(url, {
+        timeoutMs: 15_000,
+        maxBytes: 512 * 1024,
+        accept: ["text/html", "text/plain", "application/xhtml+xml", "application/xml", "text/xml"],
+        headers: { "User-Agent": "ConnectPlus NeuralMind/1.0" },
+      });
+      if (!result.ok) {
+        return { success: false, error: result.detail || `refused (${result.reason})` };
+      }
 
-      if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
-
-      const html = await res.text();
+      const html = result.text;
       const text = stripHtml(html).slice(0, 15000);
       if (text.length < 50) return { success: false, error: "Content too short" };
       this.log.info("learned from url", { url: url.slice(0, 100), chars: text.length });
@@ -466,18 +477,15 @@ class NeuralMindEngine {
         },
       });
 
-      for (const entity of entities.slice(0, 5)) {
-        await prisma.neuralMemory.create({
-          data: {
-            source: "external",
-            category: "entity",
-            content: `${entity.value} (${entity.type}) — learned from ${url}`,
-            tags: [entity.type, entity.value.toLowerCase(), ...keywords.slice(0, 3).map(k => k.keyword)].join(","),
-            confidence: 0.55,
-            sourceUrl: url,
-          },
-        });
-      }
+      const entityRows = entities.slice(0, 5).map((entity) => ({
+        source: "external",
+        category: "entity",
+        content: `${entity.value} (${entity.type}) — learned from ${url}`,
+        tags: [entity.type, entity.value.toLowerCase(), ...keywords.slice(0, 3).map(k => k.keyword)].join(","),
+        confidence: 0.55,
+        sourceUrl: url,
+      }));
+      if (entityRows.length > 0) await prisma.neuralMemory.createMany({ data: entityRows });
 
       return { success: true, memory };
     } catch (err: unknown) {

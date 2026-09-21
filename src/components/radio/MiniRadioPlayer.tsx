@@ -2,7 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { Play, Pause, X, Volume2 } from "lucide-react";
+import { Play, Pause, RotateCw, X, Volume2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRadioPlayer } from "@/components/radio/RadioPlayerContext";
 
@@ -28,14 +28,21 @@ function MiniEqualizer({ playing }: { playing: boolean }) {
 
 export function MiniRadioPlayer() {
   const pathname = usePathname();
-  const { station, isPlaying, streamState, togglePlay, stop, nowPlaying, volume } = useRadioPlayer();
+  const { station, isPlaying, streamState, togglePlay, stop, nowPlaying, volume, retry } = useRadioPlayer();
   const [showInfo, setShowInfo] = useState(false);
 
   if (!station || pathname === "/radio") return null;
 
-  const label = nowPlaying.meta && nowPlaying.song ? nowPlaying.song : `${station.name} — ${station.tagline}`;
+  const label =
+    streamState === "failed"
+      ? "Stream unavailable"
+      : nowPlaying.meta && nowPlaying.song
+        ? nowPlaying.song
+        : `${station.name} — ${station.tagline}`;
   const busy = streamState === "connecting";
   const live = isPlaying || streamState === "connecting";
+  /** Given up: the primary control is now "try again", not "pause". */
+  const gaveUp = streamState === "failed";
 
   return (
     <div className="fixed z-[60] bottom-20 md:bottom-5 right-3 md:right-6 animate-slide-up">
@@ -78,11 +85,17 @@ export function MiniRadioPlayer() {
         <MiniEqualizer playing={live} />
 
         <button
-          onClick={togglePlay}
+          onClick={gaveUp ? retry : togglePlay}
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-500 text-white hover:bg-brand-600 transition-all active:scale-95"
-          aria-label={live ? "Pause" : "Play"}
+          aria-label={gaveUp ? "Try the stream again" : live ? "Pause" : "Play"}
         >
-          {live ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 ml-0.5" />}
+          {gaveUp ? (
+            <RotateCw className="h-4 w-4" />
+          ) : live ? (
+            <Pause className="h-4 w-4" />
+          ) : (
+            <Play className="h-4 w-4 ml-0.5" />
+          )}
         </button>
 
         <button
@@ -104,7 +117,11 @@ export function MiniRadioPlayer() {
           <div className="mt-2 flex items-center gap-3">
             <span className="inline-flex items-center gap-1 text-brand-400">
               <span className="h-1.5 w-1.5 rounded-full bg-brand-400 animate-pulse" />
-              {streamState === "error" ? "Reconnecting…" : "Live stream"}
+              {gaveUp
+                ? "Offline — tap ↻ to try again"
+                : streamState === "error"
+                  ? "Reconnecting…"
+                  : "Live stream"}
             </span>
             {nowPlaying.listeners !== null && (
               <span className="text-surface-400">{nowPlaying.listeners.toLocaleString()} listening</span>

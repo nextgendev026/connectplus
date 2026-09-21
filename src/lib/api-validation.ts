@@ -12,32 +12,55 @@
  *   }
  *
  * The function returns either the parsed and validated data, or a NextResponse
- * with a 400 status and a structured error payload. The caller checks the
- * return type once and then proceeds with typed data.
+ * with a 400 status and the shared error envelope. The caller checks the return
+ * type once and then proceeds with typed data.
  *
  * Why this exists:
  *   1. Every route used to call `req.json()` and then discover the shape was
  *      wrong halfway through the handler — which is a 500, not a 400.
- *   2. Zod errors are rich ("title is too long", not "invalid input") but
- *      raw Zod output is not a clean API response. This formats them into
- *      `{ error: "Validation failed", details: [...] }`.
+ *   2. Zod errors are rich ("title is too long", not "invalid input"), but raw
+ *      Zod output is not a clean API response. This maps each issue onto the
+ *      contract's `details[]` so a client renders the same way for every route.
  *   3. The `transform` step (trimming, coercing) means the handler never has
  *      to do cleanup on input — it receives data that is already shaped the
  *      way the database expects it.
+ *
+ * The response shape is not decided here: it comes from `@/lib/errors`, which is
+ * the single definition of what a failure looks like. Before that module existed,
+ * this file was one of four places that answered 400 differently.
  */
 
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { type ZodSchema, ZodError } from "zod";
+import { errorPayload, type ApiErrorDetail, type ApiErrorPayload } from "@/lib/errors";
+import { readRequestId } from "@/lib/request-context";
 
-/** The shape every validation error response follows. */
-export interface ValidationErrorResponse {
-  error: string;
-  details: {
-    path: string[];
-    message: string;
-    code: string;
-  }[];
+/** The shape every validation failure returns. Aliased for existing callers. */
+export type ValidationErrorResponse = ApiErrorPayload;
+
+/** Map Zod issues onto the contract's detail rows. */
+function detailRows(error: ZodError): ApiErrorDetail[] {
+  return error.issues.map((issue) => ({
+    path: issue.path.map(String),
+    message: issue.message,
+    code: issue.code,
+  }));
+}
+
+function invalid(
+  req: NextRequest,
+  code: "parse_error" | "validation_failed",
+  message: string,
+  details: ApiErrorDetail[],
+  errorCode: "VALIDATION_ERROR"
+): NextResponse<ApiErrorPayload> {
+  // `errorCode` is always VALIDATION_ERROR today; it is named here so the two
+  // call sites read identically and a future taxonomy change is one edit.
+  return NextResponse.json(errorPayload(errorCode, message, details, readRequestId(req)), {
+    status: 400,
+    headers: { "Cache-Control": "no-store" },
+  }) as NextResponse<ApiErrorPayload>;
 }
 
 /**
@@ -50,17 +73,17 @@ export interface ValidationErrorResponse {
 export async function validateBody<T>(
   req: NextRequest,
   schema: ZodSchema<T>
-): Promise<T | NextResponse<ValidationErrorResponse>> {
+): Promise<T | NextResponse<ApiErrorPayload>> {
   let raw: unknown;
   try {
     raw = await req.json();
   } catch {
-    return NextResponse.json(
-      {
-        error: "Invalid JSON",
-        details: [{ path: [], message: "Request body must be valid JSON", code: "parse_error" }],
-      },
-      { status: 400 }
+    return invalid(
+      req,
+      "parse_error",
+      "The request body must be valid JSON",
+      [{ path: [], message: "Request body must be valid JSON", code: "parse_error" }],
+      "VALIDATION_ERROR"
     );
   }
 
@@ -68,16 +91,12 @@ export async function validateBody<T>(
     return schema.parse(raw);
   } catch (error) {
     if (error instanceof ZodError) {
-      return NextResponse.json(
-        {
-          error: "Validation failed",
-          details: error.issues.map((e) => ({
-            path: e.path.map(String),
-            message: e.message,
-            code: e.code,
-          })),
-        },
-        { status: 400 }
+      return invalid(
+        req,
+        "validation_failed",
+        "The request is invalid",
+        detailRows(error),
+        "VALIDATION_ERROR"
       );
     }
     throw error;
@@ -92,7 +111,7 @@ export async function validateBody<T>(
 export function validateSearchParams<T>(
   req: NextRequest,
   schema: ZodSchema<T>
-): T | NextResponse<ValidationErrorResponse> {
+): T | NextResponse<ApiErrorPayload> {
   const params: Record<string, string> = {};
   req.nextUrl.searchParams.forEach((value, key) => {
     params[key] = value;
@@ -102,16 +121,12 @@ export function validateSearchParams<T>(
     return schema.parse(params);
   } catch (error) {
     if (error instanceof ZodError) {
-      return NextResponse.json(
-        {
-          error: "Invalid query parameters",
-          details: error.issues.map((e) => ({
-            path: e.path.map(String),
-            message: e.message,
-            code: e.code,
-          })),
-        },
-        { status: 400 }
+      return invalid(
+        req,
+        "validation_failed",
+        "The query parameters are invalid",
+        detailRows(error),
+        "VALIDATION_ERROR"
       );
     }
     throw error;
@@ -130,7 +145,6 @@ export function validateSearchParams<T>(
  */
 export function isValidationError(
   result: unknown
-): result is NextResponse<ValidationErrorResponse> {
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime type guard
+): result is NextResponse<ApiErrorPayload> {
   return result instanceof NextResponse && result.status === 400;
 }

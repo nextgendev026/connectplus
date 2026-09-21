@@ -15,6 +15,7 @@ import {
   settleIntent,
 } from "@/lib/payments/fulfill";
 import { isUniqueViolation } from "@/lib/payments";
+import { amountMismatch, isCurrency } from "@/lib/money";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -111,16 +112,37 @@ export async function POST(request: NextRequest) {
 
       // Amount check: the STK push fixed the amount, so a different one means the
       // payload was not produced by that request.
-      if (callback.amount != null && Math.abs(callback.amount - intent.amount) > 1) {
+      //
+      // This used to be `Math.abs(callback.amount - intent.amount) > 1`, which is a
+      // tolerance of one *major* unit — a whole shilling, or a whole dollar on the
+      // USD-priced plans — and it also waved through a callback that declared no
+      // amount at all (`callback.amount != null &&`). Both halves were wrong in the
+      // same direction: the check looked present and accepted things it was written
+      // to refuse. Comparison is now exact, on integer minor units, and an absent
+      // amount is a mismatch because a payload without an amount cannot be verified.
+      // See `amountMismatch` in lib/money for why the float tolerance is no longer
+      // needed — and why it must not come back.
+      const currency = isCurrency(intent.currency) ? intent.currency : "KES";
+      const amount = amountMismatch(intent.amount, callback.amount, currency);
+      if (amount.mismatch) {
         log.error("daraja callback amount mismatch — refusing to grant", {
           intentId: intent.id,
           expected: intent.amount,
+          expectedMinor: amount.expectedMinor,
           received: callback.amount,
+          receivedMinor: amount.receivedMinor,
+          reason: amount.reason,
           receipt: callback.receipt,
         });
         await markIntent(intent.id, {
           status: "failed",
-          failureReason: `Amount mismatch: expected ${intent.amount} ${intent.currency}, received ${callback.amount}.`,
+          failureReason: [
+            `Amount mismatch: expected ${intent.amount} ${intent.currency}, received ${callback.amount ?? "no amount"}.`,
+            `In minor units: expected ${amount.expectedMinor ?? "unreadable"}, received ${amount.receivedMinor ?? "none"}.`,
+            amount.reason ? `Reason: ${amount.reason}.` : "",
+          ]
+            .filter(Boolean)
+            .join(" "),
           raw: callback.raw,
         });
         return NextResponse.json({ ResultCode: 0, ResultDesc: "Accepted" });

@@ -338,6 +338,22 @@ model PlatformSetting {
   @@index([group])
 }
 
+/// A long-term memory.
+///
+/// The provenance fields below were added because the hive treated everything it
+/// held as equally true. "Nairobi is a city" (learned from a post), "the shilling
+/// is at 129" (scraped from a page three weeks ago) and "this deployment broke
+/// the feed" (observed live) all carried a bare `confidence` float and nothing
+/// else — no origin, no expiry, no way to tell a verified fact from a scraped
+/// claim, and no way to mark one memory as contradicting another.
+///
+/// `verificationStatus` is the central addition: it separates *observed* from
+/// *corroborated* from *operator-confirmed*, so the assistant can say what it
+/// actually knows rather than asserting uniform certainty.
+///
+/// Every field is nullable or defaulted, so this is an additive migration with
+/// no backfill required. Existing rows read as `unverified`, which is the honest
+/// classification for a memory whose provenance was never recorded.
 model NeuralMemory {
   id           String    @id @default(cuid())
   source       String
@@ -350,12 +366,60 @@ model NeuralMemory {
   sourceFeedId String?
   accessCount  Int       @default(0)
   lastAccessedAt DateTime?
+
+  // ── Provenance ──────────────────────────────────────────────────────────
+  /// Where the content came from: platform | internal | external | model | operator.
+  /// Distinct from `source`, which is the ingest path ("hive", "external").
+  sourceType            String  @default("internal")
+  /// SHA-256 of the fetched content, so a re-fetch can be recognised as the same
+  /// material and a changed page is detected rather than merged. Nullable for
+  /// memories with no external document behind them.
+  sourceHash            String?
+  /// Coarse reliability of the origin, 0–1. A government statistical release and
+  /// an anonymous blog post do not deserve the same standing even when both are
+  /// "external".
+  sourceReliability     Float?
+  /// When the *fact* was observed, which is not when the row was written: a
+  /// syndicated article is observed at its publication time.
+  observedAt            DateTime?
+  /// When this stops being assertable. Null means it does not expire. Set for
+  /// anything time-sensitive (rates, scores, counts, prices).
+  expiresAt             DateTime?
+  /// unverified | observed | corroborated | operator_confirmed | rejected | expired.
+  /// A string rather than a Prisma enum so adding a state is not a migration on
+  /// a table this large; `memory-provenance.ts` is the single vocabulary.
+  verificationStatus    String  @default("unverified")
+  /// JSON array of evidence references (URLs, memory ids, request ids) that
+  /// support this memory. Kept as text for the same reason as `metadata`.
+  evidenceReferences    String?
+  /// Visibility domain: the audience this memory may be surfaced to. Prevents a
+  /// region-scoped or operator-only finding from appearing in a public answer.
+  scope                 String  @default("platform")
+  /// public | internal | sensitive. Sensitive memories are never placed in a
+  /// prompt for a public-facing answer.
+  sensitivity           String  @default("internal")
+  /// The memory this one replaces, so a correction supersedes rather than
+  /// quietly coexisting with the claim it corrects.
+  supersedes            String?
+  /// Memories in the same group are known to disagree. Retrieval must never
+  /// present two members of one group as current truth without saying so.
+  contradictionGroup    String?
+  /// Which embedding model and version produced any vector for this memory, so a
+  /// model change can be detected rather than silently mixing vector spaces.
+  embeddingModel        String?
+  embeddingVersion      String?
+
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
   @@index([source])
   @@index([category])
   @@index([tags])
+  @@index([verificationStatus])
+  @@index([expiresAt])
+  @@index([sourceHash])
+  @@index([scope, sensitivity])
+  @@index([contradictionGroup])
 }
 
 model NeuralConversation {
@@ -462,6 +526,69 @@ model UserPreference {
 }
 
 /// Raw interaction feedback used by the learning loop (Phase 3).
+/// A claim on one draft-creation attempt, so a retried save cannot create a
+/// second draft.
+///
+/// This exists because the Studio's `editingId` is derived from a create
+/// response: until React commits that update, an in-flight save's closure still
+/// reads `null`, and a second create is issued. The client now refuses a
+/// concurrent save outright (`lib/studio/composer.ts`), but that guard cannot
+/// cover the other reachable case — a response lost on the network, followed by
+/// an automatic retry with the same intent.
+///
+/// The `id` is the idempotency key, `sessionId:revision:hash`, which is
+/// *derived* rather than random. A retry of the same save therefore carries the
+/// same key and finds this row; a genuinely new edit carries a different one and
+/// creates normally. A random key per attempt would make every retry look like a
+/// new save, which is the bug rather than the fix.
+///
+/// It lives in Postgres rather than Redis deliberately. `lib/cache-policy.ts`
+/// classifies anything scoped to one writer as user-scoped and refuses it on a
+/// shared layer — correctly, because a cache key is a string and one missing
+/// component is a leak. A durable ledger is also what "cannot create a duplicate"
+/// actually requires: a cache eviction must not resurrect the ability to
+/// double-create.
+model StudioSaveClaim {
+  id        String   @id
+  userId    String
+  /// Set once the create has produced a document. Null means "claimed, in flight".
+  postId    String?
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Rolled-up daily metrics.
+///
+/// These exist to make retention possible. `PageView` and `ModelFeedback` grow
+/// without bound, and the platform's own growth charts read from them — so
+/// pruning them without first aggregating would delete the history the console
+/// displays. The order is aggregate, then prune, and this table is the thing
+/// that survives.
+///
+/// `dimension` is a plain string rather than a relation because its meaning
+/// depends on `metric` (a country code for pageviews, a path for popular pages,
+/// an event type for feedback). A nullable column per possible dimension would
+/// be worse; a union type in a schema is not available.
+model DailyMetric {
+  id        String   @id @default(cuid())
+  /// Metric identity, e.g. "pageviews", "unique_visitors", "users", "posts".
+  metric    String
+  /// Optional breakdown within the metric. Empty string means "no dimension".
+  dimension String   @default("")
+  /// UTC date. A `date` column, not a timestamp: this is a daily bucket and a
+  /// time component would let two writers create two rows for one day.
+  day       DateTime @db.Date
+  value     Int
+  updatedAt DateTime @updatedAt
+
+  @@unique([metric, dimension, day])
+  @@index([metric, day])
+  @@index([day])
+}
+
 model ModelFeedback {
   id        String   @id @default(cuid())
   userId    String?
@@ -488,8 +615,12 @@ model SubscriptionPlan {
   displayName   String   // "Free Reader", "Pro Reader", "Pro Writer"
   tier          String   // free | pro | premium
   audience      String   // reader | writer
+  /// Float prices, kept for display and for backwards compatibility. `…Minor` is
+  /// the authority: every charge is computed from the integer.
   priceMonthly  Float    @default(0)
   priceYearly   Float    @default(0)
+  priceMonthlyMinor Int?
+  priceYearlyMinor  Int?
   currency      String   @default("USD")
   features      String   @db.Text // JSON array of feature strings
   limits        String   @db.Text // JSON object: { postsPerMonth, storageMb, aiRequests, ... }
@@ -566,10 +697,22 @@ model PaymentIntent {
   /// without trusting anything the caller claims.
   reference    String   @unique
   /// Amount actually charged, in the provider's settlement currency.
+  ///
+  /// DEPRECATED as money: a Float cannot represent 0.1 exactly, and this column is
+  /// *compared* against a provider's declared amount, where a representation error
+  /// is a payment refused or wrongly accepted. Read `amountMinor`. Kept in step by
+  /// the writers until the backfill has run everywhere.
   amount       Float
+  /// The same amount as an exact integer count of minor units (cents).
+  /// See `src/lib/money.ts`: the only place that converts, and the only place a
+  /// rounding decision is made. Nullable so this migration is additive and the
+  /// backfill can run separately — a NOT NULL here would need a default that is a
+  /// guess about money.
+  amountMinor  Int?
   currency     String
   /// Amount the plan is priced at, in the plan's own currency, kept for display.
   listAmount   Float?
+  listAmountMinor Int?
   listCurrency String?
   /// pending | processing | succeeded | failed | cancelled | expired
   status       String   @default("pending")
@@ -893,10 +1036,15 @@ model Tip {
   postId        String?
   post          Post?    @relation(fields: [postId], references: [id], onDelete: SetNull)
   amount        Float
+  /// Exact integer minor units. See `src/lib/money.ts` and the note on
+  /// `PaymentIntent.amount`.
+  amountMinor   Int?
   currency      String   @default("KES")
   /// daraja (M-Pesa) | paypal | manual (comps and admin adjustments).
   provider      String   @default("manual")
   /// pending | succeeded | failed | refunded
+  /// Transitions are validated by `src/lib/state-machines.ts` — one refund, from
+  /// `succeeded` only.
   status        String   @default("pending")
   /// M-Pesa receipt number or PayPal capture id — the handle support quotes.
   providerRef   String?
@@ -928,8 +1076,12 @@ model CreatorPayout {
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// Net amount actually sent to the creator.
   amount        Float
+  /// Exact integer minor units — the value a payout must be computed and compared
+  /// from, because paying a creator twice is money leaving twice.
+  amountMinor   Int?
   /// Platform share withheld. Zero for a goodwill/manual payment.
   feeAmount     Float    @default(0)
+  feeAmountMinor Int?
   currency      String   @default("KES")
   /// daraja | paypal | manual
   provider      String   @default("manual")

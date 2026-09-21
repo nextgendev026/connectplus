@@ -16,7 +16,7 @@ Full-stack publishing and live-sports platform built with Next.js 16 (App Router
 - **Edge:** Cloudflare Workers fronting the origin — anonymous HTML, read-only API JSON and optimised images are answered at the edge, and the live scores board has its own short-TTL / stale-while-revalidate tier (`workers/edge-cache`)
 - **Sports data:** multi-source, keyless-capable — football-data.org, TheSportsDB, ESPN's public scoreboard, OpenLigaDB, coalesced onto one normalised fixture
 - **Realtime Views:** Convex (article view counters, ad metrics offloaded from Supabase)
-- **AI Providers:** OpenRouter (free tier), OpenCode Zen, OpenAI, Anthropic — dynamically fetched model lists
+- **AI Providers:** OpenRouter (free tier) and OpenCode Zen — dynamically fetched model lists, free-tier-only by policy, with a deterministic builtin fallback when no key is configured. No other provider is routable: the `openaiApiKey` / `anthropicApiKey` settings exist for the integrations probe but the gateway never calls them (`docs/MODERNIZATION-AUDIT.md` F-04)
 
 ## Features
 
@@ -300,7 +300,7 @@ Open [http://localhost:3000](http://localhost:3000).
 | `SPORTS_DAY_CACHE_TTL_SECONDS` | Past/future day snapshot cache (default 600) |
 | `OPENROUTER_API_KEY` | OpenRouter API key (free models available) |
 | `OPENCODE_API_KEY` | OpenCode Zen API key |
-| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | Optional paid AI providers |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | **Not routed.** Stored and probed by the Integrations console, but the AI gateway only speaks OpenRouter and OpenCode Zen — setting these enables no AI capability today (`docs/MODERNIZATION-AUDIT.md` F-04) |
 | `CRON_SECRET` | Shared secret the `/api/cron` and `/api/rss/cron` triggers verify (Bearer / `x-cron-secret`) |
 | `CRONJOB_TOKEN` | cron-job.org API key — schedules the heavy jobs via `/api/cron` (`npm run cronjob:sync`) |
 | `APP_URL` | Deployment base URL cron-job.org should hit (default `https://connectplusapp.vercel.app`) |
@@ -358,20 +358,29 @@ Open [http://localhost:3000](http://localhost:3000).
 `src/inngest/functions.ts` and mirror `src/lib/cron-schedule.ts`, which is the
 registry the admin console reads:
 
-| Job | Cadence | Essential |
-| --- | --- | --- |
-| Scheduled publishing | every 5 min | ✅ |
-| Status watchdog | every 5 min | ✅ |
-| RSS syndication | every 6 h | ✅ |
-| Livescore heartbeat | every 2 min | |
-| Favourite alerts | every 5 min | |
-| Radio metadata sweep | every 15 min | |
-| Sports intelligence | every 30 min | |
-| Payment reconciliation | every 6 h | |
-| Thumbnail recovery | every 6 h | |
-| Nightly hive training | 01:00 UTC | |
-| Semantic index | 01:30 UTC | |
-| Daily status snapshot | 00:05 UTC | |
+The table below is the whole registry. It is checked against `CRON_JOBS` by
+`tests/unit/docs-drift.test.ts`, so a job added to the code and not here fails the suite instead of
+becoming invisible.
+
+| Job id | Name | Cron | Essential |
+| --- | --- | --- | --- |
+| `publish-scheduled` | Scheduled publishing | `*/5 * * * *` | ✅ |
+| `status-watchdog` | Status watchdog | `*/5 * * * *` | ✅ |
+| `rss-poll` | RSS syndication | `0 */12 * * *` | ✅ |
+| `sports-live` | Livescore heartbeat | `*/2 * * * *` | |
+| `sports-notify` | Favourite alerts | `*/5 * * * *` | |
+| `marketing-sweep` | Self-marketing sweep | `*/15 * * * *` | |
+| `radio-status-sweep` | Radio metadata sweep | `*/15 * * * *` | |
+| `sports-intel` | Sports intelligence | `*/30 * * * *` | |
+| `thumbnail-recovery` | Thumbnail recovery | `15 */6 * * *` | |
+| `payments-lifecycle` | Payment reconciliation | `30 */6 * * *` | |
+| `platform-pulse` | Platform pulse | `45 */6 * * *` | |
+| `feed-health` | Outbound feed health | `30 * * * *` | |
+| `status-daily-snapshot` | Daily status snapshot | `5 0 * * *` | |
+| `hive-sweep` | Nightly hive training | `0 1 * * *` | |
+| `embed-posts` | Semantic index | `30 1 * * *` | |
+| `analytics-retention` | Analytics retention | `30 2 * * *` | |
+| `brain-diagnose` | Brain self-diagnosis | `15 3 * * *` | |
 
 Every run — Inngest cron, an admin "Run now", or an external trigger — stamps a
 heartbeat. The ledger has **two tiers**: Redis is the fast path, Postgres the
@@ -561,7 +570,7 @@ connectPlus/
 
 ## Testing
 
-- **Unit (Vitest)** — `npm test` (344 tests). Beyond utilities, intent classification
+- **Unit (Vitest)** — `npm test`. Beyond utilities, intent classification
   and sentiment, the suite pins the contracts that were expensive to learn:
   RSS due-feed ordering and per-run batching (`rss-poll-order`), cron registry ↔
   Inngest wiring (`cron-wiring`, including the scheduler-independent self-heal),

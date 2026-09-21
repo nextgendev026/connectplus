@@ -263,6 +263,71 @@ test("shows the proposed change as a diff and applies only the edits that are ke
   await expect(headline(page)).toHaveValue("");
 });
 
+/**
+ * The stale-reply guard.
+ *
+ * This is the failure the whole review panel exists to prevent, and it was live
+ * until now: the ops are applied against the draft the *request* was made from,
+ * so anything the writer typed while the panel was open was replaced — and
+ * because undo captured that same old snapshot, the newer paragraph was gone
+ * with no way back to it.
+ *
+ * The spec asserts the three things that make the fix real rather than a
+ * message: the refusal is enforced (not merely displayed), the writer can still
+ * choose to apply, and once they do, undo returns them to their own text.
+ */
+test("refuses a reply written against a draft that has since moved, and undo still reaches the newer text", async ({ page }) => {
+  await stubApi(page);
+  await writeDraft(page);
+  await selectOpening(page);
+  await copilot(page).getByRole("button", { name: "Improve", exact: true }).click();
+  await expect(review(page)).toBeVisible();
+
+  // The writer keeps writing after the request went out. This is the ordinary
+  // case, not an exotic one: the panel sits under the editor and a model reply
+  // takes seconds.
+  const LATER = `${DRAFT} A second paragraph, typed while the pilot was thinking.`;
+  await editor(page).fill(LATER);
+  await expect(editor(page)).toHaveValue(LATER);
+
+  // The panel says so, in the writer's terms, before they read the diffs.
+  await expect(review(page).getByText(/may be out of date/i)).toBeVisible();
+  await expect(review(page)).toContainText("body");
+
+  // And the refusal is enforced: Keep does not land it.
+  await review(page).getByRole("button", { name: "Keep", exact: true }).first().click();
+  await expect(editor(page)).toHaveValue(LATER);
+  await expect(review(page)).toBeVisible();
+
+  // The writer can still say yes. Doing so accepts that the reply is applied to
+  // the text it was written for — which is why the warning has to be honest.
+  await review(page).getByRole("button", { name: /apply against the current draft/i }).click();
+  await review(page).getByRole("button", { name: "Keep", exact: true }).first().click();
+  await expect(editor(page)).toHaveValue(`${REWRITE}${TAIL}`);
+
+  // The point of the whole exercise: their own paragraph is recoverable. One
+  // undo must reach LATER, not the pre-reply draft — an undo that returned to
+  // DRAFT would destroy the newer work it was supposed to protect.
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(editor(page)).toHaveValue(LATER);
+});
+
+test("an in-sync reply applies without a conflict and needs no confirmation", async ({ page }) => {
+  await stubApi(page);
+  await writeDraft(page);
+  await selectOpening(page);
+  await copilot(page).getByRole("button", { name: "Improve", exact: true }).click();
+  await expect(review(page)).toBeVisible();
+
+  // Nothing typed since the request, so the warning must be absent. A guard that
+  // fires when nothing relevant changed is one the writer learns to click past,
+  // which would defeat it on the one occasion it matters.
+  await expect(review(page).getByText(/may be out of date/i)).toHaveCount(0);
+
+  await review(page).getByRole("button", { name: "Keep", exact: true }).first().click();
+  await expect(editor(page)).toHaveValue(`${REWRITE}${TAIL}`);
+});
+
 test("discarding an edit leaves the draft and the fields exactly as they were", async ({ page }) => {
   await stubApi(page);
   await writeDraft(page);

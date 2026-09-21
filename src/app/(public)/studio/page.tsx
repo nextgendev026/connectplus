@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { extractKeywords } from "@/lib/neural-text";
 import Image from "next/image";
@@ -13,6 +13,14 @@ import { StudioPreview } from "@/components/studio/StudioPreview";
 import { StudioSidebar, type ArticleAssistState } from "@/components/studio/StudioSidebar";
 import { CheckedEditor } from "@/components/studio/CheckedEditor";
 import { applySuggestion, applySuggestions, type WritingSuggestion } from "@/lib/writing-checks";
+import {
+  checkPilotStale,
+  describeSaveState,
+  generateSessionId,
+  hashComposerDocument,
+  type SaveState,
+} from "@/lib/studio/composer";
+import { saveIdempotencyKey } from "@/lib/studio/save-ledger";
 import {
   applyPilotOps,
   reviewPilotEdits,
@@ -82,6 +90,26 @@ export default function StudioPage() {
   const [storiesUnauth, setStoriesUnauth] = useState(false);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Save state is a machine, not a boolean. `saving` refuses a second save;
+  // `error` stays visible until a success; `conflict` needs a human decision.
+  const [saveState, setSaveState] = useState<SaveState>("clean");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  /** Stable for the tab, and the scope for every idempotency key this session sends. */
+  const [sessionId] = useState(() => generateSessionId());
+  /**
+   * The duplicate-draft guard.
+   *
+   * The bug was a captured-value race: `editingId` is derived from a create
+   * response, so until React committed that state update a re-armed autosave
+   * still saw `null` and issued a second `POST`. A ref is read synchronously and
+   * cannot be stale, so the second create can no longer be issued at all — which
+   * is the fix, rather than a longer debounce.
+   */
+  const saveInFlightRef = useRef(false);
+  /** Increments on each successful save, so a retry keeps its key and a new edit does not. */
+  const savedRevisionRef = useRef(0);
+  /** The document id as of the last completed save, to detect a new draft appearing. */
+  const syncedDocumentRef = useRef<string | null>(null);
   const [aiSuggestions, setAiSuggestions] = useState<{ tags: string[]; category: string | null; trendingTopics: { title: string; mentions: number }[]; confidence: number } | null>(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
@@ -108,6 +136,17 @@ export default function StudioPage() {
   } | null>(null);
   const reviewRef = useRef<HTMLDivElement | null>(null);
   const [reviewNotice, setReviewNotice] = useState<string | null>(null);
+  /**
+   * Set only when the writer has explicitly chosen to land a stale reply anyway.
+   *
+   * Never inferred. A divergence between the staged base and the live composer is
+   * the one case where applying the ops does exactly what they look like they do
+   * and is still wrong — they were written against text that no longer exists, so
+   * "apply" silently replaces whatever was typed since. Making the writer say so
+   * out loud is the whole protection; the flag exists so the second tap is
+   * possible without the first one being possible by accident.
+   */
+  const [pilotForceApply, setPilotForceApply] = useState(false);
   /*
    * The Article Forge.
    *
@@ -256,19 +295,81 @@ export default function StudioPage() {
   useEffect(() => { const t = setTimeout(() => { try { localStorage.setItem(BACKUP_KEY, JSON.stringify({ title, content, excerpt, tags, categoryId, coverImage, ts: Date.now() })); } catch {} }, 800); return () => clearTimeout(t); }, [title, content, excerpt, tags, categoryId, coverImage]);
 
   const savePost = useCallback(async (status: "PUBLISHED" | "DRAFT") => {
-    if (mountedRef.current) setSaving(true);
+    // One save at a time, per session. This is the duplicate-draft fix: the
+    // guard is evaluated synchronously, so a re-armed autosave cannot issue a
+    // second create while the first is still in flight.
+    if (saveInFlightRef.current) return null;
+    saveInFlightRef.current = true;
+    if (mountedRef.current) { setSaving(true); setSaveState("saving"); setSaveError(null); }
     try {
       const matchedCategory = categoriesList.find((c) => c.id === categoryId || c.name === categoryName);
       const payload = { title: title.trim(), content: content.trim(), excerpt: excerpt.trim() || null, coverImage, categoryId: matchedCategory?.id ?? null, tags, status, scheduledAt: status === "DRAFT" && scheduledFor ? new Date(scheduledFor).toISOString() : null };
+
+      // The key is derived, not random, so a retry of this exact save carries the
+      // same key and the server answers with the document it already created
+      // instead of making a second one. A network-retry after a lost response is
+      // the case the client guard cannot cover on its own.
+      const idempotencyKey = saveIdempotencyKey({
+        sessionId,
+        revision: savedRevisionRef.current,
+        contentHash: hashComposerDocument({ title: payload.title, content: payload.content, excerpt: payload.excerpt ?? "", tags: payload.tags, categoryId: payload.categoryId, coverImage: payload.coverImage }),
+      });
+      const headers = { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey };
+
       let postId = editingId;
-      if (!postId) { const res = await fetch("/api/posts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); if (res.status === 401) { router.push("/auth/signin"); return null; } if (!res.ok) { const err = await res.json().catch(() => ({ error: "Save failed" })); throw new Error(err.error || "Failed to save"); } const data = await res.json(); postId = data?.post?.id; if (postId) setEditingId(postId); } else { const res = await fetch("/api/posts/" + postId, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); if (res.status === 401) { router.push("/auth/signin"); return null; } if (!res.ok) { const err = await res.json().catch(() => ({ error: "Save failed" })); throw new Error(err.error || "Failed to save"); } }
+      if (!postId) {
+        const res = await fetch("/api/posts", { method: "POST", headers, body: JSON.stringify(payload) });
+        if (res.status === 401) { router.push("/auth/signin"); return null; }
+        if (!res.ok) { const err = await res.json().catch(() => ({ error: "Save failed" })); throw new Error(err.error || "Failed to save"); }
+        const data = await res.json();
+        postId = data?.post?.id;
+        if (postId) setEditingId(postId);
+      } else {
+        const res = await fetch("/api/posts/" + postId, { method: "PUT", headers, body: JSON.stringify(payload) });
+        if (res.status === 401) { router.push("/auth/signin"); return null; }
+        if (!res.ok) { const err = await res.json().catch(() => ({ error: "Save failed" })); throw new Error(err.error || "Failed to save"); }
+      }
+
+      // The revision advances only on success, so a retry of a failed save keeps
+      // the same key while the next real edit gets a new one.
+      savedRevisionRef.current += 1;
       setLastSaved(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }));
+      if (mountedRef.current) { setSaveState("saved"); setSaveError(null); }
       return postId;
-    } finally { if (mountedRef.current) setSaving(false); }
-  }, [title, content, excerpt, coverImage, categoryId, categoryName, categoriesList, tags, editingId, router, scheduledFor]);
+    } catch (err) {
+      // A failed save is surfaced, never swallowed. The local backup survives, but
+      // the writer has to know the server copy is stale.
+      const message = err instanceof Error ? err.message : "Save failed";
+      if (mountedRef.current) { setSaveState("error"); setSaveError(message); }
+      throw err;
+    } finally {
+      saveInFlightRef.current = false;
+      if (mountedRef.current) setSaving(false);
+    }
+  }, [title, content, excerpt, coverImage, categoryId, categoryName, categoriesList, tags, editingId, router, scheduledFor, sessionId]);
 
   const canAutoSave = (title.trim().length > 0 || content.trim().length > 0) && !showPreview;
-  useEffect(() => { if (!canAutoSave) return; let active = true; const timer = setTimeout(async () => { try { await savePost("DRAFT"); } catch {} if (active) loadMyStories(); }, AUTOSAVE_MS); return () => { active = false; clearTimeout(timer); }; }, [title, content, excerpt, coverImage, tags, categoryId, categoryName, canAutoSave, savePost, loadMyStories]);
+  useEffect(() => {
+    if (!canAutoSave) return;
+    let active = true;
+    const timer = setTimeout(async () => {
+      try {
+        const id = await savePost("DRAFT");
+        // Refresh the sidebar only when the document identity actually changed —
+        // i.e. a new draft appeared. Refetching the whole story list after every
+        // autosave turned steady typing into a request per save.
+        if (active && id && id !== syncedDocumentRef.current) {
+          syncedDocumentRef.current = id;
+          loadMyStories();
+        }
+      } catch {
+        // Deliberately empty. `savePost` has already moved the save state to
+        // "error" and recorded the message, which is what the writer sees; a
+        // throw here would only produce an unhandled rejection.
+      }
+    }, AUTOSAVE_MS);
+    return () => { active = false; clearTimeout(timer); };
+  }, [title, content, excerpt, coverImage, tags, categoryId, categoryName, canAutoSave, savePost, loadMyStories]);
 
   const handleAddTag = useCallback(() => { const trimmed = tagInput.trim().toLowerCase(); if (trimmed && !tags.includes(trimmed) && tags.length < 10) { setTags((prev) => [...prev, trimmed]); setTagInput(""); } }, [tagInput, tags]);
   const handleRemoveTag = useCallback((tag: string) => { setTags((prev) => prev.filter((t) => t !== tag)); }, []);
@@ -339,6 +440,31 @@ export default function StudioPage() {
    * snapshot taken per edit — an undo that rewinded one step would leave the
    * draft in a state the writer never wrote.
    */
+  /**
+   * Has the draft moved since the reply currently under review was written?
+   *
+   * Computed on every render from the live composer rather than latched when the
+   * reply arrived, so the warning appears the moment the writer types and
+   * disappears if they undo back to the staged text.
+   */
+  const pilotStale = useMemo(
+    () => (pilotReview ? checkPilotStale(pilotReview.base, { title, content, excerpt, tags }) : null),
+    [pilotReview, title, content, excerpt, tags]
+  );
+
+  /**
+   * The state a forced apply should undo back to.
+   *
+   * Captured **once**, at the first edit landed after the writer opted in, and
+   * held for the rest of the reply. It cannot be recomputed per edit: a reply is
+   * several edits, so recomputing would point the single "Undo" at the state
+   * after edit one, and the writer's newer paragraph — the whole reason the
+   * warning exists — would still be unreachable.
+   *
+   * The normal path needs none of this: `pilotReview.origin` is already the draft
+   * as it stood before the reply, so one undo rewinds all of it.
+   */
+  const forcedOriginRef = useRef<PilotComposerState | null>(null);
   const commitComposer = useCallback(
     (next: { content: string; title: string; excerpt: string; tags: string[] }, origin: PilotComposerState, label: string) => {
       setTitle(next.title);
@@ -383,6 +509,8 @@ export default function StudioPage() {
         setPilotNotice({ message: reply || "The pilot found nothing to change.", undo: null });
         return;
       }
+      setPilotForceApply(false);
+      forcedOriginRef.current = null;
       setPilotReview({ action, reply, ranges, base, origin: base, pending: ops, reviews });
       // The panel lives under the editor, which on a phone may be a screen away
       // from the Quick-edits button that opened it. Bringing it into view is the
@@ -469,10 +597,25 @@ export default function StudioPage() {
     (op: PilotOp, keep: boolean) => {
       if (!pilotReview) return;
       const { action, pending: pendingAtStart } = pilotReview;
-      const { base, ranges, origin, pending } = pilotReview;
+      const { base, ranges, pending } = pilotReview;
       let nextBase = base;
 
+      // Refuse to land a reply written against text that no longer exists. The
+      // panel shows this too, so reaching here without a decision normally means
+      // a keyboard shortcut, and the answer is still to stop and ask.
+      if (keep && pilotStale?.stale && !pilotForceApply) {
+        setReviewNotice(
+          `These edits may be out of date — ${pilotStale.reason}. Review them before applying, or ask the pilot again.`
+        );
+        return;
+      }
+
       if (keep) {
+        // Where undo lands: the reply's own origin normally, or the draft as it
+        // stood when the writer chose to force a stale reply through.
+        const origin = pilotForceApply
+          ? (forcedOriginRef.current ??= { title, content, excerpt, tags })
+          : pilotReview.origin;
         const applied = applyPilotOps(base, [op], ranges);
         if (applied.applied.length === 0) {
           // Nothing happened, so do not claim it did — and drop it from the list.
@@ -517,13 +660,22 @@ export default function StudioPage() {
       }
       setPilotReview({ ...pilotReview, base: nextBase, pending: rest, reviews: reviewPilotEdits(nextBase, rest, ranges) });
     },
-    [commitComposer, pilotReview, recordDecisions]
+    [commitComposer, pilotForceApply, pilotReview, pilotStale, recordDecisions, title, content, excerpt, tags]
   );
 
   /** Keep every remaining edit at once, in the order the model proposed them. */
   const keepAllPilotEdits = useCallback(() => {
     if (!pilotReview) return;
-    const { base, ranges, origin, pending, action } = pilotReview;
+    if (pilotStale?.stale && !pilotForceApply) {
+      setReviewNotice(
+        `These edits may be out of date — ${pilotStale.reason}. Review them before applying, or ask the pilot again.`
+      );
+      return;
+    }
+    const { base, ranges, pending, action } = pilotReview;
+    const origin = pilotForceApply
+      ? (forcedOriginRef.current ??= { title, content, excerpt, tags })
+      : pilotReview.origin;
     const applied = applyPilotOps(base, pending, ranges);
     if (applied.applied.length === 0) {
       setPilotReview(null);
@@ -545,10 +697,12 @@ export default function StudioPage() {
       }))
     );
     setPilotReview(null);
-  }, [commitComposer, pilotReview, recordDecisions]);
+  }, [commitComposer, pilotForceApply, pilotReview, pilotStale, recordDecisions, title, content, excerpt, tags]);
 
   /** Drop the whole proposal without touching the draft. */
   const discardPilotEdits = useCallback(() => {
+    setPilotForceApply(false);
+    forcedOriginRef.current = null;
     setPilotReview(null);
     setPilotNotice({ message: "Proposed edits discarded — your draft is unchanged.", undo: null });
   }, []);
@@ -771,7 +925,22 @@ export default function StudioPage() {
               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-brand-500 to-accent-coral shadow-glow"><PenLine className="w-3.5 h-3.5 text-white" /></span>
               <div className="min-w-0">
                 <span className="text-sm font-semibold text-surface-50 truncate block leading-tight">{editingId ? "Editing story" : "Story Studio"}</span>
-                <span className="type-caption text-surface-500 hidden sm:block">{editingId ? "Drafting · autosave on" : "New story · autosave on"}</span>
+                {/*
+                  * The save state, from the machine, on every breakpoint. It used to
+                  * read a hardcoded "autosave on" on desktop and nothing at all on
+                  * mobile — so a failed save looked identical to a successful one,
+                  * and a phone writer had no status at all.
+                  */}
+                <span
+                  className={cn(
+                    "type-caption hidden sm:block",
+                    saveState === "error" || saveState === "conflict" ? "text-red-600 font-medium" : "text-surface-500"
+                  )}
+                  role="status"
+                  aria-live="polite"
+                >
+                  {describeSaveState({ saveState, dirty: false, lastError: saveError })} · autosave on
+                </span>
               </div>
             </div>
           </div>
@@ -792,6 +961,16 @@ export default function StudioPage() {
       </div>
 
       {error && (<div className="max-w-7xl mx-auto px-3 sm:px-6 pt-4"><div className="flex items-center gap-2 rounded-xl bg-red-500/10 border border-red-500/20 px-4 py-3 text-sm text-red-400"><AlertCircle className="w-4 h-4 shrink-0" /><span className="flex-1">{error}</span><button onClick={() => setError(null)} className="text-red-400 hover:text-red-300"><X className="w-4 h-4" /></button></div></div>)}
+      {/*
+        * A failed autosave, shown on every breakpoint.
+        *
+        * Autosave used to swallow its error (`catch {}`), so a writer who lost
+        * their connection saw the same thing as one whose save succeeded: no
+        * message, and "autosave on". The local backup survives a reload, but the
+        * writer has to know the server copy is stale before they close the tab.
+        */}
+      {saveState === "error" && saveError && (<div className="max-w-7xl mx-auto px-3 sm:px-6 pt-4"><div className="flex items-start gap-2 rounded-xl bg-amber-500/10 border border-amber-500/25 px-4 py-3 text-sm text-amber-400"><AlertCircle className="w-4 h-4 shrink-0 mt-0.5" /><div className="flex-1"><p className="font-medium">This draft is not saved to the server.</p><p className="type-caption mt-0.5 opacity-90">{saveError} — your work is still in this tab, and a reload will offer the local backup. Retrying happens automatically as you keep typing.</p></div></div></div>)}
+      {saveState === "conflict" && (<div className="max-w-7xl mx-auto px-3 sm:px-6 pt-4"><div className="flex items-start gap-2 rounded-xl bg-amber-500/10 border border-amber-500/25 px-4 py-3 text-sm text-amber-400"><AlertCircle className="w-4 h-4 shrink-0 mt-0.5" /><div className="flex-1"><p className="font-medium">This story changed elsewhere.</p><p className="type-caption mt-0.5 opacity-90">{saveError ?? "Another session saved a newer version. Reload the story to work from the server copy before continuing."}</p></div></div></div>)}
 
       {reviewNotice && (<div className="max-w-7xl mx-auto px-3 sm:px-6 pt-4"><div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/25 px-4 py-3 text-sm text-emerald-300"><span className="shrink-0">✨</span><span className="flex-1">{reviewNotice}</span><button onClick={() => setReviewNotice(null)} className="text-emerald-400 hover:text-emerald-300"><X className="w-4 h-4" /></button></div></div>)}
 
@@ -844,6 +1023,9 @@ export default function StudioPage() {
                       reply={pilotReview.reply}
                       reviews={pilotReview.reviews}
                       busy={pilotBusy !== null}
+                      stale={pilotStale?.stale ? pilotStale.reason : null}
+                      forced={pilotForceApply}
+                      onApplyAnyway={() => setPilotForceApply(true)}
                       onAccept={(index) => {
                         const op = pilotReview.reviews.find((r) => r.index === index)?.op;
                         if (op) decidePilotEdit(op, true);
