@@ -29,6 +29,17 @@ import { type Currency, fromLegacyFloat, toMajor } from "../src/lib/money";
 const prisma = new PrismaClient();
 const dryRun = process.argv.includes("--dry-run");
 
+/**
+ * What actually happened, in the past tense it deserves.
+ *
+ * The counters below increment whether or not anything was written, so a dry run
+ * used to report "2 written" for two rows it had not touched. In a tool that
+ * edits money, a log line that overstates what it did is worse than no log line —
+ * an operator checking whether the backfill had already run would read "written"
+ * and conclude it had.
+ */
+const done = (n: number) => (dryRun ? `${n} would be written` : `${n} written`);
+
 interface Failure {
   table: string;
   id: string;
@@ -75,7 +86,7 @@ async function main() {
     }
     updated += 1;
   }
-  console.log(`[backfill-money] PaymentIntent: ${intents.length} candidate(s), ${updated} written`);
+  console.log(`[backfill-money] PaymentIntent: ${intents.length} candidate(s), ${done(updated)}`);
 
   /* ── SubscriptionPlan ──────────────────────────────────────────────────── */
   let plans = 0;
@@ -102,7 +113,7 @@ async function main() {
     }
     plans += 1;
   }
-  console.log(`[backfill-money] SubscriptionPlan: ${planRows.length} candidate(s), ${plans} written`);
+  console.log(`[backfill-money] SubscriptionPlan: ${planRows.length} candidate(s), ${done(plans)}`);
 
   /* ── Tip ───────────────────────────────────────────────────────────────── */
   let tips = 0;
@@ -119,7 +130,7 @@ async function main() {
     if (!dryRun) await prisma.tip.update({ where: { id: row.id }, data: { amountMinor: amount.minor } });
     tips += 1;
   }
-  console.log(`[backfill-money] Tip: ${tipRows.length} candidate(s), ${tips} written`);
+  console.log(`[backfill-money] Tip: ${tipRows.length} candidate(s), ${done(tips)}`);
 
   /* ── CreatorPayout ─────────────────────────────────────────────────────── */
   let payouts = 0;
@@ -142,7 +153,7 @@ async function main() {
     }
     payouts += 1;
   }
-  console.log(`[backfill-money] CreatorPayout: ${payoutRows.length} candidate(s), ${payouts} written`);
+  console.log(`[backfill-money] CreatorPayout: ${payoutRows.length} candidate(s), ${done(payouts)}`);
 
   /* ── Summary ───────────────────────────────────────────────────────────── */
   console.log(

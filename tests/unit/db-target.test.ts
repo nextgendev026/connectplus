@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
 
 import {
   ACTIVE_PROJECT_REF,
@@ -100,6 +101,79 @@ describe("assertWritableTarget", () => {
       expect((error as Error).message).toContain("read-only");
     }
   });
+});
+
+/**
+ * The script, not the library.
+ *
+ * Everything above tests `db-target.ts`, and all of it passed while the guard was
+ * broken — because the script that runs it is a different thing. It read
+ * `process.env` without loading `.env`, so under `npm run db:guard` it saw no
+ * `DATABASE_URL`, and its `if (!value) continue` then printed "Safe to deploy
+ * migrations." It approved every run in which it had learned nothing.
+ *
+ * A guard whose whole purpose is to fail closed was failing open, and the test
+ * suite could not see it because it tested the function the script calls rather
+ * than the script. These spawn it.
+ */
+describe("the guard script itself", () => {
+  const script = "scripts/assert-db-target.ts";
+
+  /**
+   * Run the guard with a controlled environment.
+   *
+   * Values passed here win over the real `.env`, because dotenv is loaded with
+   * `override: false` — an explicitly-set variable is left alone. That is what
+   * lets the absence case be tested at all: `DATABASE_URL: ""` is present and
+   * empty, so dotenv stands down and the script must refuse on its own.
+   */
+  function run(env: Record<string, string>) {
+    return spawnSync(
+      "npx",
+      ["ts-node", "--project", "scripts/tsconfig.script.json", script, "deploy migrations"],
+      {
+        cwd: process.cwd(),
+        env: { ...process.env, ...env },
+        encoding: "utf8",
+        timeout: 120_000,
+        shell: true,
+      }
+    );
+  }
+
+  it(
+    "refuses when DATABASE_URL is absent rather than reporting itself safe",
+    () => {
+      // The exact bug. An unreadable target is not a safe target.
+      const result = run({ DATABASE_URL: "", DIRECT_URL: "" });
+      expect(result.status).not.toBe(0);
+      expect(`${result.stdout}${result.stderr}`).toMatch(/REFUSING/);
+    },
+    60_000
+  );
+
+  it(
+    "refuses the legacy project",
+    () => {
+      const legacy = `postgresql://postgres.${LEGACY_PROJECT_REF}:pw@aws-1-eu-west-1.pooler.supabase.com:6543/postgres`;
+      const result = run({ DATABASE_URL: legacy, DIRECT_URL: legacy });
+      expect(result.status).not.toBe(0);
+      expect(`${result.stdout}${result.stderr}`).toContain(LEGACY_PROJECT_REF);
+    },
+    60_000
+  );
+
+  it(
+    "allows a recognised local database",
+    () => {
+      // The guard must not become a blanket refusal: a developer's local Postgres
+      // is a legitimate migration target and has neither project ref.
+      const local = "postgresql://postgres:postgres@localhost:5432/connectplus";
+      const result = run({ DATABASE_URL: local });
+      expect(result.status).toBe(0);
+    },
+    60_000
+  );
 });
 
 describe("describeTarget gives a logger something to say", () => {

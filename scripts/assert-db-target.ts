@@ -12,11 +12,31 @@
  * the direct connection, so the two can differ, and a guard that inspected only
  * one of them would be a guard with a hole in the exact place it matters.
  *
+ * ── Two bugs in the first version, both of which made it useless ───────────
+ *
+ * 1. **It could not see the database.** The script read `process.env` only, but
+ *    `npm run db:guard` runs under a shell where `.env` has not been exported —
+ *    Prisma's CLI loads that file itself, which is why `prisma migrate status`
+ *    connected successfully while this guard reported that `DATABASE_URL` "is not
+ *    set at all". Both statements were true, about different things.
+ *
+ * 2. **It failed open.** Having failed to find a URL, it logged a note, skipped
+ *    the check with `continue`, and then printed "Safe to deploy migrations." So
+ *    the guard approved every run in which it had learned nothing — the exact
+ *    situation it existed to catch. Not being able to see the target is not
+ *    evidence that the target is correct.
+ *
+ * The lesson both share: a safety check must fail closed, and must be verified in
+ * the environment it actually runs in rather than the one it was tested in.
+ *
  * Usage:
  *   ts-node --project scripts/tsconfig.script.json scripts/assert-db-target.ts "deploy migrations"
  *
  * Exit codes: 0 = safe to continue, 1 = refuse.
  */
+
+import { existsSync } from "node:fs";
+import { config as loadEnvFile } from "dotenv";
 
 import {
   ACTIVE_PROJECT_REF,
@@ -24,25 +44,46 @@ import {
   classifyDatabaseUrl,
 } from "../src/lib/db-target";
 
+// Load the same files, in the same precedence, that Next and Prisma use — `.env`
+// first and `.env.local` overriding it. Anything already set in the real
+// environment wins over both, which is what a CI or Vercel run needs.
+for (const file of [".env", ".env.local"]) {
+  if (existsSync(file)) loadEnvFile({ path: file, override: false, quiet: true });
+}
+
 const action = process.argv[2] ?? "continue";
 
-const targets: [name: string, value: string | undefined][] = [
-  ["DATABASE_URL", process.env.DATABASE_URL],
-  ["DIRECT_URL", process.env.DIRECT_URL],
-];
+const databaseUrl = process.env.DATABASE_URL;
+
+/**
+ * Fail closed.
+ *
+ * Without a URL there is nothing to classify, so there is nothing to approve.
+ */
+if (!databaseUrl) {
+  console.error(
+    `[db-guard] REFUSING to ${action}: DATABASE_URL is not set.\n` +
+      `[db-guard] Looked in the environment, .env and .env.local.\n` +
+      `[db-guard] An unreadable target is not a safe target — this guard cannot ` +
+      `confirm the database is the active project (${ACTIVE_PROJECT_REF}), so it will not continue.`
+  );
+  process.exit(1);
+}
 
 let refused = false;
 
-for (const [name, value] of targets) {
+/** Classify one connection string, refusing anything that is not the active project. */
+function check(name: string, value: string | undefined): void {
   if (!value) {
-    console.log(`[db-guard] ${name} is not set at all.`);
-    continue;
+    // A missing DIRECT_URL is legitimate: Prisma falls back to DATABASE_URL.
+    if (name === "DIRECT_URL") console.log(`[db-guard] ${name} not set — using DATABASE_URL.`);
+    return;
   }
   const verdict = classifyDatabaseUrl(value);
   if (!verdict.ok) {
     console.error(`[db-guard] REFUSING to ${action}: ${name} → ${verdict.reason}`);
     refused = true;
-    continue;
+    return;
   }
   if (verdict.kind === "active") {
     console.log(`[db-guard] ${name} → active project ${ACTIVE_PROJECT_REF}.`);
@@ -53,6 +94,9 @@ for (const [name, value] of targets) {
     );
   }
 }
+
+check("DATABASE_URL", databaseUrl);
+check("DIRECT_URL", process.env.DIRECT_URL);
 
 if (refused) {
   console.error(
