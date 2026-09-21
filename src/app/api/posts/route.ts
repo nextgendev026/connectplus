@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse, after } from "next/server";
+import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { slugify } from "@/lib/utils";
@@ -361,6 +362,10 @@ export async function POST(request: NextRequest) {
 
     // Bump the feed-cache version so published posts appear immediately.
     redisIncr("feed:version").catch(() => {});
+    // The home feed is edge-cached, so a publish has to invalidate it rather
+    // than wait out the window; nothing is cached for a slug that has never
+    // been requested, which is why the article itself needs no revalidation.
+    if (postStatus === "PUBLISHED") revalidatePath("/");
 
     // Index the semantic embedding + hive engagement (fire-and-forget).
     if (postStatus === "PUBLISHED" && moderationStatus === "APPROVED") {

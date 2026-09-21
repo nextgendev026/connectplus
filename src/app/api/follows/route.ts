@@ -6,12 +6,18 @@ import { FollowSchema } from "@/lib/schemas/validators";
 
 export async function GET(request: NextRequest) {
   try {
+    // Either key resolves the same user. `username` is what the profile page
+    // has; `targetId` is what an article page has — it is about to render a
+    // follow button for an author it only knows by id, and asking it to fetch
+    // the username first just to turn around and look it up again would be two
+    // requests where one does.
     const username = request.nextUrl.searchParams.get("username");
-    if (!username) {
+    const targetId = request.nextUrl.searchParams.get("targetId");
+    if (!username && !targetId) {
       return NextResponse.json({ error: "Missing username" }, { status: 400 });
     }
     const target = await prisma.user.findUnique({
-      where: { username },
+      where: username ? { username } : { id: targetId as string },
       select: { id: true, followersCount: true, followingCount: true },
     });
     if (!target) {

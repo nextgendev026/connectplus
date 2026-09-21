@@ -1,41 +1,34 @@
-import { Fragment } from "react";
 import Link from "next/link";
 import OptimizedImage from "@/components/ui/OptimizedImage";
 import { avatarSrc } from "@/lib/image-src";
 import Script from "next/script";
 import nextDynamic from "next/dynamic";
 import { prisma } from "@/lib/prisma";
-import { cn, estimateReadTime, timeAgo } from "@/lib/utils";
-import { coverSrc, postCoverSrc } from "@/lib/thumb";
-import { auth } from "@/lib/auth";
-import { rankFeed } from "@/lib/feed-ranker";
+import { postCoverSrc } from "@/lib/thumb";
 import AdSlot from "@/components/ads/AdSlot";
 import { cacheGet, cacheSet } from "@/lib/redis";
 import { convexViewCounts, mergeLiveViewCounts } from "@/lib/convex";
-import { formatCompact } from "@/lib/format-views";
-import { ViewCount } from "@/components/ui/ViewCount";
-import {
-  Heart,
-  MessageCircle,
-  ArrowRight,
-  Bookmark,
-  Users,
-  SearchX,
-  Pen,
-  Sparkles,
-  Clock,
-  PenLine,
-} from "lucide-react";
+import { ArrowRight, Pen, Users } from "lucide-react";
+import { FeedCategoryProvider } from "@/components/feed/FeedFilter";
+import { CategoryCarousel } from "@/components/feed/CategoryCarousel";
+import { HomeFeed } from "@/components/feed/HomeFeed";
+import type { FeedCategory, FeedPost } from "@/components/feed/FeedCards";
 
 /**
- * Rendered per request, never prerendered.
+ * Cached at the edge, and revalidated behind it.
  *
- * The feed reads live posts, and a build-time snapshot of it is stale the day it
- * ships. It is also what broke the Cloudflare build: prerendering runs this page
- * in an environment with no DATABASE_URL, so `next build` died on "Environment
- * variable not found" instead of shipping.
+ * This page was `force-dynamic` for two reasons, and both have moved to the
+ * browser. It read `?category=` to filter the pool, and `auth()` to rank the
+ * feed for the signed-in reader — and reading either one makes a route render
+ * per request. The category now comes from the URL on the client
+ * (`FeedCategoryProvider`) and the ranked order is swapped in after hydration
+ * (`HomeFeed`), so what is left is the same for everyone and can be shared.
+ *
+ * The Redis pool below still does its job: it is what makes the revalidation
+ * render cheap rather than three heavy queries against a shared free-tier
+ * Postgres.
  */
-export const dynamic = "force-dynamic";
+export const revalidate = 60;
 
 // NOTE: no `ssr: false` — that option is illegal in Server Components.
 // Plain next/dynamic still code-splits each chunk so the first paint ships
@@ -49,26 +42,20 @@ const TrendingTopics = nextDynamic(
 const ListeningLocation = nextDynamic(
   () => import("@/components/feed/ListeningLocation").then((m) => m.ListeningLocation)
 );
-const FeedFeedbackTracker = nextDynamic(
-  () => import("@/components/feed/FeedFeedbackTracker").then((m) => m.FeedFeedbackTracker)
-);
-const LoadMoreFeed = nextDynamic(
-  () => import("@/components/feed/LoadMoreFeed").then((m) => m.LoadMoreFeed)
-);
 const HeroSlideshow = nextDynamic(
   () => import("@/components/feed/HeroSlideshow").then((m) => m.HeroSlideshow)
 );
 
 /** Feed-pool data layer. The pool (posts + hero + categories + creators) is
- * user-independent — personalization is applied afterwards in `rankFeed` — so it
- * is safe to share across visitors.
+ * user-independent — personalization is applied afterwards — so it is safe to
+ * share across visitors.
  *
  * Three tiers, cheapest first:
  *   1. Redis pool snapshot (stale-while-revalidate, 60s freshness) — the heavy
  *      queries below take 15-25s against a shared free-tier Postgres, so
  *      serving them from Redis keeps the home page fast AND keeps the DB from
  *      being hammered on every render. `feed:version` (bumped on publish)
- *      invalidates instantly, so new stories still appear immediately.
+ *      invalidates instantly.
  *   2. Live DB fetch, which refreshes the snapshot at every tier.
  *   3. 24h Redis emergency snapshot + an in-process last-known-good mirror, so
  *      the page still renders when the DB (or both DB and Redis) is down.
@@ -166,21 +153,6 @@ interface CategoryData {
   _count: { posts: number };
 }
 
-interface PostData {
-  id: string;
-  title: string;
-  slug: string;
-  excerpt: string | null;
-  coverImage: string | null;
-  viewCount: number;
-  featured: boolean;
-  createdAt: Date;
-  author: { name: string | null; username: string; avatar: string | null };
-  category: { name: string; slug: string } | null;
-  tags: { id: string; name: string; slug: string }[];
-  _count: { comments: number; likes: number };
-}
-
 interface CreatorData {
   id: string;
   name: string | null;
@@ -189,319 +161,6 @@ interface CreatorData {
   role: string;
   node: string | null;
   _count: { posts: number };
-}
-
-const CATEGORY_EMOJI: Record<string, string> = {
-  technology: "💻",
-  culture: "🎭",
-  business: "💼",
-  lifestyle: "🌿",
-  sports: "⚽",
-  music: "🎵",
-  food: "🍛",
-  travel: "✈️",
-};
-
-function PostCard({
-  post,
-  featured = false,
-  index = 0,
-}: {
-  post: PostData;
-  featured?: boolean;
-  index?: number;
-}) {
-  return (
-    <AnimatedCard index={index}>
-      <Link
-        href={`/article/${post.slug}`}
-        data-feed-post={post.id}
-        className={cn(
-          "group relative rounded-2xl bg-surface-900/60 border border-surface-800/50 overflow-hidden transition-all duration-300 hover:border-brand-500/30 hover:shadow-glow block",
-          featured ? "md:col-span-2" : ""
-        )}
-      >
-        <div
-          className={cn(
-            "relative bg-gradient-to-br from-surface-800 to-surface-900 overflow-hidden",
-            featured ? "h-56 md:h-72" : "h-40 md:h-48"
-          )}
-        >
-          <OptimizedImage
-            src={coverSrc(post.coverImage, {
-              title: post.title,
-              category: post.category?.name,
-              seed: post.slug,
-            })}
-            alt={post.title}
-            fill
-            preset="cover"
-            className="transition-transform duration-700 group-hover:scale-105"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
-          <div className="absolute top-4 left-4">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-500/20 px-3 py-1 text-xs font-medium text-brand-400 border border-brand-500/20 backdrop-blur-sm">
-              {post.category?.name ?? "Uncategorized"}
-            </span>
-          </div>
-          <button className="absolute top-4 right-4 p-2 rounded-full bg-black/40 backdrop-blur-sm text-surface-400 hover:text-brand-400 transition-all opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100">
-            <Bookmark className="w-4 h-4" />
-          </button>
-          {featured && (
-            <div className="absolute bottom-4 left-4 right-4">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-500/30 px-3 py-1 text-[10px] font-bold text-brand-ink border border-brand-400/30 backdrop-blur-sm uppercase tracking-wider">
-                <Sparkles className="w-3 h-3" />
-                Featured
-              </span>
-            </div>
-          )}
-        </div>
-
-        <div className="p-5">
-          <h3
-            className={cn(
-              "font-semibold text-surface-50 leading-snug mb-2 group-hover:text-brand-400 transition-colors line-clamp-2",
-              featured ? "text-lg md:text-xl" : "text-base"
-            )}
-          >
-            {post.title}
-          </h3>
-          <p className="text-surface-400 text-sm leading-relaxed mb-4 line-clamp-2">
-            {post.excerpt ?? post.title}
-          </p>
-
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="relative w-7 h-7 rounded-full overflow-hidden shrink-0">
-                <OptimizedImage
-                  src={avatarSrc(post.author.avatar, post.author.name ?? post.author.username)}
-                  alt={post.author.name ?? post.author.username}
-                  fill
-                  preset="avatar"
-                  width={56}
-                  height={56}
-                />
-              </div>
-              <div>
-                <p className="text-xs font-medium text-surface-300">
-                  {post.author.name ?? post.author.username}
-                </p>
-                <p className="text-[10px] text-surface-500">
-                  {estimateReadTime(
-                    post.title + " " + (post.excerpt ?? "")
-                  )}{" "}
-                  min read
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 text-surface-500 text-xs">
-              <ViewCount value={post.viewCount} />
-              <span className="flex items-center gap-1">
-                <Heart className="w-3 h-3" />
-                <span title={`${post._count.likes.toLocaleString()} likes`}>{formatCompact(post._count.likes)}</span>
-              </span>
-              <span className="flex items-center gap-1">
-                <MessageCircle className="w-3 h-3" />
-                {post._count.comments}
-              </span>
-            </div>
-          </div>
-        </div>
-      </Link>
-    </AnimatedCard>
-  );
-}
-
-function CategoryCarousel({
-  categories,
-  categoryFilter,
-}: {
-  categories: CategoryData[];
-  categoryFilter?: string;
-}) {
-  return (
-    <section className="border-b border-surface-800/50 bg-surface-950/80 backdrop-blur-xl sticky top-0 z-30">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6">
-        <div className="flex items-center gap-2 py-4 overflow-x-auto scrollbar-hide snap-x snap-mandatory">
-          <Link
-            href="/"
-            className={cn(
-              "shrink-0 snap-start inline-flex items-center gap-1.5 rounded-full px-4 py-2.5 text-xs font-semibold transition-all duration-200",
-              !categoryFilter
-                ? "bg-brand-500 text-white shadow-glow"
-                : "border border-surface-700/50 text-surface-400 hover:text-surface-50 hover:border-surface-500 hover:bg-surface-800/50"
-            )}
-          >
-            All
-          </Link>
-          {categories.map((cat) => {
-            const emoji = CATEGORY_EMOJI[cat.slug] ?? "📄";
-            const isActive = categoryFilter === cat.slug;
-            return (
-              <Link
-                key={cat.id}
-                href={`/?category=${cat.slug}`}
-                className={cn(
-                  "shrink-0 snap-start inline-flex items-center gap-1.5 rounded-full px-4 py-2.5 text-xs font-medium transition-all duration-200",
-                  isActive
-                    ? "bg-brand-500 text-white border border-brand-400/30 shadow-glow"
-                    : "border border-surface-700/50 text-surface-400 hover:text-surface-50 hover:border-surface-500 hover:bg-surface-800/50"
-                )}
-              >
-                <span className="text-sm">{emoji}</span>
-                {cat.name}                  <span
-                    className={cn(
-                      "ml-0.5 text-[10px]",
-                      // On a brand-filled chip only a near-white accent clears AA —
-                      // the pale brand step measured 1.4:1 there, and its light-mode
-                      // replacement is now deep (that is its paper role).
-                      isActive ? "text-white/95" : "text-surface-600"
-                    )}
-                  >
-                  {cat._count.posts}
-                </span>
-              </Link>
-            );
-          })}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function FeaturedStoryBanner({ post }: { post: PostData }) {
-  return (
-    <AnimatedCard index={0}>
-      <Link
-        href={`/article/${post.slug}`}
-        data-feed-post={post.id}
-        className="group relative block rounded-2xl overflow-hidden bg-gradient-to-br from-brand-500/10 via-surface-900 to-accent-cyan/5 border border-surface-800/50 hover:border-brand-500/30 transition-all duration-500 hover:shadow-glow-lg"
-      >
-        <div className="relative h-64 sm:h-80 md:h-96 overflow-hidden">
-          <OptimizedImage
-            src={coverSrc(post.coverImage, {
-              title: post.title,
-              category: post.category?.name,
-              seed: post.slug,
-            })}
-            alt={post.title}
-            fill
-            preset="cover"
-            priority
-            className="transition-transform duration-700 group-hover:scale-105"
-          />
-          {/* Gradient overlay */}
-          <div className="absolute inset-0 bg-gradient-to-br from-brand-500/20 via-transparent to-accent-cyan/10" />
-          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent" />
-
-          {/* Decorative elements */}
-          <div className="absolute top-0 right-0 w-1/3 h-full bg-gradient-to-l from-brand-500/5 to-transparent" />
-          <div className="absolute bottom-0 left-0 w-1/2 h-1/2 bg-gradient-to-tr from-accent-cyan/5 to-transparent" />
-
-          {/* Content */}
-          <div className="absolute inset-0 flex flex-col justify-end p-6 sm:p-8 md:p-10">
-            <div className="flex items-center gap-3 mb-4">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-500/20 px-3 py-1 text-xs font-bold text-brand-400 border border-brand-500/20 backdrop-blur-sm">
-                <Sparkles className="w-3 h-3" />
-                Featured
-              </span>
-              {post.category && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-black/40 px-3 py-1 text-xs font-medium text-white/80 border border-white/20 backdrop-blur-sm">
-                  {post.category.name}
-                </span>
-              )}
-            </div>
-            <h2 className="text-2xl sm:text-3xl md:text-4xl font-display font-bold text-white leading-tight mb-3 group-hover:text-brand-400 transition-colors drop-shadow-md">
-              {post.title}
-            </h2>
-            <p className="text-white/80 text-sm sm:text-base leading-relaxed mb-6 line-clamp-2 max-w-2xl">
-              {post.excerpt}
-            </p>
-            <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
-              <div className="flex items-center gap-3">
-                <div className="relative w-10 h-10 rounded-full overflow-hidden">
-                  <OptimizedImage
-                    src={avatarSrc(post.author.avatar, post.author.name ?? post.author.username)}
-                    alt={post.author.name ?? post.author.username}
-                    fill
-                    preset="avatar"
-                    width={80}
-                    height={80}
-                  />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-white">
-                    {post.author.name ?? post.author.username}
-                  </p>
-                  <p className="text-xs text-white/70">
-                    {timeAgo(post.createdAt)}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-4 text-white/70 text-xs">
-                <span className="flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5" />
-                  {estimateReadTime(
-                    post.title + " " + (post.excerpt ?? "")
-                  )}{" "}
-                  min read
-                </span>
-                <ViewCount value={post.viewCount} size="md" className="gap-1.5" />
-                <span className="flex items-center gap-1.5">
-                  <MessageCircle className="w-3.5 h-3.5" />
-                  {post._count.comments}
-                </span>
-              </div>
-              <div className="sm:ml-auto">
-                <span className="inline-flex items-center gap-2 rounded-xl bg-brand-500/10 border border-brand-500/20 px-4 py-2 text-xs font-semibold text-brand-400 group-hover:bg-brand-500 group-hover:text-white transition-all">
-                  Read Story
-                  <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </Link>
-    </AnimatedCard>
-  );
-}
-
-function EmptyState({ categoryFilter }: { categoryFilter?: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center py-24 text-center">
-      <div className="relative w-24 h-24 mb-8">
-        <div className="absolute inset-0 rounded-3xl bg-surface-800/60 border border-surface-700/50 rotate-6" />
-        <div className="absolute inset-0 rounded-3xl bg-surface-800/60 border border-surface-700/50 -rotate-3" />
-        <div className="absolute inset-0 rounded-3xl bg-surface-900 border border-surface-700/50 flex items-center justify-center">
-          <SearchX className="w-10 h-10 text-surface-500" />
-        </div>
-      </div>
-      <h3 className="text-xl font-semibold text-surface-50 mb-2">No stories yet</h3>
-      <p className="text-sm text-surface-400 max-w-sm mb-8 leading-relaxed">
-        {categoryFilter
-          ? "No stories have been published in this category yet. Check back soon or explore other categories."
-          : "Be the first to share your story with the East African community."}
-      </p>
-      <div className="flex flex-col sm:flex-row items-center gap-3">
-        <Link
-          href="/studio"
-          className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-6 py-3 text-sm font-semibold text-white hover:bg-brand-600 transition-all shadow-glow hover:scale-[1.02]"
-        >
-          <PenLine className="w-4 h-4" />
-          Write a Story
-        </Link>
-        {categoryFilter && (
-          <Link
-            href="/"
-            className="inline-flex items-center gap-2 rounded-xl border border-surface-700 px-6 py-3 text-sm font-medium text-surface-300 hover:bg-surface-800/50 transition-colors"
-          >
-            View All Stories
-          </Link>
-        )}
-      </div>
-    </div>
-  );
 }
 
 function TrendingSidebar({
@@ -611,22 +270,11 @@ function TrendingSidebar({
   );
 }
 
-export default async function HomeFeedPage({
-  searchParams,
-}: {
-  searchParams?: Promise<{ category?: string }>;
-}) {
-  const params = await searchParams;
-  const categoryFilter = params?.category;
-
-  const where: Record<string, unknown> = {
+export default async function HomeFeedPage() {
+  const where = {
     status: "PUBLISHED",
     moderationStatus: "APPROVED",
   };
-
-  if (categoryFilter) {
-    where.category = { slug: categoryFilter };
-  }
 
   const [postRows, heroRows, allCategories, allCreators] = await withFeedFallback([
     prisma.post.findMany({
@@ -641,7 +289,9 @@ export default async function HomeFeedPage({
         _count: { select: { comments: true, likes: true } },
       },
       orderBy: { createdAt: "desc" },
-      take: categoryFilter ? 20 : 30,
+      // Every category, because the filter now happens in the browser and a
+      // category view can only show what the pool happened to carry.
+      take: 30,
     }),
     prisma.post.findMany({
       where: {
@@ -693,7 +343,7 @@ export default async function HomeFeedPage({
     // nothing that a previous deploy wrote, because a stale snapshot destructured
     // into a shorter tuple silently shifts one element into the next slot's
     // variable (the tags array would have become the creator list).
-  ], `feed:pool3:${categoryFilter ?? "all"}`);
+  ], "feed:pool3:all");
 
   // Swap the (omitted) stored cover for the small, cacheable thumb URL. This
   // keeps 2–4 MB base64 rows out of the RSC payload entirely.
@@ -708,15 +358,9 @@ export default async function HomeFeedPage({
   // created with `viewCount: 0`, read none at all while its article page showed
   // thousands. The article page has always asked Convex for the live total; the
   // cards now do too, for exactly the stories on screen, in one round trip.
-  //
-  // Run against the session read rather than after it: the two are independent,
-  // so the overlay costs one round trip's latency at most, not two.
-  const [liveCounts, session] = await Promise.all([
-    convexViewCounts([
-      ...storedPosts.map((p) => p.id),
-      ...storedHero.map((p) => p.id),
-    ]),
-    auth(),
+  const liveCounts = await convexViewCounts([
+    ...storedPosts.map((p) => p.id),
+    ...storedHero.map((p) => p.id),
   ]);
   // Rank on the live numbers, not the stored ones: engagement is a ranking
   // input, so ordering a feed by a stale count orders it by the wrong thing.
@@ -730,114 +374,53 @@ export default async function HomeFeedPage({
     .sort((a, b) => b._count.posts - a._count.posts)
     .slice(0, 5);
 
-  // Phase 1: adaptive ranking (recency for anonymous users, personalized for
-  // signed-in users per their A/B variant). The displayed page is always the
-  // top 20 of the ranked pool so "load more" slices continue cleanly.
-  const { posts: ranked, variant } = await rankFeed(posts, session?.user?.id ?? null);
-  const top = ranked.slice(0, 20);
-  const featuredPost = top.find((p) => p.featured) ?? top[0];
-  const feedPosts = top.filter((p) => p.id !== featuredPost?.id);
-  const feedIds = top.map((p) => p.id);
+  const feedCategories: FeedCategory[] = categories.map((c) => ({
+    id: c.id,
+    name: c.name,
+    slug: c.slug,
+    count: c._count.posts,
+  }));
+
+  // The displayed page is always the top 20 of the pool, so "load more" slices
+  // continue cleanly from where the server stopped. Ordering here is the
+  // control arm (recency); a signed-in reader in a personalised arm gets their
+  // order swapped in by `HomeFeed` once the page has hydrated.
+  const top: FeedPost[] = posts.slice(0, 20);
 
   return (
     <div className="min-h-screen bg-surface-950 scroll-smooth">
-      <div className="relative z-20 -mt-14 mb-2 flex justify-center px-4">
-        <ListeningLocation />
-      </div>
+      <FeedCategoryProvider>
+        <div className="relative z-20 -mt-14 mb-2 flex justify-center px-4">
+          <ListeningLocation />
+        </div>
 
-      <HeroSlideshow
-        slides={heroPostRows}
-        stats={{
-          writers: allCreators.length,
-          stories: posts.length,
-          cities: new Set(allCreators.map((c) => c.node).filter(Boolean)).size,
-        }}
-      />
+        <HeroSlideshow
+          slides={heroPostRows}
+          stats={{
+            writers: allCreators.length,
+            stories: posts.length,
+            cities: new Set(allCreators.map((c) => c.node).filter(Boolean)).size,
+          }}
+        />
 
-      <CategoryCarousel
-        categories={categories}
-        categoryFilter={categoryFilter}
-      />
+        <CategoryCarousel categories={feedCategories} />
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-12">
-        {featuredPost && !categoryFilter && (
-          <div className="mb-10">
-            <FeaturedStoryBanner post={featuredPost} />
-          </div>
-        )}
-
-        <div id="feed" className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-8">
-          <div>
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-lg font-semibold text-surface-50">
-                {categoryFilter
-                  ? categories.find((c) => c.slug === categoryFilter)?.name ??
-                    "Stories"
-                  : "Latest Stories"}
-              </h2>
-              <span className="text-xs text-surface-500">
-                {feedPosts.length + (featuredPost ? 1 : 0)}{" "}
-                {feedPosts.length + (featuredPost ? 1 : 0) === 1 ? "story" : "stories"}
-                {categoryFilter ? " in this category" : " from across East Africa"}
-              </span>
-            </div>
-
-            {/* Above the fold on the feed. The anchor is fixed-position, so it
-                sits at the bottom of the viewport wherever it is mounted — it is
-                kept out of the studio and settings by simply not being placed
-                there. */}
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-12">
+          <HomeFeed
+            posts={top}
+            categories={feedCategories}
+            sidebar={<TrendingSidebar popularCreators={popularCreators} />}
+            inlineAd={<AdSlot slot="feed-inline" className="md:col-span-2" />}
+          >
             <AdSlot slot="feed-top" className="mb-5" />
             <AdSlot slot="global-anchor" label="Ad" />
-
-            {posts.length === 0 ? (
-              <EmptyState categoryFilter={categoryFilter} />
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                {feedPosts.map((post, i) => (
-                  <Fragment key={post.id}>
-                    <PostCard post={post} index={i + 1} />
-                    {/* One leaderboard every few cards — renders only when a
-                        campaign is live, otherwise it collapses to nothing. */}
-                    {i === 1 ? <AdSlot slot="feed-inline" className="md:col-span-2" /> : null}
-                  </Fragment>
-                ))}
-              </div>
-            )}
-
-            {posts.length > 0 && (
-              <LoadMoreFeed
-                initialIds={feedIds}
-                startPage={Math.floor(feedIds.length / 10) + 1}
-              />
-            )}
-          </div>
-
-          <TrendingSidebar popularCreators={popularCreators} />
+          </HomeFeed>
         </div>
-      </div>
+      </FeedCategoryProvider>
 
       <StaggerObserverScript />
 
-      <FeedFeedbackTracker variant={variant} />
-
       <FeedLiveRefresh />
-    </div>
-  );
-}
-
-function AnimatedCard({
-  children,
-  index,
-}: {
-  children: React.ReactNode;
-  index: number;
-}) {
-  return (
-    <div
-      className="stagger-card opacity-0 translate-y-4"
-      style={{ transitionDelay: `${index * 80}ms` }}
-    >
-      {children}
     </div>
   );
 }

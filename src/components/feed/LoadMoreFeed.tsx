@@ -30,6 +30,16 @@ interface LoadMoreFeedProps {
   /** First API page to fetch — accounts for the server-rendered first page. */
   startPage?: number;
   showLabel?: boolean;
+  /**
+   * Fill in the rest of ONE category instead of the ranked feed.
+   *
+   * A category view is filtered in the browser from the cached pool, which only
+   * ever holds the newest handful of stories, so the first page of that
+   * category's own list is what completes it. Passing a category also drops
+   * `personalized`, which the API cannot honour alongside a filter anyway — and
+   * which would have left every category page uncacheable.
+   */
+  category?: string | null;
 }
 
 /**
@@ -42,6 +52,7 @@ export function LoadMoreFeed({
   initialIds,
   startPage = 2,
   showLabel = true,
+  category = null,
 }: LoadMoreFeedProps) {
   const [posts, setPosts] = useState<LoadedPost[]>([]);
   const [page, setPage] = useState(startPage);
@@ -54,7 +65,10 @@ export function LoadMoreFeed({
     if (loading) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/posts?page=${page}&limit=10&personalized=true`, {
+      const query = category
+        ? `page=${page}&limit=10&category=${encodeURIComponent(category)}`
+        : `page=${page}&limit=10&personalized=true`;
+      const res = await fetch(`/api/posts?${query}`, {
         credentials: "include",
       });
       if (!res.ok) return;
@@ -71,7 +85,7 @@ export function LoadMoreFeed({
     } finally {
       setLoading(false);
     }
-  }, [page, loading]);
+  }, [page, loading, category]);
 
   // Infinite scroll: auto-load the next page when the sentinel scrolls into
   // view, with a short cool-down so rapid scrolling doesn't stack requests.

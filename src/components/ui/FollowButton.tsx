@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { UserPlus, UserCheck, Loader2 } from "lucide-react";
@@ -12,6 +12,16 @@ interface FollowButtonProps {
   followersCount?: number;
   showCount?: boolean;
   className?: string;
+  /**
+   * Resolve the viewer's follow state on mount instead of receiving it.
+   *
+   * `initialFollowing` has to be computed from the session during render, which
+   * only a dynamic page can do — and the article page is now served from the
+   * CDN. The button already lives in the browser, is already wrapped in
+   * `SessionProvider`, and already refreshes the count after a click, so it is
+   * the natural owner of a fact that is entirely about the current viewer.
+   */
+  fetchState?: boolean;
 }
 
 export function FollowButton({
@@ -20,12 +30,30 @@ export function FollowButton({
   followersCount = 0,
   showCount = false,
   className,
+  fetchState = false,
 }: FollowButtonProps) {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const router = useRouter();
   const [following, setFollowing] = useState(initialFollowing);
   const [count, setCount] = useState(followersCount);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!fetchState || status !== "authenticated") return;
+    let active = true;
+    fetch(`/api/follows?targetId=${encodeURIComponent(targetId)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (active && data && typeof data.following === "boolean") {
+          setFollowing(data.following);
+          if (typeof data.followersCount === "number") setCount(data.followersCount);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [fetchState, status, targetId]);
 
   const isOwnProfile = session?.user?.id === targetId;
   if (isOwnProfile) return null;

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { postCoverSrc } from "@/lib/thumb";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -298,6 +299,14 @@ export async function PUT(
       redisIncr("feed:version").catch(() => {});
     }
 
+    // The article page and the home feed are cached at the edge now, and an
+    // edit is the one thing that has to land immediately: a writer who fixes a
+    // typo is watching the page, and "it is still wrong" reads as a bug. Every
+    // save revalidates both, published or not, because unpublishing and
+    // re-publishing both have to be visible at once.
+    revalidatePath(`/article/${post.slug}`);
+    revalidatePath("/");
+
     return NextResponse.json({
       post,
       moderationStatus: finalModerationStatus ?? post.moderationStatus,
@@ -325,7 +334,7 @@ export async function DELETE(
 
     const existingPost = await prisma.post.findUnique({
       where: { id },
-      select: { authorId: true },
+      select: { authorId: true, slug: true },
     });
 
     if (!existingPost) {
@@ -350,6 +359,10 @@ export async function DELETE(
 
     await prisma.post.delete({ where: { id } });
     redisIncr("feed:version").catch(() => {});
+    // Otherwise the deleted slug keeps answering from the edge with the story
+    // it just removed — the worst possible cache hit.
+    revalidatePath(`/article/${existingPost.slug}`);
+    revalidatePath("/");
     return NextResponse.json({ message: "Post deleted successfully" });
   } catch (error) {
     console.error("Error deleting post:", error);

@@ -6,7 +6,6 @@ import type { Prisma } from "@prisma/client";
 
 import { Clock, MessageCircle, ChevronRight, ExternalLink, Newspaper } from "lucide-react";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
 import { formatDate, estimateReadTime } from "@/lib/utils";
 import { postCoverSrc } from "@/lib/thumb";
 import { avatarSrc } from "@/lib/image-src";
@@ -21,15 +20,35 @@ import { CommentsSection } from "@/components/ui/CommentsSection";
 import { StyledContent } from "@/components/ui/StyledContent";
 import AdSlot from "@/components/ads/AdSlot";
 import { splitForInlineAd } from "@/lib/article-body";
-import { ViewCount } from "@/components/ui/ViewCount";
-import { convexRecordView, convexViewCount } from "@/lib/convex";
+import { ArticleViews } from "@/components/ui/ArticleViews";
 
 /**
- * Rendered per request, never prerendered — an article carries live view counts
- * and a reader's own bookmark state, and enumerating slugs at build time would
- * require the database to be reachable from the build environment.
+ * Cached at the edge, and revalidated behind it.
+ *
+ * This page used to be `force-dynamic` for two reasons, and both have moved to
+ * the client where they belonged. The view count is now reported by the
+ * browser (`ArticleViews` → `POST /api/views`), so the server render no longer
+ * writes — which is also why a crawler, a prefetch or a bfcache restore stops
+ * being counted as a reader. The reader's own follow state is resolved by
+ * `FollowButton` itself. What is left is the article, which is the same for
+ * everyone, and this is the page every share link lands on: rendering it per
+ * request meant paying a Vercel invocation, a Postgres query and a Convex call
+ * for each of them.
+ *
+ * `revalidatePath` in `PUT /api/posts/[id]` invalidates it the moment an
+ * editor saves, so a correction does not wait out this window.
  */
-export const dynamic = "force-dynamic";
+export const revalidate = 120;
+
+/**
+ * A slug that does not exist is not an article.
+ *
+ * Rendering a 200 "Post not found" page is a soft 404, and now that the result
+ * is cached it would also be cached as one. `noindex` keeps a mistyped or
+ * deleted slug out of the index without inventing a 404 page this app has not
+ * designed.
+ */
+const MISSING_ROBOTS: Metadata["robots"] = { index: false, follow: true };
 
 interface ArticleParams {
   params: Promise<{ slug: string }>;
@@ -76,12 +95,46 @@ const getPost = cache((slug: string) =>
   })
 );
 
+/**
+ * The newest stories, prerendered at build.
+ *
+ * This is not decoration: in the App Router a dynamic segment that is not
+ * registered here is rendered on demand and, unlike a page, is **not** written
+ * to the full route cache — so `revalidate` above would have been inert and
+ * every article view would still have cost a render. Declaring the params makes
+ * the route a cached one, where these twenty are built ahead of time and every
+ * other slug is rendered on first request and then cached for `revalidate`.
+ *
+ * Kept short on purpose. These are the stories a share link lands on within
+ * minutes of publishing; the long tail pays its own way by being rendered on
+ * first request and cached. A longer list buys nothing and costs a lot: the
+ * build runs against the same shared free-tier Postgres as everything else, in
+ * parallel workers, and a bigger prerender list has already exhausted its
+ * connection pool (P2024) and failed the build outright.
+ *
+ * A build with no database still has to succeed, so a failure here returns
+ * nothing and leaves the route entirely to on-demand generation.
+ */
+export async function generateStaticParams() {
+  try {
+    const posts = await prisma.post.findMany({
+      where: { status: "PUBLISHED", moderationStatus: "APPROVED" },
+      orderBy: { createdAt: "desc" },
+      take: 6,
+      select: { slug: true },
+    });
+    return posts.map((post) => ({ slug: post.slug }));
+  } catch {
+    return [];
+  }
+}
+
 export async function generateMetadata({ params }: ArticleParams): Promise<Metadata> {
   const { slug } = await params;
   const post = await getPost(slug);
 
   if (!post) {
-    return { title: "Post not found" };
+    return { title: "Post not found", robots: MISSING_ROBOTS };
   }
 
   let cfg;
@@ -142,7 +195,6 @@ export async function generateMetadata({ params }: ArticleParams): Promise<Metad
 
 export default async function ArticlePage({ params }: ArticleParams) {
   const { slug } = await params;
-  const session = await auth();
   const [siteConfig, post] = await Promise.all([
     getSiteConfig().catch(() => null),
     getPost(slug),
@@ -160,38 +212,8 @@ export default async function ArticlePage({ params }: ArticleParams) {
     );
   }
 
-  const [viewerIsFollowing] = await Promise.all([
-    session?.user?.id
-      ? prisma.follow
-          .findUnique({
-            where: {
-              followerId_followingId: {
-                followerId: session.user.id,
-                followingId: post.authorId,
-              },
-            },
-            select: { id: true },
-          })
-          .then(Boolean)
-      : Promise.resolve(false),
-  ]);
-
-  // Count the view in Convex — the old code ran a Postgres UPDATE on every
-  // article render, which was the single hottest write against Supabase's free
-  // tier. A nightly Inngest step folds the Convex deltas back into
-  // Post.viewCount, so ranking and display stay correct. Postgres remains the
-  // fallback when Convex is not configured or is unreachable.
-  const counted = await convexRecordView(post.id);
-  let viewCount = post.viewCount + 1;
-  if (!counted) {
-    await prisma.post
-      .update({ where: { id: post.id }, data: { viewCount: { increment: 1 } } })
-      .catch(() => {});
-  } else {
-    // Show the live Convex total (it includes views not yet synced back).
-    const live = await convexViewCount(post.id);
-    if (live !== null) viewCount = Math.max(live, post.viewCount + 1);
-  }
+  // The view is counted by `ArticleViews` in the browser, from the number this
+  // render was served with. Nothing about rendering this page writes.
   const readTime = estimateReadTime(post.content);
   // Contextual targeting: a campaign can name the category slug or its id, and
   // both are offered so an admin does not have to know which one we key on.
@@ -319,7 +341,7 @@ export default async function ArticlePage({ params }: ArticleParams) {
             <div className="flex items-center gap-4 text-xs text-white/70">
               <span>{publishedDate}</span>
               <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{readTime} min read</span>
-              <ViewCount value={viewCount} />
+              <ArticleViews postId={post.id} initialValue={post.viewCount} />
             </div>
           </div>
         </div>
@@ -470,7 +492,7 @@ export default async function ArticlePage({ params }: ArticleParams) {
                 <div className="mt-4">
                   <FollowButton
                     targetId={post.authorId}
-                    initialFollowing={viewerIsFollowing}
+                    fetchState
                     followersCount={post.author.followersCount}
                     className="w-full"
                   />
