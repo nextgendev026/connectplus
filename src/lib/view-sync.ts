@@ -138,7 +138,10 @@ async function pruneOldViewDays(): Promise<number> {
  */
 export async function foldConvexViews(): Promise<ViewFoldResult> {
   let cursor: string | null = null;
-  let posts = 0;
+  // Distinct posts, not rows: a sharded counter means one post can fold more
+  // than once in a pass, and reporting "posts" as the number of writes would
+  // overstate it.
+  const foldedPostIds = new Set<string>();
   let views = 0;
   let waiting = 0;
   let pages = 0;
@@ -161,7 +164,11 @@ export async function foldConvexViews(): Promise<ViewFoldResult> {
     pages++;
     waiting += result.views.length;
 
-    const applied: string[] = [];
+    // The folded *amount* travels with each post id, so Convex can advance its
+    // counter by exactly what Postgres accepted instead of by whatever the
+    // total happens to be when the mark lands — the difference is the views
+    // that arrive mid-fold, which used to be marked synced and never counted.
+    const applied: { postId: string; delta: number }[] = [];
     for (const delta of result.views) {
       const outcome = await prisma.post
         .update({ where: { id: delta.postId }, data: { viewCount: { increment: delta.delta } } })
@@ -169,13 +176,13 @@ export async function foldConvexViews(): Promise<ViewFoldResult> {
         .catch((error: unknown) => (isMissingRow(error) ? ("missing" as const) : ("failed" as const)));
 
       if (outcome === "applied") {
-        applied.push(delta.postId);
+        applied.push({ postId: delta.postId, delta: delta.delta });
         views += delta.delta;
       } else if (outcome === "missing") {
         // No such post: this delta can never be applied. Marking it reconciled
         // is what lets the backlog behind it drain; leaving it pending is how
         // an orphaned row kept "views waiting" above zero forever.
-        applied.push(delta.postId);
+        applied.push({ postId: delta.postId, delta: delta.delta });
         orphaned++;
       }
       // "failed" is deliberately not marked — a transient database error must
@@ -183,7 +190,8 @@ export async function foldConvexViews(): Promise<ViewFoldResult> {
     }
 
     if (applied.length > 0) {
-      posts += await convexMarkViewsSynced(applied);
+      await convexMarkViewsSynced(applied);
+      for (const entry of applied) foldedPostIds.add(entry.postId);
     }
 
     cursor = result.continueCursor;
@@ -198,7 +206,7 @@ export async function foldConvexViews(): Promise<ViewFoldResult> {
     log.warn("view fold blocked", { error: convexHealth().error ?? "unknown" });
     await recordHeartbeat(VIEW_SYNC_HEARTBEAT, { ok: false, detail });
     return {
-      posts,
+      posts: foldedPostIds.size,
       views,
       waiting,
       unreachable: true,
@@ -211,6 +219,7 @@ export async function foldConvexViews(): Promise<ViewFoldResult> {
 
   const prunedDays = await pruneOldViewDays();
 
+  const posts = foldedPostIds.size;
   const folded = `${posts} post${posts === 1 ? "" : "s"} · ${views} view${views === 1 ? "" : "s"} folded`;
   const tail = [
     orphaned > 0 ? `${orphaned} orphaned delta${orphaned === 1 ? "" : "s"} dropped` : "",

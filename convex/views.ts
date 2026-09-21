@@ -20,8 +20,39 @@ const MAX_DAY_ROWS = 8000;
 const MAX_PRUNE_BATCH = 500;
 
 /**
- * Count one article view. Called from the article page render, so it must stay
- * a single indexed read + two writes at most.
+ * How many rows each counter is spread over.
+ *
+ * One row per post made that row a hot spot: every reader of the day's most
+ * popular story incremented the same document, and Convex's optimistic
+ * concurrency means all but one of each overlapping pair is retried from the
+ * start. Eight rows makes two simultaneous views collide only if they pick the
+ * same one, and a retried mutation re-rolls its choice — so the retry usually
+ * succeeds instead of colliding again.
+ */
+const SHARDS = 8;
+/**
+ * Cap on the rows a read will sum.
+ *
+ * `SHARDS` plus room for the pre-shard rows a deployment may still carry, which
+ * are extra buckets in the sum rather than something to migrate. Reading past
+ * the cap would be a bug, not a bigger total, so the bound is generous rather
+ * than tight.
+ */
+const MAX_COUNTER_ROWS = 64;
+
+/** Pick the counter row to write. Re-rolled on every automatic retry. */
+function pickShard(): number {
+  return Math.floor(Math.random() * SHARDS);
+}
+
+/**
+ * Count one article view. Called from the browser as a beacon, so it must stay
+ * a bounded indexed read plus two writes.
+ *
+ * The write is to a randomly chosen shard of the post's counter, and to the
+ * matching shard of the day's bucket. Concurrent views of the same story now
+ * usually touch different documents, which is the whole point: the old shape
+ * had every one of them contend for two rows.
  */
 export const record = mutation({
   args: { postId: v.string() },
@@ -29,27 +60,30 @@ export const record = mutation({
   handler: async (ctx, { postId }) => {
     const now = Date.now();
     const day = utcDay(now);
+    const shard = pickShard();
 
     const existing = await ctx.db
       .query("postViews")
-      .withIndex("by_post", (q) => q.eq("postId", postId))
+      .withIndex("by_post_shard", (q) => q.eq("postId", postId).eq("shard", shard))
       .first();
 
     if (existing) {
       await ctx.db.patch(existing._id, { total: existing.total + 1, lastViewedAt: now });
     } else {
-      await ctx.db.insert("postViews", { postId, total: 1, synced: 0, lastViewedAt: now });
+      await ctx.db.insert("postViews", { postId, shard, total: 1, synced: 0, lastViewedAt: now });
     }
 
     const dayRow = await ctx.db
       .query("viewDays")
-      .withIndex("by_day_post", (q) => q.eq("day", day).eq("postId", postId))
+      .withIndex("by_day_post_shard", (q) =>
+        q.eq("day", day).eq("postId", postId).eq("shard", shard)
+      )
       .first();
 
     if (dayRow) {
       await ctx.db.patch(dayRow._id, { count: dayRow.count + 1 });
     } else {
-      await ctx.db.insert("viewDays", { day, postId, count: 1 });
+      await ctx.db.insert("viewDays", { day, postId, shard, count: 1 });
     }
 
     return null;
@@ -71,11 +105,13 @@ export const count = query({
   args: { postId: v.string() },
   returns: v.number(),
   handler: async (ctx, { postId }) => {
-    const row = await ctx.db
+    const rows = await ctx.db
       .query("postViews")
       .withIndex("by_post", (q) => q.eq("postId", postId))
-      .first();
-    return row?.total ?? 0;
+      .take(MAX_COUNTER_ROWS);
+    let total = 0;
+    for (const row of rows) total += row.total;
+    return total;
   },
 });
 
@@ -86,11 +122,14 @@ export const counts = query({
   handler: async (ctx, { postIds }) => {
     const out: { postId: string; total: number }[] = [];
     for (const postId of postIds.slice(0, 100)) {
-      const row = await ctx.db
+      const rows = await ctx.db
         .query("postViews")
         .withIndex("by_post", (q) => q.eq("postId", postId))
-        .first();
-      if (row) out.push({ postId, total: row.total });
+        .take(MAX_COUNTER_ROWS);
+      if (rows.length === 0) continue;
+      let total = 0;
+      for (const row of rows) total += row.total;
+      out.push({ postId, total });
     }
     return out;
   },
@@ -150,23 +189,51 @@ export const pending = query({
   },
 });
 
-/** Mark a batch as reconciled after Postgres accepted the deltas. */
+/**
+ * Mark a batch as reconciled after Postgres accepted the deltas.
+ *
+ * It marks the **amount that was folded**, not everything counted so far.
+ *
+ * The old version took a list of post ids and set `synced = row.total` from a
+ * fresh read — so any view that arrived between the fold's read of the backlog
+ * and this write was marked as reconciled without ever being added to
+ * Postgres. Under load that is a steady trickle of views disappearing, and it
+ * is invisible: nothing errors, the backlog drains, and the number is simply
+ * lower than the traffic. Taking the folded amount per post and advancing each
+ * counter row by at most that much means a view that lands mid-fold stays
+ * pending and is picked up by the next pass.
+ *
+ * Sharded counters make the per-post total span several rows, so each row is
+ * advanced until the folded amount is used up. The greediness across rows does
+ * not matter: what is being recorded is a total, not a per-row figure.
+ */
 export const markSynced = mutation({
-  args: { postIds: v.array(v.string()) },
+  args: {
+    entries: v.array(v.object({ postId: v.string(), delta: v.number() })),
+  },
   returns: v.number(),
-  handler: async (ctx, { postIds }) => {
-    let n = 0;
-    for (const postId of postIds) {
-      const row = await ctx.db
+  handler: async (ctx, { entries }) => {
+    let patched = 0;
+    for (const { postId, delta } of entries) {
+      let remaining = Math.max(0, delta);
+      if (remaining === 0) continue;
+
+      const rows = await ctx.db
         .query("postViews")
         .withIndex("by_post", (q) => q.eq("postId", postId))
-        .first();
-      if (row && row.total > row.synced) {
-        await ctx.db.patch(row._id, { synced: row.total });
-        n++;
+        .take(MAX_COUNTER_ROWS);
+
+      for (const row of rows) {
+        if (remaining <= 0) break;
+        const pending = row.total - row.synced;
+        if (pending <= 0) continue;
+        const take = Math.min(pending, remaining);
+        await ctx.db.patch(row._id, { synced: row.synced + take });
+        remaining -= take;
+        patched++;
       }
     }
-    return n;
+    return patched;
   },
 });
 
@@ -214,10 +281,17 @@ export const topToday = query({
       .query("viewDays")
       .withIndex("by_day", (q) => q.eq("day", day))
       .take(MAX_DAY_ROWS);
-    return rows
-      .sort((a, b) => b.count - a.count)
+    // A story's day is now spread across its shard rows, so the ranking has to
+    // add them up first — otherwise the top list would rank a single shard of a
+    // popular story against the whole of a quiet one.
+    const byPost = new Map<string, number>();
+    for (const row of rows) {
+      byPost.set(row.postId, (byPost.get(row.postId) ?? 0) + row.count);
+    }
+    return [...byPost.entries()]
+      .sort((a, b) => b[1] - a[1])
       .slice(0, limit ?? 10)
-      .map((r) => ({ postId: r.postId, count: r.count }));
+      .map(([postId, count]) => ({ postId, count }));
   },
 });
 

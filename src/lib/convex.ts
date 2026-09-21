@@ -274,9 +274,20 @@ export async function convexPruneViewDays(beforeDay: string, limit = 500): Promi
   return call((c) => c.mutation(api.views.pruneDays, { before: beforeDay, limit }), 0, "views.pruneDays");
 }
 
-export async function convexMarkViewsSynced(postIds: string[]): Promise<number> {
-  if (postIds.length === 0) return 0;
-  return call((c) => c.mutation(api.views.markSynced, { postIds }), 0, "views.markSynced");
+/**
+ * Mark the amounts that were actually folded, per post.
+ *
+ * The delta is part of the call on purpose. Marking a post "synced" wholesale
+ * from a fresh read also marks the views that arrived while the fold was
+ * running, and those were never added to Postgres — a silent loss that grows
+ * with traffic. Passing the folded amount lets the counter advance by exactly
+ * that much, leaving later views pending for the next pass.
+ */
+export async function convexMarkViewsSynced(
+  entries: { postId: string; delta: number }[]
+): Promise<number> {
+  if (entries.length === 0) return 0;
+  return call((c) => c.mutation(api.views.markSynced, { entries }), 0, "views.markSynced");
 }
 
 /** Most-viewed posts today (UTC) — used by the trending sidebar. */

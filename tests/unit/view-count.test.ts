@@ -110,8 +110,13 @@ describe("view-count formatting has one home", () => {
       "src/components/profile/ProfileListModal.tsx",
       "src/app/(public)/categories/page.tsx",
       "src/app/(public)/trending/page.tsx",
-      "src/app/(public)/page.tsx",
-      "src/app/(public)/article/[slug]/page.tsx",
+      // The home feed and the article page no longer draw their own counts.
+      // Both are served from the CDN now, so the count has to be either a
+      // component the browser can re-render (the feed's cards) or one that can
+      // report the read itself (the article badge) — and both of those render
+      // `ViewCount`, which is what this rule is here to protect.
+      "src/components/feed/FeedCards.tsx",
+      "src/components/ui/ArticleViews.tsx",
     ];
 
     for (const rel of surfaces) {

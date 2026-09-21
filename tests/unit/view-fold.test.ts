@@ -63,7 +63,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   health.mockReturnValue({ state: "ok", error: null });
   postUpdate.mockResolvedValue({ id: "x" });
-  markSynced.mockImplementation(async (ids: string[]) => ids.length);
+  markSynced.mockImplementation(async (entries: unknown[]) => entries.length);
   prune.mockResolvedValue(0);
 });
 
@@ -82,7 +82,14 @@ describe("draining the pending backlog", () => {
     expect(result.views).toBe(5);
     expect(result.drained).toBe(true);
     expect(result.unreachable).toBe(false);
-    expect(markSynced).toHaveBeenCalledWith(["p1", "p2"]);
+    // Each folded amount travels with its post, so Convex advances its counter
+    // by exactly what Postgres accepted rather than by whatever the total has
+    // drifted to — a view that lands mid-fold stays pending instead of being
+    // marked reconciled without ever being counted.
+    expect(markSynced).toHaveBeenCalledWith([
+      { postId: "p1", delta: 4 },
+      { postId: "p2", delta: 1 },
+    ]);
     expect(postUpdate).toHaveBeenCalledWith({
       where: { id: "p1" },
       data: { viewCount: { increment: 4 } },
@@ -145,12 +152,36 @@ describe("a delta that can never be applied", () => {
     expect(result.orphaned).toBe(1);
     // Both are marked: the orphan so it stops blocking, the real one because it
     // was actually written.
-    expect(markSynced).toHaveBeenCalledWith(["ghost", "p2"]);
+    expect(markSynced).toHaveBeenCalledWith([
+      { postId: "ghost", delta: 1 },
+      { postId: "p2", delta: 2 },
+    ]);
     // An orphan's views were never folded, so it must not inflate the total.
     expect(result.views).toBe(2);
     expect(result.posts).toBe(2);
     const detail = heartbeat.mock.calls.at(-1)![1] as { detail: string };
     expect(detail.detail).toMatch(/1 orphaned delta dropped/);
+  });
+
+  it("folds a sharded counter once per row but reports the post once", async () => {
+    // Sharding spreads a post's total over several counter rows, so the fold can
+    // legitimately see the same post more than once in a pass. Both deltas must
+    // be applied and marked, and the post must still be counted as one.
+    page.mockResolvedValueOnce(
+      viewPage([
+        { postId: "hot", delta: 3, total: 3 },
+        { postId: "hot", delta: 5, total: 8 },
+      ])
+    );
+
+    const result = await foldConvexViews();
+
+    expect(result.views).toBe(8);
+    expect(result.posts).toBe(1);
+    expect(markSynced).toHaveBeenCalledWith([
+      { postId: "hot", delta: 3 },
+      { postId: "hot", delta: 5 },
+    ]);
   });
 
   it("leaves a transient database failure pending for the next pass", async () => {
