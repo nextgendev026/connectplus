@@ -6,7 +6,23 @@ import { hiveBrain } from "@/lib/hive-brain";
 import { appBrain } from "@/lib/app-brain";
 import { pendingProposals } from "@/lib/brain-approvals";
 import { parseDirective, saveDirective } from "@/lib/mind-directives";
+import { chronologicalHistory, deriveConversationTitle, historyFetchSize } from "@/lib/chat-history";
 
+/**
+ * The console's conversation endpoint.
+ *
+ * Two properties matter here beyond producing an answer.
+ *
+ * **A conversation is owned by the admin who started it.** Resuming used to look
+ * the id up by primary key alone, so any admin who knew (or guessed) an id could
+ * read and append to another admin's thread. The lookup is scoped to the session
+ * user now: an id that is not yours is an id that does not exist.
+ *
+ * **A reply is composed against the recent turns of the same conversation.**
+ * See `chat-history.ts` for why that sentence has two failure modes worth
+ * isolating. The route fetches the newest rows and hands them to a function that
+ * reverses them; it does not build the ordering inline.
+ */
 export async function POST(request: NextRequest) {
   try {
     const session = await auth();
@@ -21,26 +37,43 @@ export async function POST(request: NextRequest) {
 
     const userId = session.user.id;
     const body = await request.json();
-    const { message, conversationId } = body;
+    const { message } = body;
+    const requestedConversationId =
+      typeof body.conversationId === "string" && body.conversationId.trim().length > 0
+        ? body.conversationId.trim()
+        : null;
 
     if (!message || typeof message !== "string" || message.trim().length === 0) {
       return new Response(JSON.stringify({ error: "Message is required" }), { status: 400, headers: { "Content-Type": "application/json" } });
     }
 
-    let conversation = conversationId
-      ? await prisma.neuralConversation.findUnique({
-          where: { id: conversationId },
-          include: { messages: { orderBy: { createdAt: "asc" }, take: 10 } },
+    const asked = message.trim();
+
+    /*
+     * Resume, or start.
+     *
+     * `findFirst` scoped to `userId` rather than `findUnique` on the id: another
+     * admin's conversation must not be readable through this endpoint, and the
+     * cheapest way to guarantee that is to make the query itself incapable of
+     * returning one.
+     */
+    let conversation = requestedConversationId
+      ? await prisma.neuralConversation.findFirst({
+          where: { id: requestedConversationId, userId },
+          include: { messages: { orderBy: { createdAt: "desc" }, take: historyFetchSize() } },
         })
       : null;
 
+    // A conversation id that is unknown, or belongs to someone else, starts a new
+    // thread rather than failing the turn — the operator asked a question, and
+    // answering it is more useful than an error about a stale tab.
     if (!conversation) {
       const created = await prisma.neuralConversation.create({
-        data: { title: message.trim().slice(0, 50), userId },
+        data: { title: deriveConversationTitle(asked), userId },
       });
       conversation = await prisma.neuralConversation.findUnique({
         where: { id: created.id },
-        include: { messages: { orderBy: { createdAt: "asc" }, take: 10 } },
+        include: { messages: { orderBy: { createdAt: "desc" }, take: historyFetchSize() } },
       });
     }
 
@@ -48,19 +81,31 @@ export async function POST(request: NextRequest) {
       return new Response(JSON.stringify({ error: "Failed to start conversation" }), { status: 500, headers: { "Content-Type": "application/json" } });
     }
 
+    // The history is read *before* the current turn is written, so it is strictly
+    // the prior context and the question is not sent to the model twice.
+    const history = chronologicalHistory(conversation.messages ?? []);
+
     await prisma.neuralMessage.create({
-      data: { conversationId: conversation.id, role: "user", content: message.trim() },
+      data: { conversationId: conversation.id, role: "user", content: asked },
     });
 
-    const history = (conversation.messages ?? []).map((m) => ({ role: m.role, content: m.content }));
+    // Bump the conversation so the history list sorts by recency. `updatedAt`
+    // only moves on an update, and appending a message is not an update to the
+    // conversation row itself.
+    await prisma.neuralConversation.update({
+      where: { id: conversation.id },
+      data: { updatedAt: new Date() },
+    });
+
+    const conversationId = conversation.id;
 
     // A standing instruction is *saved*, not answered and forgotten. This is the
     // hook that lets an operator actually teach the combined mind: the directive
     // is persisted as a mind memory and consulted by every sports prediction from
     // here on. Ordinary conversation parses to null and is untouched.
-    const directive = parseDirective(message.trim());
+    const directive = parseDirective(asked);
     const saved = directive
-      ? await saveDirective({ text: message.trim(), parsed: directive, createdBy: userId })
+      ? await saveDirective({ text: asked, parsed: directive, createdBy: userId })
       : null;
 
     /*
@@ -73,7 +118,7 @@ export async function POST(request: NextRequest) {
      * routes action requests into the approval queue, and falls back to the
      * deterministic engines when no provider is configured.
      */
-    const base = await appBrain.chat(message.trim(), history, { actorId: userId });
+    const base = await appBrain.chat(asked, history, { actorId: userId });
 
     // The confirmation leads the reply so the operator sees immediately that the
     // instruction was understood and is now live, rather than hoping it was.
@@ -91,7 +136,7 @@ export async function POST(request: NextRequest) {
         }
       : base;
 
-    void neuralMind.learnFromInteraction(message.trim(), response.intent, response.text).catch(() => {});
+    void neuralMind.learnFromInteraction(asked, response.intent, response.text).catch(() => {});
 
     /* Anything this turn proposed was created after this timestamp, which is how
      * the stream tells "the brain filed a request" from "requests already open". */
@@ -123,7 +168,7 @@ export async function POST(request: NextRequest) {
             encoder.encode(
               JSON.stringify({
                 type: "metadata",
-                conversationId: conversation!.id,
+                conversationId,
                 intent: response.intent,
                 enginesUsed: response.enginesUsed,
                 // What the brain understood, and what it grounded the answer in.

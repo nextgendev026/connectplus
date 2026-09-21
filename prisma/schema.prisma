@@ -438,7 +438,16 @@ model NeuralConversation {
   updatedAt DateTime         @updatedAt
   messages  NeuralMessage[]
 
-  @@index([userId])
+  /// Opaque token granting read-only access without a session. Null means private.
+  shareToken String?        @unique
+  /// When sharing was last enabled, so the console can age the link.
+  sharedAt   DateTime?
+
+  /// Serves the history list, which reads this admin's threads newest-activity
+  /// first. Composite rather than a bare `userId` index because that one could
+  /// filter to an admin's threads but not order them by recency, so listing them
+  /// meant sorting the whole set in memory.
+  @@index([userId, updatedAt])
 }
 
 model NeuralMessage {
