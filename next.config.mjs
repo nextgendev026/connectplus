@@ -176,6 +176,32 @@ const nextConfig = {
   },
   experimental: {
     optimizeCss: false,
+    /**
+     * Cap the build's static-generation workers.
+     *
+     * Every worker gets its own Prisma client, and that client opens its own
+     * pool — `connection_limit=5` on the Supabase pooler URL. Next will happily
+     * start as many workers as the machine has cores, so on a build machine that
+     * is 8 concurrent workers × 5 connections against a shared free-tier pool
+     * whose cap is nowhere near 40. The result is `P2024`, "Timed out fetching a
+     * new connection from the connection pool", raised while prerendering — and
+     * it surfaces as a *page* failing to export rather than as anything that
+     * names the pool, so it reads like a bug in whichever route happened to be
+     * rendering when the wait expired.
+     *
+     * This repo has already been bitten by exactly that: see the note on
+     * `generateStaticParams` in the article page, where a longer prerender list
+     * "has already exhausted its connection pool (P2024) and failed the build
+     * outright". Raising the pool is not an option from here — it is set on the
+     * connection string in the deployment's own environment — so the lever that
+     * is available is to stop asking for so many connections at once.
+     *
+     * Four is a deliberate compromise: enough parallelism that the build is not
+     * serial, few enough that peak concurrent connections stay inside a pool
+     * sized for a small deployment. Builds get slower; builds that finish are
+     * worth more than builds that are quick.
+     */
+    cpus: 4,
   },
   /**
    * The auth URLs people actually type.

@@ -37,7 +37,10 @@
  * a registry that does not record that cannot answer it.
  */
 
-import { createLogger } from "@/lib/logger";
+// Relative on purpose: this module is reachable from the ts-node scripts
+// (redis → cache-policy), which run without an `@/` alias resolver. See the
+// note in redis.ts.
+import { createLogger } from "./logger";
 
 const log = createLogger("cache-policy");
 

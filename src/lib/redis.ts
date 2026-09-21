@@ -16,7 +16,12 @@
  */
 
 import Redis from "ioredis";
-import { guardCacheWrite } from "@/lib/cache-policy";
+// Relative, not `@/lib/cache-policy`. This module is loaded by the ts-node
+// scripts (`db:ensure` → settings → redis) whose tsconfig has no alias
+// resolver, and `@/` there fails at require() time with MODULE_NOT_FOUND —
+// which fails `vercel-build` before `next build` ever runs. Next resolves both
+// forms identically, so the relative form is strictly the safer one.
+import { guardCacheWrite } from "./cache-policy";
 
 const PREFIX = "cp";
 const FAIL_THRESHOLD = 3;
