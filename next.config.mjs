@@ -164,6 +164,10 @@ const nextConfig = {
       { source: "/signup", destination: "/auth/signup", permanent: true },
       { source: "/register", destination: "/auth/signup", permanent: true },
       { source: "/verify-email", destination: "/auth/verify-email", permanent: true },
+      // The singular spelling of the topic route. Nothing linked to it except
+      // the trending sidebar, which now uses `/tags/`, but a shared or
+      // bookmarked link should still land on the topic rather than a dead end.
+      { source: "/tag/:slug", destination: "/tags/:slug", permanent: true },
     ];
   },
   async headers() {

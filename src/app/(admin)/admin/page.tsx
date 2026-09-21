@@ -350,7 +350,7 @@ export default function AdminCommandCenter() {
                     trends.map((topic, i) => (
                       <Link
                         key={topic.id}
-                        href={`/tag/${topic.slug}`}
+                        href={`/tags/${topic.slug}`}
                         className="group flex items-center justify-between rounded-lg border border-surface-800 bg-surface-800/30 p-3 transition-all duration-200 hover:border-surface-700 hover:bg-surface-800/60"
                       >
                         <div className="flex items-center gap-3">

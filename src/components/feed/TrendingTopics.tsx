@@ -37,7 +37,12 @@ export function TrendingTopics({ limit = 6 }: { limit?: number }) {
       if (manual) setRefreshing(true);
       try {
         const res = await fetch(`/api/trending/topics?limit=${limit}`, {
-          signal: AbortSignal.timeout(10_000),
+          // Long enough for the refresh that follows a cache expiry, which is
+          // the one request per window that re-runs the aggregate. At ten
+          // seconds that request was aborted and the sidebar reported a failure
+          // for a query that was working, so the reader never saw the topics at
+          // all.
+          signal: AbortSignal.timeout(20_000),
           // Anonymous and identical for every reader. `omit` keeps the session
           // cookie off the request so the edge worker in front of the origin
           // can answer it from cache instead of bypassing on a Cookie header —
@@ -122,7 +127,10 @@ export function TrendingTopics({ limit = 6 }: { limit?: number }) {
           {topics.map((topic, i) => (
             <Link
               key={topic.id}
-              href={`/tag/${topic.slug}`}
+              // `/tag/…` was the other spelling of a route that did not exist;
+              // tag badges across the app use `/tags/…`, and that page now
+              // exists, so both the sidebar and the badges land in one place.
+              href={`/tags/${topic.slug}`}
               className="group flex items-center gap-3 rounded-xl p-1.5 -mx-1.5 hover:bg-surface-800/40 transition-colors"
             >
               <span className="text-[10px] font-bold text-surface-500 w-4 shrink-0 text-right tabular-nums">
