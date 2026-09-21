@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { cache } from "react";
 import { ChevronRight, Hash, Tag as TagIcon } from "lucide-react";
 import { prisma } from "@/lib/prisma";
@@ -92,8 +93,9 @@ export async function generateMetadata({ params }: TagParams): Promise<Metadata>
   const tag = await getTag(slug);
 
   if (!tag) {
-    // A tag nobody has written under is not worth indexing. Answering 200 here
-    // would be a soft 404, and a crawlable one at that.
+    // Unreachable in practice — the page itself answers 404 for an unknown tag,
+    // and that response never reaches the metadata. Kept so a metadata-only
+    // render cannot advertise a topic that does not exist.
     return { title: "Topic not found", robots: { index: false, follow: true } };
   }
 
@@ -127,28 +129,12 @@ export default async function TagPage({ params }: TagParams) {
   const { slug } = await params;
   const tag = await getTag(slug);
 
-  if (!tag) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-surface-950 px-4 text-center">
-        <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-surface-700/50 bg-surface-900">
-          <Hash className="h-7 w-7 text-surface-500" />
-        </div>
-        <h1 className="mt-6 font-display text-3xl font-bold text-surface-50">
-          Topic not found
-        </h1>
-        <p className="mt-2 max-w-sm text-sm leading-relaxed text-surface-400">
-          Nobody has written under <span className="text-surface-200">#{slug}</span> yet.
-          Browse the front page instead — the stories are there.
-        </p>
-        <Link
-          href="/"
-          className="mt-7 rounded-xl bg-brand-500 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-brand-600"
-        >
-          Back to the feed
-        </Link>
-      </div>
-    );
-  }
+  // A real 404, not a 200 carrying a "not found" screen. The latter is a soft
+  // 404 — it tells a crawler this URL is a genuine, indexable page — which is
+  // precisely the wrong signal for a topic nobody has written under. The
+  // public route group has its own branded `not-found.tsx`, so the reader still
+  // lands somewhere that looks like the app and offers a way onward.
+  if (!tag) notFound();
 
   const where = { ...PUBLISHED, tags: { some: { id: tag.id } } };
 
