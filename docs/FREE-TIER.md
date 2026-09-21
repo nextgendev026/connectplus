@@ -32,7 +32,8 @@ metering** (any work that can be answered from a cache must not run a function).
 
 | Function | Lives on | Why not elsewhere |
 | --- | --- | --- |
-| **Anonymous page HTML, `/api/thumb/*`, `/_next/image`** | Cloudflare Worker cache | 0 CPU and 0 origin egress on a HIT. This is the single biggest lever on Vercel's CPU and Fast Origin Transfer meters. |
+| **Anonymous page HTML, `/api/thumb/*`** | Cloudflare Worker cache | 0 CPU and 0 origin egress on a HIT. This is the single biggest lever on Vercel's CPU and Fast Origin Transfer meters. |
+| **Images (`<Image>`)** | Edge, via a **custom loader** — never Vercel's optimizer | Vercel meters image optimization against a **separate allowance** from CPU and bandwidth, and it is what exhausted. `src/lib/image-loader.ts` returns the origin URL (or a Cloudflare resize URL when configured), so no image request runs a Vercel function. The worker's `/_next/image` cache rule stays, because HTML cached before this change still requests it. |
 | **Live scores + the status payload** | Worker cache + `/__livescore` alias | Identical for every anonymous reader and polled every 15s — the exact traffic shape that melts a serverless origin. |
 | **Article views, ad impressions/clicks** | **Convex**, folded into Postgres nightly | Highest write volume by far. `50k views` on Postgres would also be 50k pooler round trips; Convex counts them and Supabase receives one folded update per post. See `src/lib/convex.ts` and `src/lib/view-sync.ts`. |
 | **Session/token lookups, settings, hot JSON** | **Upstash / Vercel KV REST** | Commands are cheap and the tier holds no connection. Preferred over TCP Redis on serverless: no per-instance socket, no connection-limit spike. See `src/lib/redis.ts`. |
@@ -40,7 +41,7 @@ metering** (any work that can be answered from a cache must not run a function).
 | **Scheduled jobs (cron)** | **Inngest** (primary) + **Vercel safety net** + **Cloudflare Cron Triggers** | Three schedulers over one registry (`src/lib/cron-schedule.ts`). Each is independently free, and each backs up the others. |
 | **High-frequency job ticks** | **Cloudflare Cron Triggers** | Free, always on, and *not the thing being watched* — a scheduler that fails alongside what it schedules is useless. |
 | **The worker's own durable bookkeeping** | **Sharded**: Upstash for high-frequency records, Cloudflare KV for the rest | KV's 1k writes/day cannot absorb a ledger rewritten every 2 minutes. See below. |
-| **Images** | Supabase Storage + worker image cache | One optimize pass at upload, one at the edge; never repeated per request. |
+| **Images** | Supabase Storage + worker image cache, resized by Cloudflare only if entitled | One optimize pass at upload, then served from origin and cached at the edge; never repeated per request. Note the two things that are *not* available here: **Convex has no resize or transcode operation** (it is a reactive database with file storage), and Cloudflare's `/cdn-cgi/image/` requires the paid Image Resizing add-on — on a free plan it errors, which is why `NEXT_PUBLIC_IMAGE_RESIZE_ORIGIN` is empty by default. |
 | **Email** | Resend free tier, alert-deduped per episode | Alerts are rate-limited to one per *incident*, not one per check. |
 
 ## The KV write budget, distributed

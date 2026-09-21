@@ -29,7 +29,7 @@ cover requests are answered at the edge, not re-fetched and re-resized.
 | Path | TTL | Notes |
 | --- | --- | --- |
 | HTML documents | 60s | anonymous only |
-| `/_next/image` | 30 days | one entry per url+width+quality+**format** |
+| `/_next/image` | 30 days | one entry per url+width+quality+**format**. Nothing on the site generates these any more — `<Image>` resolves through the custom loader in `src/lib/image-loader.ts`, which avoids Vercel's separately-metered image optimizer. The rule is kept because HTML cached from before that change still requests the path, and because a deployment without the loader needs it. |
 | `/api/thumb/*` | 1 year | content-addressed covers |
 | `/_next/static/*`, `/fonts/*`, images, css, js | 1 year | immutable build output |
 | `/favicon.ico`, `/icon-*.png`, `/apple-touch-icon.png`, `/sw.js`, `/robots.txt`, `/sitemap.xml`, `/feed.xml` | 1h | root files — their URLs never change, so they must not be pinned |

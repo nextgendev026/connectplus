@@ -1,4 +1,8 @@
-import { withSentryConfig } from "@sentry/nextjs";
+// `@sentry/nextjs/config`, not `@sentry/nextjs`: the root export is deprecated and
+// the build warns about it on every run. It stops working in Sentry v11, so this
+// is the kind of warning that becomes a broken build on a dependency bump rather
+// than at the moment someone changes the code.
+import { withSentryConfig } from "@sentry/nextjs/config";
 
 /** @type {import('next').NextConfig} */
 const isDev = process.env.NODE_ENV !== "production";
@@ -120,6 +124,31 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   images: {
+    /**
+     * A custom loader, because Vercel's optimizer is what ran out.
+     *
+     * With no `loader`, every `<Image>` resolves to Vercel's `/_next/image`,
+     * metered against a separate Image Optimization allowance that is billed
+     * apart from function invocations. See `src/lib/image-loader.ts` for what
+     * replaces it — in short: Cloudflare Image Resizing when configured, and the
+     * original URL otherwise, so no image request touches Vercel compute at all.
+     *
+     * Two settings below become inert once a custom loader is in place, and are
+     * kept rather than deleted because removing them would silently change the
+     * behaviour of anything that still reaches the optimizer in a deployment
+     * without this loader. `formats` and `dangerouslyAllowSVG` +
+     * `contentSecurityPolicy` configure the built-in optimizer only; the custom
+     * loader is handed the width and returns the final URL itself.
+     *
+     * `remotePatterns` is likewise no longer the security boundary it looks
+     * like — the optimizer is not fetching anything. The boundary is inside
+     * `/api/optimize`, which resolves every target through the SSRF guard in
+     * `lib/image-proxy.ts` (http(s) only, no private or loopback hosts, sane
+     * ports, redirects re-checked, body capped). Kept as documentation of the
+     * hosts this deployment expects.
+     */
+    loader: "custom",
+    loaderFile: "./src/lib/image-loader.ts",
     remotePatterns: [
       { protocol: "https", hostname: "**.supabase.co" },
       { protocol: "https", hostname: "images.unsplash.com" },
