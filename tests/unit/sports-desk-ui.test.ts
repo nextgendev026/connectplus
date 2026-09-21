@@ -238,7 +238,7 @@ describe("horizontal chrome stays contained", () => {
     // 34px each on a 320px phone, which a 12.5px weekday and a 17.5px date do
     // not fit into. A fixed basis plus a scroller is the de-squeeze.
     expect(calendar).toContain("snap-x");
-    expect(calendar).toMatch(/shrink-0 basis-\[3rem\] snap-start/);
+    expect(calendar).toMatch(/shrink-0 basis-\[2\.5rem\] snap-start/);
     // The rail also has to keep the selected day in view. `scrollLeft` is set
     // directly: `scrollIntoView` may scroll the page as well as the rail.
     expect(calendar).toContain("weekRail.current");

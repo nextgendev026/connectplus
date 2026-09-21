@@ -360,14 +360,10 @@ export default function MatchCalendar() {
         </div>
 
         {data ? (
-          <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-surface-500">
-            <span>{data.total} fixtures this month</span>
-            <span className="text-emerald-400">{data.analysed} with a prediction</span>
+          <p className="hidden text-[10px] text-surface-500 sm:block">
+            {data.total} fixtures this month · {data.analysed} with a pick
             {todayDay && todayDay.matches.length > 0 ? (
-              <span>
-                {dayWords(dayOffset, dateOf(dayKey))}: {todayDay.matches.length}
-                {todayDay.live > 0 ? ` · ${todayDay.live} live now` : ""}
-              </span>
+              <> · {dayWords(dayOffset, dateOf(dayKey))}: {todayDay.matches.length}{todayDay.live > 0 ? ` live` : ""}</>
             ) : null}
           </p>
         ) : null}
@@ -388,8 +384,15 @@ export default function MatchCalendar() {
           grey smudge. Each day now claims a fixed, comfortable width and the
           rail scrolls when they do not all fit, which is also what makes the
           day you have selected reachable without hunting for it. */}
-      <div className="mt-3 md:hidden">
-        <div className="flex items-stretch gap-1.5">
+      <div className="md:hidden overflow-hidden">
+        <div className="flex items-stretch gap-1">
+          <button
+            onClick={() => shiftWeek(-1)}
+            className="grid shrink-0 place-items-center rounded-lg border border-surface-800 px-1 text-surface-400 transition hover:border-surface-700 hover:text-surface-50"
+            aria-label="Previous week"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
           <button
             onClick={() => shiftWeek(-1)}
             className="grid shrink-0 place-items-center rounded-xl border border-surface-800 px-1.5 text-surface-400 transition hover:border-surface-700 hover:text-surface-50"
@@ -417,13 +420,13 @@ export default function MatchCalendar() {
                   aria-current={active ? "date" : undefined}
                   aria-label={date.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}
                   className={cn(
-                    "flex shrink-0 basis-[3rem] snap-start flex-col items-center justify-center rounded-xl border px-1 py-2 transition active:scale-[0.97]",
+                    "flex shrink-0 basis-[2.5rem] snap-start flex-col items-center justify-center rounded-lg border px-0.5 py-1.5 text-center transition active:scale-[0.97]",
                     active
                       ? "border-brand-500 bg-brand-500/15 text-brand-100"
                       : "border-surface-800 text-surface-400 hover:border-surface-700"
                   )}
                 >
-                  <span className="text-[10px] font-semibold uppercase tracking-wide">
+                  <span className="text-[9px] font-semibold uppercase tracking-wide">
                     {WEEKDAYS_SHORT[(date.getUTCDay() + 6) % 7]}
                   </span>
                   <span className={cn("text-sm font-bold tabular-nums", isToday && !active && "text-brand-300")}>
@@ -445,10 +448,10 @@ export default function MatchCalendar() {
 
           <button
             onClick={() => shiftWeek(1)}
-            className="grid shrink-0 place-items-center rounded-xl border border-surface-800 px-1.5 text-surface-400 transition hover:border-surface-700 hover:text-surface-50"
+            className="grid shrink-0 place-items-center rounded-lg border border-surface-800 px-1 text-surface-400 transition hover:border-surface-700 hover:text-surface-50"
             aria-label="Next week"
           >
-            <ChevronRight className="h-4 w-4" />
+            <ChevronRight className="h-3.5 w-3.5" />
           </button>
         </div>
 

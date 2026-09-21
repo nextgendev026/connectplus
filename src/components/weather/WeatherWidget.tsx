@@ -36,6 +36,10 @@ interface CurrentWeather {
   wind_direction_10m: number;
   is_day: number;
   uv_index: number;
+  surface_pressure?: number;
+  dew_point_2m?: number;
+  wind_gusts_10m?: number;
+  visibility?: number;
 }
 
 interface DailyWeather {
@@ -96,6 +100,21 @@ function uvLevel(uv: number): { label: string; color: string } {
   if (uv <= 7) return { label: "High", color: "text-orange-400" };
   if (uv <= 10) return { label: "Very High", color: "text-red-400" };
   return { label: "Extreme", color: "text-purple-400" };
+}
+
+function visibilityLabel(meters: number): { label: string; color: string } {
+  if (meters >= 10000) return { label: "Clear", color: "text-emerald-400" };
+  if (meters >= 5000) return { label: "Good", color: "text-emerald-300" };
+  if (meters >= 2000) return { label: "Moderate", color: "text-amber-400" };
+  if (meters >= 1000) return { label: "Poor", color: "text-orange-400" };
+  return { label: "Very Poor", color: "text-red-400" };
+}
+
+function pressureDesc(hPa: number): string {
+  if (hPa >= 1020) return "High";
+  if (hPa >= 1010) return "Normal";
+  if (hPa >= 1000) return "Low";
+  return "Very Low";
 }
 
 /**
@@ -516,6 +535,30 @@ export function WeatherWidget({ compact = false }: { compact?: boolean }) {
                 <span className={cn("flex items-center gap-1.5", uvLevel(current.uv_index).color)}>
                   <Eye className="h-3 w-3" />
                   UV {current.uv_index.toFixed(1)} · {uvLevel(current.uv_index).label}
+                </span>
+              )}
+              {current.visibility !== undefined && (
+                <span className={cn("flex items-center gap-1.5", visibilityLabel(current.visibility).color)}>
+                  <Eye className="h-3 w-3" />
+                  {current.visibility >= 1000 ? `${(current.visibility / 1000).toFixed(1)} km` : `${Math.round(current.visibility)} m`} · {visibilityLabel(current.visibility).label}
+                </span>
+              )}
+              {current.surface_pressure !== undefined && (
+                <span className="flex items-center gap-1.5 text-white/85">
+                  <Thermometer className="h-3 w-3 text-white/60" />
+                  {Math.round(current.surface_pressure)} hPa · {pressureDesc(current.surface_pressure)}
+                </span>
+              )}
+              {current.dew_point_2m !== undefined && (
+                <span className="flex items-center gap-1.5 text-white/85">
+                  <Droplets className="h-3 w-3 text-white/60" />
+                  Dew {Math.round(current.dew_point_2m)}°
+                </span>
+              )}
+              {current.wind_gusts_10m !== undefined && current.wind_gusts_10m > current.wind_speed_10m && (
+                <span className="flex items-center gap-1.5 text-white/85">
+                  <Wind className="h-3 w-3 text-white/60" />
+                  Gusts {Math.round(current.wind_gusts_10m)} km/h
                 </span>
               )}
             </div>

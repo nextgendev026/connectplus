@@ -219,7 +219,7 @@ function LatestPostsPanel() {
       {posts.map((post) => (
         <li key={post.id}>
           <a
-            href={`/story/${post.slug}`}
+            href={`/article/${post.slug}`}
             className="group flex items-start gap-2.5 rounded-lg border border-transparent px-1.5 py-1.5 transition-colors hover:border-surface-800 hover:bg-surface-900/60"
           >
             {post.coverImage ? (
