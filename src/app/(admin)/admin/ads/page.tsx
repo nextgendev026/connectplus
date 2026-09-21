@@ -18,7 +18,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { AD_SLOTS, AD_SLOT_LABELS, parseTargetList } from "@/lib/ad-selection";
+import { AD_SLOTS, AD_SLOT_LABELS, DEFAULT_FREQUENCY_CAP, parseTargetList } from "@/lib/ad-selection";
 
 interface Ad {
   id: string;
@@ -350,7 +350,7 @@ export default function AdminAdsPage() {
                 })}
               </div>
             </Field>
-            <Field label="Frequency cap (per reader / day)">
+            <Field label={`Frequency cap (per reader / day) — blank uses ${DEFAULT_FREQUENCY_CAP}`}>
               <input
                 type="number"
                 min={1}
@@ -518,7 +518,7 @@ export default function AdminAdsPage() {
                   {ad.categories ? `targets ${parseTargetList(ad.categories).join(", ")}` : "all categories"}
                   {" · "}
                   {ad.devices ? parseTargetList(ad.devices).join(", ") : "all devices"}
-                  {ad.frequencyCap ? ` · max ${ad.frequencyCap}/reader/day` : ""}
+                  {` · max ${ad.frequencyCap ?? DEFAULT_FREQUENCY_CAP}/reader/day`}
                 </p>
 
                 <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-surface-500">

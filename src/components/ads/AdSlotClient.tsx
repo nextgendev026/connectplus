@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { slotMinHeight } from "@/lib/ad-selection";
+import { shouldReserveSlotHeight, slotMinHeight } from "@/lib/ad-selection";
 import type { AdResolution } from "@/lib/ads";
 import AdUnit from "./AdUnit";
 
@@ -82,7 +82,22 @@ export default function AdSlotClient({
     <div
       ref={boxRef}
       data-ad-slot-wrapper={slot}
-      style={{ minHeight: resolution ? undefined : slotMinHeight(slot) }}
+      /**
+       * Height is held only until the resolver answers.
+       *
+       * This tested `resolution ? undefined : slotMinHeight(slot)`, which is the
+       * same branch for `undefined` (not asked yet) and `null` (asked, and there
+       * is nothing to show) — so a slot with no campaign held its full height
+       * for the life of the page. That is the empty frame readers report seeing
+       * instead of an ad, and it contradicted this component's own note below.
+       * The anchor case is worse still: it is fixed to the viewport, so it can
+       * never shift content and had no stability to buy.
+       */
+      style={{
+        minHeight: shouldReserveSlotHeight(resolution !== undefined, slot)
+          ? slotMinHeight(slot)
+          : undefined,
+      }}
     >
       {resolution ? (
         <AdUnit slot={slot} resolution={resolution} className={className} label={label} />

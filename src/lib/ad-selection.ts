@@ -109,6 +109,51 @@ export function slotHint(slot: string): AdSlotHint {
   return isAdSlot(slot) ? AD_SLOT_HINTS[slot] : { minHeight: 0 };
 }
 
+/**
+ * Should a placement hold its height open before it knows whether it has a creative?
+ *
+ * The reservation exists to stop a late arrival shoving the paragraph a reader is
+ * mid-sentence through down the screen, so it is only worth making while the
+ * answer is still unknown. Two cases where it is not:
+ *
+ *   1. **The resolver has already answered.** `AdSlotClient` used to test
+ *      `resolution ? … : reserve`, which is falsy for *both* "not asked yet"
+ *      (`undefined`) and "asked, and there is nothing to show" (`null`) — so a
+ *      placement with no campaign held its full height open indefinitely. That is
+ *      the empty frame readers see, and it is the opposite of what the component
+ *      documents. A resolved-to-nothing slot must occupy nothing.
+ *   2. **The slot is a fixed viewport anchor.** It is positioned against the
+ *      viewport, so it cannot shift content no matter when it appears; reserving
+ *      height for it buys no stability at all and only pins an empty bar to the
+ *      bottom of the screen. `global-anchor` is 64px of exactly that, on mobile,
+ *      on every page that places it.
+ */
+export function shouldReserveSlotHeight(resolved: boolean, slot: string): boolean {
+  if (resolved) return false;
+  return !slotHint(slot).anchor;
+}
+
+/**
+ * Once the browser can answer, an unfilled placement should disappear.
+ *
+ * The frame has to exist before the browser has decided, because the server
+ * cannot know which reader this is — the visitor key and the viewport are read
+ * client-side, so the first render legitimately has nothing to show and holding
+ * the space is what keeps the page from jumping in the two frames before the
+ * creative appears.
+ *
+ * After that it is a different situation entirely: the slot has been offered its
+ * pool and picked nothing, because every creative is at its daily cap, or the
+ * page matched no campaign, or the only candidate was already used by a sibling
+ * placement. Rendering the empty frame then is the "only the placeholder shows"
+ * report — a reader who has seen a campaign its cap of three times sees a hollow
+ * box in its place for the rest of the day.
+ */
+export function shouldRenderAdFrame(browserAnswered: boolean, filling: boolean): boolean {
+  if (!browserAnswered) return true;
+  return filling;
+}
+
 /** The height a page should reserve for a slot before the creative arrives. */
 export function slotMinHeight(slot: string): number {
   return slotHint(slot).minHeight;

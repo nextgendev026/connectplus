@@ -304,7 +304,14 @@ model Ad {
   categories   String?
   /// JSON array of devices (mobile | tablet | desktop); null = every device.
   devices      String?
-  /// Max impressions per visitor per day; null = uncapped.
+  /// Max impressions per visitor per day.
+  ///
+  /// Null does NOT mean uncapped. An unset cap falls back to the platform
+  /// default (`DEFAULT_FREQUENCY_CAP`, 3/reader/day) in `selectCreative`, which
+  /// is covered by a unit test. This comment previously claimed null was
+  /// uncapped; leaving the field blank is not treated that way, and the gap
+  /// between the two was what made a live campaign silently stop appearing
+  /// after three impressions and leave an empty "Sponsored" frame behind.
   frequencyCap Int?
   isActive    Boolean   @default(true)
   startsAt    DateTime?

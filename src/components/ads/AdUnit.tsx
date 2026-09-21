@@ -9,6 +9,7 @@ import {
   deviceFromWidth,
   reservedHeightForSizes,
   selectCreative,
+  shouldRenderAdFrame,
   slotAllowsDevice,
   slotHint,
   type AdDevice,
@@ -229,6 +230,28 @@ export default function AdUnit({
   // a gap, not a slot.
   if (restricted && !deviceAllowed) return null;
   if (hint.anchor && dismissed) return null;
+
+  /**
+   * The browser can now pick a creative: it has a visitor key, and — for a
+   * device-restricted format — a viewport to judge it against.
+   *
+   * Until it does, the frame is held open, because the server genuinely cannot
+   * know which reader this is and an empty gap on the first paint is worse than a
+   * box that fills a frame later.
+   */
+  const browserAnswered = visitorKey !== "" && (!restricted || device !== null);
+
+  /**
+   * Nothing left to fill it, and the browser has said so.
+   *
+   * The case this exists for is the daily frequency cap. A campaign capped at
+   * three impressions runs out for a reader who has been on the site a while, and
+   * every placement after that used to keep rendering its empty frame — a hollow
+   * bordered box with a "Sponsored" badge and no creative inside it, on every page,
+   * for the rest of the day. That is a reader being shown the machinery instead of
+   * an advertisement, which is worse than showing them nothing at all.
+   */
+  if (!shouldRenderAdFrame(browserAnswered, filling)) return null;
 
   const reserved = Math.max(
     hint.minHeight,

@@ -16,6 +16,8 @@ import {
   pickWeighted,
   reservedHeightForSizes,
   selectCreative,
+  shouldRenderAdFrame,
+  shouldReserveSlotHeight,
   slotAllowsDevice,
   slotHint,
   slotMinHeight,
@@ -309,5 +311,89 @@ describe("splitting an article for an in-content ad", () => {
   it("gives up rather than splitting at a bad boundary", () => {
     // One paragraph cannot be split at all: there is no block boundary to use.
     expect(splitForInlineAd(paragraph(1).repeat(30), 10)).toBeNull();
+  });
+});
+
+/**
+ * Whether an unfilled placement occupies space, or disappears.
+ *
+ * These are the two decisions behind "only the ad placeholder is visible" — a
+ * hollow reserved box where an advertisement should be. Both were wrong, and both
+ * were wrong in the same direction: the frame outlived its reason to exist.
+ */
+describe("reserving height before the answer is known", () => {
+  it("holds space while the resolver has not answered yet", () => {
+    // The layout-stability case the reservation exists for: a late creative must
+    // not shove the paragraph a reader is mid-sentence through down the screen.
+    expect(shouldReserveSlotHeight(false, "feed-inline")).toBe(true);
+  });
+
+  it("occupies nothing once the resolver has answered", () => {
+    // The regression. `resolution ? undefined : slotMinHeight(slot)` cannot tell
+    // "not asked yet" from "asked, and there is nothing", so a slot with no
+    // campaign held its full height open for the life of the page.
+    expect(shouldReserveSlotHeight(true, "feed-inline")).toBe(false);
+  });
+
+  it("never reserves for a fixed anchor slot", () => {
+    // `global-anchor` is positioned against the viewport, so it cannot shift
+    // content whenever it appears — there is no stability to buy, and reserving
+    // 64px for it pins an empty bar to the bottom of every page on mobile.
+    expect(shouldReserveSlotHeight(false, "global-anchor")).toBe(false);
+    expect(slotHint("global-anchor").anchor).toBe(true);
+  });
+
+  it("still reserves for ordinary slots that are not anchors", () => {
+    for (const slot of AD_SLOTS) {
+      if (slotHint(slot).anchor) continue;
+      expect(shouldReserveSlotHeight(false, slot), slot).toBe(true);
+    }
+  });
+});
+
+describe("whether an unfilled frame is rendered", () => {
+  it("renders the frame before the browser can choose", () => {
+    // The server cannot know which reader this is, so the first render has
+    // nothing to show and must hold the space rather than jump.
+    expect(shouldRenderAdFrame(false, false)).toBe(true);
+  });
+
+  it("renders once something is filling it", () => {
+    expect(shouldRenderAdFrame(true, true)).toBe(true);
+    expect(shouldRenderAdFrame(false, true)).toBe(true);
+  });
+
+  it("disappears when the browser has answered and picked nothing", () => {
+    // The daily frequency cap is the case that produces this in the wild: a
+    // campaign capped at three impressions runs out for a reader who has been on
+    // the site a while, and every placement after that used to keep drawing its
+    // empty bordered box with a "Sponsored" badge and no creative in it.
+    expect(shouldRenderAdFrame(true, false)).toBe(false);
+  });
+
+  it("agrees with the cap that produces the empty frame", () => {
+    // Ties the two modules together: a creative at its cap is filtered out of the
+    // pool, so `filling` is false, so the frame must not render. Stated as a test
+    // because the coupling is the whole point and nothing else asserts it.
+    const capped = creative({ id: "ad-capped", frequencyCap: 3 });
+    const picked = selectCreative([capped], {
+      visitorKey: "reader-1",
+      seenCounts: { "ad-capped": 3 },
+    });
+    expect(picked).toBeNull();
+    expect(shouldRenderAdFrame(true, picked !== null)).toBe(false);
+  });
+
+  it("keeps rendering when a capped creative gives way to another", () => {
+    // The cap must not empty the frame when a second campaign is available to
+    // rotate into it — that would trade an empty box for a lost impression.
+    const capped = creative({ id: "ad-capped", frequencyCap: 1 });
+    const fresh = creative({ id: "ad-fresh", frequencyCap: 5 });
+    const picked = selectCreative([capped, fresh], {
+      visitorKey: "reader-1",
+      seenCounts: { "ad-capped": 1, "ad-fresh": 0 },
+    });
+    expect(picked?.id).toBe("ad-fresh");
+    expect(shouldRenderAdFrame(true, picked !== null)).toBe(true);
   });
 });
