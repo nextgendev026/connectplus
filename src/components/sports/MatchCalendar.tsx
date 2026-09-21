@@ -190,6 +190,19 @@ export default function MatchCalendar() {
     void load();
   }, [load]);
 
+  // Auto-refresh: poll for fixture updates when there are live matches or
+  // when the calendar is showing today. Live matches change score every
+  // few seconds; fixtures for today can be added or moved by broadcasters.
+  useEffect(() => {
+    const hasLive = (data?.days ?? []).some((d) => d.live > 0);
+    const isToday = dayKey === keyOf(new Date());
+    const intervalMs = hasLive ? 5 * 60_000 : isToday ? 15 * 60_000 : 0;
+    if (intervalMs === 0) return;
+    const timer = setInterval(() => void load({ fresh: true }), intervalMs);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, dayKey]);
+
   const byDate = useMemo(() => {
     const map = new Map<string, CalendarDay>();
     for (const day of data?.days ?? []) map.set(day.date, day);
@@ -648,8 +661,8 @@ function DaySection({
       ) : total === 0 ? (
         <div className="mt-3 rounded-2xl border border-dashed border-surface-800 px-4 py-10 text-center">
           <CalendarDays className="mx-auto h-7 w-7 text-surface-600" />
-          <p className="mt-2 text-sm font-medium text-surface-400">Nothing scheduled</p>
-          <p className="text-xs text-surface-500">Pick another day in the week above.</p>
+          <p className="mt-2 text-sm font-medium text-surface-400">No fixtures for this day</p>
+          <p className="text-xs text-surface-500">Fixtures for this period haven&apos;t been announced yet. Try another day or check back later — the calendar updates automatically.</p>
         </div>
       ) : (
         <div className="mt-3 space-y-4">

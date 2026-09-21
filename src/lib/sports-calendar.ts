@@ -150,7 +150,31 @@ export async function getSportsCalendar(input: {
     if (cached) return cached;
   }
 
-  const espn = await fetchEspnRange(from, to, sport).catch(() => ({ matches: [], sources: [] }));
+  let espn = await fetchEspnRange(from, to, sport).catch(() => ({ matches: [], sources: [] }));
+
+  // Fallback: when the requested range returns nothing, try the nearest
+  // available fixtures so the calendar is never a blank wall.
+  if (espn.matches.length === 0) {
+    try {
+      const fallback = await fetch(`${ESPN_BASE}/${ESPN_SPORT_PATH}/scoreboard?limit=20`, {
+        headers: { accept: "application/json", "user-agent": "connectPlus/1.0 (+sports desk)" },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        cache: "no-store",
+      });
+      if (fallback.ok) {
+        const body = (await fallback.json()) as { events?: unknown[] };
+        const display = "Upcoming";
+        const mapped = (Array.isArray(body.events) ? body.events : [])
+          .map((row) => mapEspnEvent(row, display, sport))
+          .filter((m): m is NormalizedMatch => m !== null);
+        if (mapped.length > 0) {
+          espn = { matches: mapped, sources: ["espn-fallback"] };
+        }
+      }
+    } catch {
+      // Fallback failure is not fatal — the calendar just stays empty.
+    }
+  }
 
   // What the archive can add: any pairing ESPN did not already give us.
   const seen = new Set(

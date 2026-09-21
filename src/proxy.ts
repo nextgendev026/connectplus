@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { getToken } from "next-auth/jwt";
 
 declare global {
   var __rateLimitCleanup: boolean | undefined;
@@ -8,7 +9,16 @@ declare global {
 
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
 
-function getRateLimitKey(request: NextRequest): string {
+/**
+ * Rate-limit key: authenticated users are keyed by user ID (stable, one per
+ * account), anonymous visitors by IP. This prevents shared-IP environments
+ * (NAT, corporate networks, VPNs) from merging unrelated users into one
+ * counter — which is the root cause of "Too many requests" when a logged-in
+ * writer saves drafts from behind a shared IP.
+ */
+async function getRateLimitKey(request: NextRequest): Promise<string> {
+  const token = await getToken({ req: request as any, secret: process.env.AUTH_SECRET }).catch(() => null);
+  if (token?.sub) return `uid:${token.sub}:${request.nextUrl.pathname}`;
   const forwarded = request.headers.get("x-forwarded-for");
   const ip = forwarded?.split(",")[0]?.trim() || "anonymous";
   return `${ip}:${request.nextUrl.pathname}`;
@@ -126,14 +136,24 @@ function defaultApiLimit(): LimitRule {
 
 export async function proxy(request: NextRequest) {
   if (request.nextUrl.pathname.startsWith("/api/")) {
-    const key = getRateLimitKey(request);
+    const key = await getRateLimitKey(request);
+    const isAuthenticated = key.startsWith("uid:");
 
     const matchedKey = Object.entries(RATE_LIMIT_NAMES).find(([, path]) =>
       request.nextUrl.pathname.startsWith(path)
     )?.[0] as LimitKey | undefined;
 
     if (matchedKey) {
-      const { limit, windowMs } = resolveRule(matchedKey);
+      let { limit, windowMs } = resolveRule(matchedKey);
+
+      // Authenticated creators drafting stories get a higher ceiling:
+      // the studio auto-saves on every keystroke burst, and 30 POSTs/min
+      // is easily exhausted during active writing. Anonymous visitors keep
+      // the default to prevent abuse.
+      if (isAuthenticated && matchedKey === "POSTS" && request.method === "POST") {
+        limit = Math.max(limit, 120);
+      }
+
       // Use the distributed Redis-backed rate limiter when available.
       const result = await checkRateLimit(key, limit, windowMs).catch(() => null);
       if (result?.limited) {
