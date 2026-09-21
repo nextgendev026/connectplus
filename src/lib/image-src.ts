@@ -172,6 +172,35 @@ export function responsiveSrcSet(
 }
 
 /**
+ * Which URL an `<img>` should actually request, given what has already failed.
+ *
+ * The chain is optimized → original → nothing, and it exists because a broken
+ * `<img>` is silent: when the derived URL fails, the reader sees a hole and
+ * nothing anywhere says why. The failure this was written for is specific and
+ * common — an image optimizer running out of quota answers `402` with an HTML
+ * body instead of a picture, and every affected cover disappears at once while
+ * the original file, one rewrite away, is perfectly intact.
+ *
+ * Pure and exported so the *order* can be asserted. Both halves are easy to get
+ * wrong in ways no single render would reveal: retrying the same URL forever
+ * (a request loop), or skipping the original and giving up (a hole that did not
+ * have to be one).
+ *
+ * `original` is ignored when it equals `resolved` — passing the same URL back
+ * would look like a fallback while requesting exactly what just failed.
+ */
+export function fallbackSource(
+  resolved: string,
+  original: string | null | undefined,
+  failed: readonly string[]
+): string {
+  if (!resolved) return "";
+  if (!failed.includes(resolved)) return resolved;
+  if (original && original !== resolved && !failed.includes(original)) return original;
+  return "";
+}
+
+/**
  * The `type` attribute for a `<source>` element, guessed from the extension.
  *
  * Used by the feed and the picture element so a WebP cover is not advertised as

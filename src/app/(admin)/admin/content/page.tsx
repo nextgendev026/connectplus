@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Image from "next/image";
 import {
   Search,
   Star,
+  Trash2,
   Loader2,
   RefreshCw,
   Rss,
@@ -18,6 +18,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { cn, timeAgo } from "@/lib/utils";
+import OptimizedImage from "@/components/ui/OptimizedImage";
 
 interface AdminCategory {
   id: string;
@@ -61,6 +62,16 @@ export default function AdminContentPage() {
   const [featuredOnly, setFeaturedOnly] = useState(false);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  /**
+   * Two-step confirmation for deletion, rather than a `window.confirm`.
+   *
+   * Deleting a post is the only irreversible action in this console, and it is
+   * one click away from Feature and Unfeature in the same bar. A native dialog
+   * is dismissible by muscle memory and cannot say *which* stories are about to
+   * go; this asks in place, with the count, and drops back to the normal bar if
+   * the selection changes.
+   */
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -95,6 +106,7 @@ export default function AdminContentPage() {
   const allSelected = posts.length > 0 && posts.every((p) => selected.has(p.id));
 
   function toggleOne(id: string) {
+    setConfirmingDelete(false);
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -104,6 +116,7 @@ export default function AdminContentPage() {
   }
 
   function toggleAll() {
+    setConfirmingDelete(false);
     setSelected(allSelected ? new Set() : new Set(posts.map((p) => p.id)));
   }
 
@@ -128,6 +141,49 @@ export default function AdminContentPage() {
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Update failed");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  /**
+   * Delete the current selection, permanently.
+   *
+   * Goes to the admin route rather than `DELETE /api/posts/<id>` per post so the
+   * whole selection is one authenticated request and one audit line, and so the
+   * cleanup of the rows that merely name a post happens for every id — see
+   * `post-lifecycle.ts`. A partial failure is surfaced as a failure naming what
+   * survived, never folded into the success count.
+   */
+  async function bulkDelete() {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    setWorking(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/posts", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Delete failed");
+
+      setNotice(typeof data.message === "string" ? data.message : "Deleted.");
+      const failures = Array.isArray(data.failed) ? (data.failed as { id: string; reason: string }[]) : [];
+      if (failures.length > 0) {
+        setError(
+          `${failures.length} could not be deleted — ${failures
+            .slice(0, 3)
+            .map((f) => f.reason)
+            .join("; ")}${failures.length > 3 ? "; …" : ""}`
+        );
+      }
+      setSelected(new Set());
+      setConfirmingDelete(false);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Delete failed");
     } finally {
       setWorking(false);
     }
@@ -267,6 +323,30 @@ export default function AdminContentPage() {
           >
             Unfeature
           </button>
+          {confirmingDelete ? (
+            <>
+              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-danger-strong">
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete {selected.size} post{selected.size === 1 ? "" : "s"} permanently?
+              </span>
+              <button disabled={working} onClick={() => void bulkDelete()} className={dangerBtn}>
+                {working ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                Yes, delete
+              </button>
+              <button disabled={working} onClick={() => setConfirmingDelete(false)} className={bulkBtn}>
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button
+              disabled={working}
+              onClick={() => setConfirmingDelete(true)}
+              className={dangerBtn}
+              title="Delete the selected posts from the platform"
+            >
+              <Trash2 className="h-3.5 w-3.5" /> Delete
+            </button>
+          )}
           <select
             disabled={working}
             value=""
@@ -329,9 +409,15 @@ export default function AdminContentPage() {
                   // full-width JPEG (or a proxied publisher image) and this slot
                   // is 64×44, so 40 rows of originals is megabytes of mobile data
                   // for a row of stamps.
-                  <Image
+                  //
+                  // Via OptimizedImage rather than next/image, which sent this
+                  // 64px stamp to Vercel's separately-metered image optimizer.
+                  // `coverImage` is already `/api/thumb/post/<id>` — our own
+                  // route — so this now costs no third party at all.
+                  <OptimizedImage
                     src={post.coverImage}
                     alt=""
+                    preset="adminThumb"
                     width={64}
                     height={44}
                     className="h-11 w-16 shrink-0 rounded-lg border border-surface-800 object-cover"
@@ -444,6 +530,10 @@ const inputCls =
 
 const bulkBtn =
   "inline-flex items-center gap-1.5 rounded-lg border border-surface-800 px-2.5 py-1.5 text-xs font-medium transition hover:border-brand-500/50 disabled:opacity-50 bg-surface-900 text-surface-100";
+
+/** The one irreversible action in the console, styled so it cannot be confused for the others. */
+const dangerBtn =
+  "inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1.5 text-xs font-semibold text-danger-strong transition hover:bg-red-500/20 disabled:opacity-50";
 
 const pageBtn =
   "inline-flex items-center gap-1 rounded-lg border border-surface-800 px-2.5 py-1.5 text-xs font-medium text-surface-400 transition hover:border-brand-500/50";

@@ -1,5 +1,46 @@
 import { describe, expect, it } from "vitest";
-import { avatarSrc, imageMimeFromUrl, isOptimizable, optimizedImageSrc } from "@/lib/image-src";
+import { avatarSrc, fallbackSource, imageMimeFromUrl, isOptimizable, optimizedImageSrc } from "@/lib/image-src";
+
+describe("fallbackSource", () => {
+  const derived = "/api/optimize?url=https%3A%2F%2Fpublisher.example%2Fa.jpg&preset=cover";
+  const original = "https://publisher.example/a.jpg";
+
+  it("uses the derived URL while nothing has failed", () => {
+    expect(fallbackSource(derived, original, [])).toBe(derived);
+  });
+
+  it("falls back to the original once the derived URL has failed", () => {
+    // The exact production case: an image optimizer over quota answers 402 with
+    // an HTML body, while the file it was asked to wrap is fine.
+    expect(fallbackSource(derived, original, [derived])).toBe(original);
+  });
+
+  it("gives up rather than looping when the original fails too", () => {
+    // Returning the derived URL again here would re-request what just failed,
+    // and the onError handler would fire again — a request loop, not a fallback.
+    expect(fallbackSource(derived, original, [derived, original])).toBe("");
+  });
+
+  it("ignores an original identical to the derived URL", () => {
+    // An unoptimized source has no second chance to offer; offering the same URL
+    // would look like a fallback while doing nothing.
+    expect(fallbackSource(derived, derived, [derived])).toBe("");
+    expect(fallbackSource(derived, null, [derived])).toBe("");
+    expect(fallbackSource(derived, "", [derived])).toBe("");
+  });
+
+  it("returns nothing for a source that was never resolved", () => {
+    expect(fallbackSource("", original, [])).toBe("");
+  });
+
+  it("tries at most two URLs, never a third", () => {
+    const tried = [derived, original];
+    for (const n of [0, 1, 2, 3]) {
+      const result = fallbackSource(derived, original, tried.slice(0, n));
+      expect([derived, original, ""]).toContain(result);
+    }
+  });
+});
 
 describe("optimizedImageSrc", () => {
   it("routes remote and root-relative images through the optimizer", () => {

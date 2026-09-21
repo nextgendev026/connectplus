@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import Image from "next/image";
+import OptimizedImage from "@/components/ui/OptimizedImage";
 import {
   Rss,
   RefreshCw,
@@ -979,9 +979,24 @@ export default function RssAdminPage() {
                       className="flex items-start gap-4 px-6 py-4 transition-colors hover:bg-surface-800/20"
                     >
                       {article.imageUrl && (
-                        <Image
+                        /*
+                         * The feed item's own picture, through the shared image
+                         * component rather than next/image.
+                         *
+                         * next/image routed this 64px thumbnail through Vercel's
+                         * image optimizer, which is metered separately and is
+                         * what exhausted — so the one screen an operator uses to
+                         * judge whether a feed is importing properly was the one
+                         * showing a column of broken images. The source is a
+                         * publisher URL, so OptimizedImage sends it to
+                         * `/api/optimize` (our own route, SSRF-guarded, cached)
+                         * and falls back to the publisher URL directly if that
+                         * ever fails.
+                         */
+                        <OptimizedImage
                           src={article.imageUrl}
                           alt=""
+                          preset="adminThumb"
                           width={64}
                           height={64}
                           className="h-16 w-16 shrink-0 rounded-lg object-cover border border-surface-800"

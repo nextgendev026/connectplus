@@ -8,6 +8,7 @@ import { moderateContent } from "@/lib/moderation";
 import { embedPost, findDuplicate } from "@/lib/neural-vector";
 import { autoTagPost } from "@/lib/auto-tag";
 import { redisIncr } from "@/lib/redis";
+import { deletePostWithCleanup } from "@/lib/post-lifecycle";
 
 export async function GET(
   request: NextRequest,
@@ -357,13 +358,16 @@ export async function DELETE(
       }
     }
 
-    await prisma.post.delete({ where: { id } });
+    // Shared with the admin console's bulk delete — see post-lifecycle.ts for
+    // which rows are the database's job and which are not.
+    const cleaned = await deletePostWithCleanup(id);
+
     redisIncr("feed:version").catch(() => {});
     // Otherwise the deleted slug keeps answering from the edge with the story
     // it just removed — the worst possible cache hit.
     revalidatePath(`/article/${existingPost.slug}`);
     revalidatePath("/");
-    return NextResponse.json({ message: "Post deleted successfully" });
+    return NextResponse.json({ message: "Post deleted successfully", cleaned });
   } catch (error) {
     console.error("Error deleting post:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

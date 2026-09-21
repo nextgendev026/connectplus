@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import Image from "next/image";
 import { cache } from "react";
 import type { Prisma } from "@prisma/client";
 
@@ -287,11 +286,26 @@ export default async function ArticlePage({ params }: ArticleParams) {
 
       {/* Hero */}
       <div className="relative h-[46vh] min-h-[360px] overflow-hidden">
-        <Image
+        {/*
+         * The hero goes through the same component as every other cover.
+         *
+         * It was a bare next/image, which sends the request to Vercel's
+         * image optimizer — a separate meter from function invocations, and the
+         * one that runs out. When it does, the endpoint answers 402 with an HTML
+         * body instead of the picture, and since this is the *only* image on the
+         * article page that took that path, the symptom was specific and odd:
+         * every imported story's hero missing while the author avatar beside it
+         * rendered fine.
+         *
+         * `cover` is a `/api/thumb/post/<id>` URL, which OptimizedImage hands to
+         * our own route untouched — so this now costs no third-party service at
+         * all, and falls back to the stored original if that route ever fails.
+         */}
+        <OptimizedImage
           src={cover}
           alt={post.title}
+          preset="cover"
           fill
-          className="object-cover"
           priority
         />
         <div className="absolute inset-0 bg-gradient-to-br from-brand-900/50 via-black/80 to-black" />

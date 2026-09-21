@@ -1,8 +1,10 @@
 "use client";
 
+import { useState, type ReactEventHandler } from "react";
 import { cn } from "@/lib/utils";
 import {
   optimizedImageSrc,
+  fallbackSource,
   isOptimizable,
   responsiveSrcSet,
   sizesForPreset,
@@ -65,7 +67,9 @@ export default function OptimizedImage({
   quality,
   fill = false,
   priority = false,
-  unoptimized = false,
+  // Read as `unoptimizedSrc` inside, so the resolution block below cannot be
+  // misread as "this component is the unoptimized one".
+  unoptimized: unoptimizedSrc = false,
   fallback,
   sizes,
   widths,
@@ -73,15 +77,38 @@ export default function OptimizedImage({
   ...rest
 }: OptimizedImageProps) {
   const raw = src && String(src).trim() ? src : fallback;
-  const resolved = unoptimized ? (raw ?? "") : optimizedImageSrc(raw, { preset, width, height, quality });
+  const resolved = unoptimizedSrc ? (raw ?? "") : optimizedImageSrc(raw, { preset, width, height, quality });
 
-  if (!resolved) return null;
+  /**
+   * Sources that have already failed to load, in the order they were tried.
+   *
+   * An image can fail for reasons that have nothing to do with us: the
+   * optimizer route can be over quota, a publisher can rotate a cover URL, a
+   * proxy can time out. Any of those used to render as nothing at all, because
+   * a broken `<img>` is silent. This gives every source one second chance at the
+   * URL it was derived from — the raw publisher or upload URL, which needs no
+   * server work — and only gives up after that has failed too.
+   *
+   * That ordering is the point: the failure people hit most is the *derived* URL
+   * failing while the original is perfectly fine, which is exactly what happens
+   * when an image optimizer runs out of quota. Retrying the original turns a
+   * blank card into a heavier but correct one.
+   */
+  const [failed, setFailed] = useState<string[]>([]);
+
+  const derivedFailed = failed.includes(resolved);
+  const original = raw && raw !== resolved ? raw : "";
+  // Optimized → original → nothing. The chain itself lives in `fallbackSource`
+  // so its order is asserted in a test rather than inferred from this render.
+  const current = fallbackSource(resolved, original, failed);
+
+  if (!current) return null;
 
   // A responsive set only when the caller did not pin a width and did not opt
   // out; `width` means "this exact size", so offering others would fight it.
   const candidates = widths ?? (width ? [] : widthsForPreset(preset));
   const srcSet =
-    unoptimized || candidates.length < 2
+    unoptimizedSrc || derivedFailed || candidates.length < 2
       ? ""
       : responsiveSrcSet(raw, candidates, { preset, height, quality });
 
@@ -89,10 +116,14 @@ export default function OptimizedImage({
   // browser defaults to eager, so `loading` is omitted rather than set to "eager".
   const lazyProps = priority ? { fetchPriority: "high" as const } : { loading: "lazy" as const };
 
+  // Destructured out of `rest` so a caller's own onError cannot replace the
+  // fallback chain; theirs still runs, after ours has recorded the failure.
+  const { onError: callerOnError, ...imgRest } = rest;
+
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src={resolved}
+      src={current}
       alt={alt}
       srcSet={srcSet || undefined}
       sizes={srcSet ? (sizes ?? sizesForPreset(preset)) : undefined}
@@ -100,9 +131,15 @@ export default function OptimizedImage({
       height={fill ? undefined : height}
       decoding="async"
       {...lazyProps}
-      data-optimized={isOptimizable(raw) && !unoptimized ? "true" : undefined}
+      data-optimized={isOptimizable(raw) && !unoptimizedSrc ? "true" : undefined}
+      onError={(event) => {
+        setFailed((prev) => (prev.includes(current) ? prev : [...prev, current]));
+        if (typeof callerOnError === "function") {
+          (callerOnError as ReactEventHandler<HTMLImageElement>)(event);
+        }
+      }}
       className={cn(fill ? "absolute inset-0 h-full w-full object-cover" : "block object-cover", className)}
-      {...rest}
+      {...imgRest}
     />
   );
 }
