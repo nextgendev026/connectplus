@@ -103,7 +103,9 @@ export function NotificationBell() {
     if (!session?.user) return;
     setLoading(true);
     try {
-      const res = await fetch("/api/notifications?limit=10");
+      // `no-store`: this list carries the reader's own read state, so a cached
+      // copy would re-show rows they have already cleared.
+      const res = await fetch("/api/notifications?limit=10", { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
       const next = (data.notifications ?? []) as Notification[];
@@ -185,6 +187,38 @@ export function NotificationBell() {
     };
   }, [session?.user]);
 
+  /**
+   * Mark notifications read on the server, then take the server's count.
+   *
+   * The optimistic update is the reason this broke invisibly: the bell greyed
+   * the row out immediately, so nobody could tell that the request had not
+   * written anything — the row simply reappeared unread on the next load. The
+   * body now matches what the route accepts (`ids`, not `id`) and the badge is
+   * reconciled with the count the server returns, so what the reader sees is
+   * always the state that was actually persisted.
+   */
+  const markRead = useCallback(async (payload: { ids: string[] } | { all: true }) => {
+    await fetch("/api/notifications/read", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      // Every notification in this dropdown is a link, so the tap that marks a
+      // row read is also the tap that navigates away — and a navigation tears
+      // down in-flight fetches. Without `keepalive` the request was aborted
+      // before it left the browser, so the row was greyed out optimistically
+      // and came back unread on the next load, however correct the route was.
+      // `keepalive` lets it outlive the page the reader is leaving.
+      keepalive: true,
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && typeof data.unreadCount === "number") {
+          setUnreadCount(data.unreadCount);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const handleItemClick = useCallback(
     async (notif: Notification) => {
       setOpen(false);
@@ -193,24 +227,16 @@ export function NotificationBell() {
       setItems((prev) =>
         prev.map((n) => (n.id === notif.id ? { ...n, read: true } : n))
       );
-      await fetch("/api/notifications/read", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: notif.id }),
-      }).catch(() => {});
+      await markRead({ ids: [notif.id] });
     },
-    []
+    [markRead]
   );
 
   const markAllRead = useCallback(async () => {
     setUnreadCount(0);
     setItems((prev) => prev.map((n) => ({ ...n, read: true })));
-    await fetch("/api/notifications/read", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    }).catch(() => {});
-  }, []);
+    await markRead({ all: true });
+  }, [markRead]);
 
   const enableNotifications = useCallback(async () => {
     setEnableMsg(null);

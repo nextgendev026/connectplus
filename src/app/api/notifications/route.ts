@@ -27,7 +27,13 @@ export async function GET(request: NextRequest) {
       }),
     ]);
 
-    return NextResponse.json({ notifications, unreadCount });
+    // Per-reader state: a shared or heuristic cache would serve a reader rows
+    // they have already marked read, which is indistinguishable from the write
+    // failing.
+    return NextResponse.json(
+      { notifications, unreadCount },
+      { headers: { "Cache-Control": "no-store, must-revalidate" } }
+    );
   } catch (error) {
     console.error("Error fetching notifications:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

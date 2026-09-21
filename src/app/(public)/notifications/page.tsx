@@ -1,19 +1,10 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import {
-  Bell,
-  ChevronRight,
-  UserPlus,
-  MessageSquare,
-  Reply,
-  ShieldCheck,
-  Trophy,
-} from "lucide-react";
+import { Bell, ChevronRight } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { timeAgo } from "@/lib/utils";
-import { describeNotification } from "@/lib/notification-display";
 import { MarkAllReadButton } from "./MarkAllRead";
+import { NotificationRow } from "./NotificationRow";
 
 export const dynamic = "force-dynamic";
 
@@ -97,56 +88,3 @@ export default async function NotificationsPage() {
   );
 }
 
-function NotificationRow({
-  notification: n,
-}: {
-  notification: {
-    id: string;
-    type: string;
-    title: string | null;
-    message: string | null;
-    read: boolean;
-    createdAt: Date;
-    actor: { id: string; name: string | null; username: string; avatar: string | null } | null;
-    post: { id: string; slug: string; title: string } | null;
-  };
-}) {
-  const icons: Record<string, typeof Bell> = {
-    FOLLOW: UserPlus,
-    COMMENT: MessageSquare,
-    REPLY: Reply,
-    MODERATION_APPROVED: ShieldCheck,
-  };
-  const view = describeNotification(n);
-  const Icon = view.kind === "sports" ? Trophy : icons[n.type] ?? Bell;
-  const href = view.href;
-
-  return (
-    <Link
-      href={href}
-      className={`flex items-start gap-4 rounded-2xl border px-4 py-4 transition-colors hover:bg-surface-900/70 ${
-        n.read
-          ? "border-surface-800 bg-surface-900/40"
-          : "border-brand-500/20 bg-brand-500/5"
-      }`}
-    >
-      <div
-        className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl ${
-          n.read ? "bg-surface-800" : "bg-brand-500/15"
-        }`}
-      >
-        <Icon
-          className={n.read ? "h-5 w-5 text-surface-500" : "h-5 w-5 text-brand-400"}
-        />
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className={`text-sm ${n.read ? "text-surface-400" : "text-surface-100"}`}>
-          <span className="font-semibold text-surface-100">{view.headline}</span>{" "}
-          {view.body}
-        </p>
-        <p className="mt-1 text-xs text-surface-600">{timeAgo(n.createdAt)}</p>
-      </div>
-      {!n.read && <span className="mt-2 h-2 w-2 flex-shrink-0 rounded-full bg-brand-500" />}
-    </Link>
-  );
-}

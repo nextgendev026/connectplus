@@ -123,6 +123,22 @@ export const LikeSchema = z.object({
 
 export type LikeInput = z.infer<typeof LikeSchema>;
 
+/* ── Article views ───────────────────────────────────────────────────────── */
+
+/**
+ * The article view beacon.
+ *
+ * Views used to be recorded during the article page's own server render, which
+ * made the page un-cacheable and counted every crawler and every prefetch as a
+ * reader. The beacon moves that write to the browser, so the payload here is
+ * only ever a post id.
+ */
+export const PostViewSchema = z.object({
+  postId: cuid,
+});
+
+export type PostViewInput = z.infer<typeof PostViewSchema>;
+
 /* ── Bookmarks ───────────────────────────────────────────────────────────── */
 
 export const BookmarkSchema = z.object({
@@ -322,6 +338,17 @@ export type SportsReminderInput = z.infer<typeof SportsReminderSchema>;
 /* ── Notifications read ────────────────────────────────────────────────── */
 
 export const NotificationsReadSchema = z.object({
+  /**
+   * The singular key the bell used to send. Kept, and kept working.
+   *
+   * Zod *strips* unknown keys rather than rejecting them, so `{ id }` used to
+   * parse to `{}` — a 200 with `updated: false`. The tap looked like it had
+   * worked (the bell optimistically greys the row out) and the row came back
+   * unread on the next load, which is exactly the failure this schema caused.
+   * Accepting the old key too means a client still on the previous bundle keeps
+   * working through the deploy instead of silently doing nothing.
+   */
+  id: cuid.optional(),
   ids: z.array(cuid).max(100).optional(),
   all: z.boolean().optional(),
 });

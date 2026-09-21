@@ -11,10 +11,13 @@ export function MarkAllReadButton() {
   const handleClick = async () => {
     setBusy(true);
     try {
+      // `{}` is not a request to mark anything: the route reads `all` or `ids`,
+      // so an empty body was answered with "nothing changed" and the list came
+      // back unread after the refresh. Ask explicitly.
       await fetch("/api/notifications/read", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ all: true }),
       });
       router.refresh();
     } finally {
