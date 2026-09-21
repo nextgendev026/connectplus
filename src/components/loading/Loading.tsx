@@ -105,55 +105,78 @@ export function FeedSkeletonGrid({ count = 6 }: { count?: number }) {
 /**
  * Branded boot screen shown by PublicLayout while client providers hydrate.
  * Pairs with RouteProgress for a single, cohesive loading language.
+ *
+ * Three-layer reveal: the mark scales in with a ring of light, the wordmark
+ * fades up with a stagger, and the progress bar fills behind the brand glow.
+ * The whole thing takes 1.6s — long enough to read, short enough to not feel
+ * like a wait.
  */
 export function LoadingScreen() {
   const [showLoading, setShowLoading] = useState(true);
   const [progress, setProgress] = useState(0);
+  const [phase, setPhase] = useState<"enter" | "hold" | "exit">("enter");
 
   useEffect(() => {
     const start = performance.now();
-    const DURATION = 1400;
+    const DURATION = 1600;
     let raf: number;
     const tick = (now: number) => {
       const t = Math.min(1, (now - start) / DURATION);
-      // ease-out curve: fast start, slow finish
       setProgress(Math.round((1 - Math.pow(1 - t, 3)) * 100));
+      if (t >= 0.15 && phase === "enter") setPhase("hold");
+      if (t >= 0.85 && phase !== "exit") setPhase("exit");
       if (t < 1) raf = requestAnimationFrame(tick);
       else setShowLoading(false);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (!showLoading) return null;
 
   return (
-    <div className="fixed inset-0 z-[80] flex min-h-screen items-center justify-center bg-surface-950">
+    <div className="fixed inset-0 z-[80] flex min-h-screen items-center justify-center bg-surface-950 transition-opacity duration-400" style={{ opacity: phase === "exit" ? 0 : 1 }}>
       {/* Warm savanna glow behind the boot screen */}
       <div className="pointer-events-none absolute inset-0 bg-brand-glow" />
-      <div className="pointer-events-none absolute left-1/2 top-1/2 h-72 w-72 -translate-x-1/2 -translate-y-1/2 rounded-full bg-brand-500/10 blur-3xl" />
-      <div className="relative flex flex-col items-center gap-5">
-        <div className="relative h-20 w-20">
-          <div className="absolute -inset-2 rounded-full bg-gradient-to-br from-brand-500 via-accent-amber to-accent-coral opacity-40 blur-xl" />
-          <div className="absolute inset-0 rounded-full bg-gradient-to-br from-brand-500 via-accent-amber to-accent-coral animate-spin" style={{ animationDuration: "1.4s" }} />
-          <div className="absolute inset-[4px] rounded-full bg-surface-950 flex items-center justify-center">
-            <ConnectPlusMark className="h-11 w-11" />
+      <div className="pointer-events-none absolute left-1/2 top-1/2 h-96 w-96 -translate-x-1/2 -translate-y-1/2 rounded-full bg-brand-500/8 blur-3xl" />
+      <div className="pointer-events-none absolute left-1/3 top-1/3 h-48 w-48 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent-amber/6 blur-2xl" />
+
+      <div className="relative flex flex-col items-center gap-6">
+        {/* Mark with ring of light */}
+        <div className="relative h-24 w-24">
+          {/* Outer glow pulse */}
+          <div className="absolute -inset-4 rounded-full bg-gradient-to-br from-brand-500/20 via-accent-amber/15 to-accent-coral/20 blur-2xl animate-pulse" style={{ animationDuration: "2s" }} />
+          {/* Spinning ring */}
+          <div className="absolute -inset-1 rounded-full bg-gradient-to-br from-brand-500 via-accent-amber to-accent-coral animate-spin" style={{ animationDuration: "1.2s" }} />
+          {/* Inner dark circle */}
+          <div className="absolute inset-[3px] rounded-full bg-surface-950 flex items-center justify-center shadow-inner">
+            <ConnectPlusMark className="h-14 w-14" />
           </div>
         </div>
-        <div>
-          {/* The artwork's own wordmark treatment — uppercase, extra-bold, tight
-              tracking, in the ink the logo uses. */}
-          <p className="text-center text-[13px] font-extrabold uppercase tracking-tight text-surface-50">
+
+        {/* Wordmark with stagger */}
+        <div className="flex flex-col items-center gap-1">
+          <p className="text-center text-sm font-extrabold uppercase tracking-[0.2em] text-surface-50 animate-fade-in">
             connectplus
           </p>
-          <p className="mt-0.5 text-center text-xs text-surface-500">
+          <p className="text-center text-[11px] tracking-wider text-surface-500 animate-fade-in" style={{ animationDelay: "200ms" }}>
             Voices of the Silicon Savanna
           </p>
         </div>
-        <div className="h-1 w-40 overflow-hidden rounded-full bg-surface-800">
+
+        {/* Progress bar with glow */}
+        <div className="relative w-44">
+          <div className="h-1 overflow-hidden rounded-full bg-surface-800/80">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-brand-500 via-accent-amber to-accent-coral transition-[width] duration-100 ease-out"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+          {/* Glow trailing the progress */}
           <div
-            className="h-full rounded-full bg-gradient-to-r from-brand-500 via-accent-amber to-accent-coral transition-[width] duration-100 ease-out"
-            style={{ width: `${progress}%` }}
+            className="absolute top-0 h-1 w-8 rounded-full bg-brand-400/40 blur-sm transition-[left] duration-100 ease-out"
+            style={{ left: `calc(${Math.min(progress, 95)}% - 1rem)` }}
           />
         </div>
       </div>

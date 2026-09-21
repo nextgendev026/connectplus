@@ -105,29 +105,36 @@ export function PwaBootstrap() {
   return (
     <>
       {updateReady && (
-        <div className="fixed inset-x-0 top-3 z-[80] flex justify-center px-4">
+        <div className="fixed inset-x-0 top-3 z-[80] flex justify-center px-4 animate-slide-down">
           <button
             onClick={refreshNow}
-            className="flex items-center gap-2 rounded-full border border-brand-500/40 bg-surface-900/95 px-4 py-2 text-xs font-semibold text-surface-50 shadow-glow backdrop-blur-xl transition-transform active:scale-95"
+            className="group flex items-center gap-2.5 rounded-2xl border border-brand-500/30 bg-surface-900/90 px-4 py-2.5 text-xs font-semibold text-surface-50 shadow-glow-lg backdrop-blur-xl transition-all hover:border-brand-500/50 hover:bg-surface-900/95 active:scale-[0.97]"
           >
-            <RefreshCw className="h-3.5 w-3.5 text-brand-400" />
+            <span className="relative flex h-6 w-6 items-center justify-center">
+              <RefreshCw className="h-3.5 w-3.5 text-brand-400 transition-transform group-hover:rotate-90" style={{ transitionDuration: "600ms" }} />
+              <span className="absolute inset-0 rounded-full bg-brand-500/15 animate-ping" style={{ animationDuration: "1.5s" }} />
+            </span>
             New version available — tap to refresh
           </button>
         </div>
       )}
       {offline && !updateReady && (
-        <div className="fixed inset-x-0 top-3 z-[80] flex justify-center px-4">
-          <div className="flex items-center gap-2 rounded-full border border-amber-500/40 bg-surface-900/95 px-4 py-2 text-xs font-semibold text-amber-300 shadow-glow backdrop-blur-xl">
-            <WifiOff className="h-3.5 w-3.5" />
-            You&apos;re offline — showing saved content
+        <div className="fixed inset-x-0 top-3 z-[80] flex justify-center px-4 animate-slide-down">
+          <div className="flex items-center gap-2.5 rounded-2xl border border-amber-500/30 bg-surface-900/90 px-4 py-2.5 shadow-glow-lg backdrop-blur-xl">
+            <span className="relative flex h-6 w-6 items-center justify-center rounded-full bg-amber-500/15">
+              <WifiOff className="h-3 w-3 text-amber-400" />
+            </span>
+            <span className="text-xs font-semibold text-amber-300">You&apos;re offline — showing saved content</span>
           </div>
         </div>
       )}
       {backOnline && !offline && !updateReady && (
-        <div className="fixed inset-x-0 top-3 z-[80] flex justify-center px-4">
-          <div className="flex items-center gap-2 rounded-full border border-emerald-500/40 bg-surface-900/95 px-4 py-2 text-xs font-semibold text-emerald-300 shadow-glow backdrop-blur-xl">
-            <Wifi className="h-3.5 w-3.5" />
-            Back online
+        <div className="fixed inset-x-0 top-3 z-[80] flex justify-center px-4 animate-slide-down">
+          <div className="flex items-center gap-2.5 rounded-2xl border border-emerald-500/30 bg-surface-900/90 px-4 py-2.5 shadow-glow-lg backdrop-blur-xl">
+            <span className="relative flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/15">
+              <Wifi className="h-3 w-3 text-emerald-400" />
+            </span>
+            <span className="text-xs font-semibold text-emerald-300">Back online</span>
           </div>
         </div>
       )}

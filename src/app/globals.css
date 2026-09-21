@@ -874,6 +874,29 @@ html:not(.dark) .connectplus-prose a { color: #15803d; }
   animation: rise 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* ── PWA motion ─────────────────────────────────────────────────────────
+   Toasts, banners, and boot-screen transitions. Kept here so the PWA
+   components don't need a separate stylesheet, and so they share the
+   same easing scale as the rest of the app. */
+
+@keyframes slide-down {
+  from { opacity: 0; transform: translateY(-12px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+
+.animate-slide-down {
+  animation: slide-down 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 /* A live score changing: a quick tint that fades, so a goal is visible in the
    corner of an eye without the row jumping. */
 @keyframes score-flash {
@@ -993,6 +1016,8 @@ html:not(.dark) .connectplus-prose a { color: #15803d; }
   .animate-fade-in,
   .animate-fade-in-soft,
   .animate-rise,
+  .animate-slide-down,
+  .animate-slide-up,
   .animate-slide-in-left {
     animation: none !important;
     opacity: 1 !important;
