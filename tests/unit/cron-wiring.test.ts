@@ -54,6 +54,14 @@ describe("cron ownership", () => {
       "publish-scheduled",
       "rss-poll",
       "status-watchdog",
+      // Cover repair belongs here for the same reason as the other three: its
+      // failure is visible to readers, not to operators. A story imported
+      // without a cover stays coverless until something re-reads its publisher
+      // page, and the front end shows a painted placeholder either way — so
+      // "nothing repaired it" and "the publisher has no image" look identical.
+      // It was non-essential and therefore reachable only through Inngest, and
+      // a backlog of 39 stories accumulated with nothing reporting a fault.
+      "thumbnail-recovery",
     ]);
   });
 

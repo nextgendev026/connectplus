@@ -8,12 +8,31 @@ import { redisIncr } from "@/lib/redis";
 
 const log = createLogger("rss-poll");
 
+/**
+ * Media RSS tags rss-parser must be *told* to expose.
+ *
+ * This list is load-bearing and its absence was invisible. rss-parser drops
+ * any element it has not been asked about, so `item["media:thumbnail"]` read
+ * `undefined` for every feed — the branches in `resolveImage` that consume it
+ * were dead code from the day they were written, and nothing failed loudly
+ * enough to say so.
+ *
+ * What that cost: KBC's feed names an image for **every one of its items** via
+ * `<media:thumbnail url="…">`. With the tag thrown away, every KBC story
+ * imported with `coverImage: null` and the feed rendered a painted placeholder
+ * — while the correct URL sat in the XML we had already downloaded. Recovering
+ * those images costs nothing beyond this declaration: no extra request, no
+ * extra byte.
+ */
+export const RSS_MEDIA_CUSTOM_FIELDS = ["media:thumbnail", "media:content"] as const;
+
 const parser = new Parser({
   timeout: 10000,
   headers: {
     "User-Agent": "Mozilla/5.0 (compatible; ConnectPlus RSS Reader/1.0)",
     Accept: "application/rss+xml, application/xml, text/xml, */*",
   },
+  customFields: { item: [...RSS_MEDIA_CUSTOM_FIELDS] },
 });
 
 /**
@@ -33,10 +52,17 @@ const FETCH_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 const FETCH_TIMEOUT_MS = 15_000;
 const FETCH_ATTEMPTS = 2;
-/** Per-poll cap on network OG-image lookups. Everything beyond this is handled
+/** Per-feed cap on network OG-image lookups. Everything beyond this is handled
  * by recoverMissingThumbnails(), which runs on demand — polling 25 articles
- * used to fire 25 page downloads on every single cycle. */
-const MAX_OG_LOOKUPS_PER_POLL = 3;
+ * used to fire 25 page downloads on every single cycle.
+ *
+ * Three was too few to keep up. Four of the seven feeds in the registry carry
+ * **no** image data at all (no enclosure, no Media RSS, no `<img>` in the body
+ * — verified against the live documents), so for those every item needs a page
+ * download. Kahawa Tungu publishes ~6 new items a cycle and the budget covered
+ * three of them, which is half of every feed, permanently. Eight covers a
+ * normal cycle for every feed here while staying a bounded number of fetches. */
+const MAX_OG_LOOKUPS_PER_POLL = 8;
 
 type FeedFetchStatus = "OK" | "NOT_MODIFIED" | "HTTP_ERROR" | "PARSE_ERROR" | "TIMEOUT" | "NETWORK_ERROR";
 
@@ -133,12 +159,30 @@ export const MAX_FEEDS_PER_POLL_RUN = Math.min(
   100
 );
 
-/** Cap on network page-fetches in a single thumbnail-recovery run. Inline
- * images (already stored in RssArticle.content) are free and always tried
- * first; scraping the publisher page is what costs egress. */
-const MAX_THUMB_NETWORK_FETCHES = Math.min(
-  Math.max(Number(process.env.THUMB_RECOVERY_MAX_NETWORK ?? 12) || 12, 1),
-  50
+/** Candidates a recovery run walks by default.
+ *
+ * Exported so the network budget below can be held to it: the two constants
+ * being independently settable is what let a run inspect 25 candidates while
+ * only ever *attempting* 12 of them, which starved the remaining eight on every
+ * single pass — they were re-selected, never tried, and stayed coverless
+ * forever. `MAX_THUMB_NETWORK_FETCHES >= RECOVERY_BATCH_LIMIT` is now enforced
+ * rather than hoped for. */
+export const RECOVERY_BATCH_LIMIT = Math.min(
+  Math.max(Number(process.env.THUMB_RECOVERY_BATCH ?? 20) || 20, 1),
+  100
+);
+
+/** Cap on network page-fetches in a single thumbnail-recovery run. Inline and
+ * Media RSS images are free and always tried first; scraping the publisher page
+ * is what costs egress.
+ *
+ * Raised from 12, and floored at the batch size, so a run can attempt every
+ * candidate it selected. One page fetch per still-coverless story, bounded per
+ * run, is the cheapest way to clear the backlog: the placeholder is the visible
+ * symptom and this is the only source left for these publishers. */
+export const MAX_THUMB_NETWORK_FETCHES = Math.max(
+  Math.min(Math.max(Number(process.env.THUMB_RECOVERY_MAX_NETWORK ?? 25) || 25, 1), 100),
+  RECOVERY_BATCH_LIMIT
 );
 
 export interface FeedSummary {
@@ -203,6 +247,31 @@ function extractFirstImage(content: string): string | null {
   return anySrc?.[1] ?? null;
 }
 
+/**
+ * Read a Media RSS field (`media:thumbnail`, `media:content`).
+ *
+ * rss-parser shapes a single occurrence as `{ $: { url } }` and a repeated one
+ * as an array of those, so both are accepted. Anything else is ignored rather
+ * than guessed at — a malformed item should fall through to the next candidate,
+ * not throw and cost the whole feed its covers. */
+export function mediaFieldUrl(value: unknown): string | null {
+  const fromNode = (node: unknown): string | null => {
+    if (typeof node === "string") return node.trim() || null;
+    if (!node || typeof node !== "object") return null;
+    const url = (node as { $?: { url?: unknown } }).$?.url;
+    return typeof url === "string" && url.trim() ? url : null;
+  };
+
+  if (Array.isArray(value)) {
+    for (const node of value) {
+      const url = fromNode(node);
+      if (url) return url;
+    }
+    return null;
+  }
+  return fromNode(value);
+}
+
 async function fetchOgImage(articleUrl: string): Promise<string | null> {
   try {
     const controller = new AbortController();
@@ -229,32 +298,66 @@ async function fetchOgImage(articleUrl: string): Promise<string | null> {
   }
 }
 
-async function resolveImage(
-  allowNetwork: boolean,
-  item: {
-  enclosure?: { url?: string } | null;
-  "media:thumbnail"?: { $?: { url?: string } } | null;
-  "media:content"?: { $?: { url?: string } } | null;
+/** Where a resolved cover came from, so the caller can charge the right budget. */
+export interface ResolvedImage {
+  url: string | null;
+  /** True only when the URL required a publisher-page download. */
+  viaNetwork: boolean;
+}
+
+/**
+ * The subset of a feed item this module reads.
+ *
+ * Declaring it is not ceremony. Asking rss-parser for `customFields` narrows
+ * its item type to exactly the keys requested, so the loose index access this
+ * code used to rely on stops type-checking — and the compiler is right: `Item`
+ * never declared `content:encoded` or `author`, so those reads were always
+ * reaching into keys the type said were not there. Writing down what is
+ * actually consumed keeps the reads and the declaration in step.
+ */
+interface FeedItemLike {
+  title?: string;
+  link?: string;
+  guid?: string;
+  creator?: string;
+  author?: string;
   content?: string;
   "content:encoded"?: string;
   contentSnippet?: string;
-  link?: string;
-}): Promise<string | null> {
+  summary?: string;
+  pubDate?: string;
+  enclosure?: { url?: string } | null;
+  /** Shape varies (object, array, or string) — `mediaFieldUrl` reads it. */
+  "media:thumbnail"?: unknown;
+  "media:content"?: unknown;
+}
+
+async function resolveImage(
+  allowNetwork: boolean,
+  item: FeedItemLike
+): Promise<ResolvedImage> {
   const base = item.link || undefined;
   const candidates = [
     item.enclosure?.url,
-    item["media:thumbnail"]?.$?.url,
-    item["media:content"]?.$?.url,
+    mediaFieldUrl(item["media:thumbnail"]),
+    mediaFieldUrl(item["media:content"]),
     extractFirstImage(item["content:encoded"] || item.content || ""),
   ];
   for (const c of candidates) {
     const abs = absolutize(c ?? "", base);
-    if (abs) return abs;
+    if (abs) return { url: abs, viaNetwork: false };
   }
   // Network fallback is opt-in and capped by the caller — scraping the article
   // page for every item on every cycle is what made polling expensive.
-  if (!allowNetwork) return null;
-  return fetchOgImage(base ?? "");
+  if (!allowNetwork) return { url: null, viaNetwork: false };
+
+  const scraped = await fetchOgImage(base ?? "");
+  if (!scraped) return { url: null, viaNetwork: true };
+  // og:image is normally absolute; twitter:image and the first-<img> fallback
+  // are not always, and a relative URL stored here would fail to paint on every
+  // card, so it is resolved against the article before it is trusted.
+  if (/^https?:\/\//i.test(scraped)) return { url: scraped, viaNetwork: true };
+  return { url: absolutize(scraped, base), viaNetwork: true };
 }
 
 /**
@@ -491,7 +594,10 @@ export async function pollSingleFeed(
     // APPROVED with no category at all.
     const categoryIds = await resolveCategoryIds();
 
-    for (const item of items) {
+    for (const rawItem of items) {
+      // `customFields` narrows the parser's item type; this widens it back to
+      // the keys the intake layer genuinely reads (see FeedItemLike).
+      const item = rawItem as unknown as FeedItemLike;
       const articleUrl = item.link || item.guid;
       if (!articleUrl) continue;
       if (seen.has(articleUrl)) continue;
@@ -522,8 +628,13 @@ export async function pollSingleFeed(
       categoryCounts[slugKey] = (categoryCounts[slugKey] ?? 0) + 1;
 
       const allowNetwork = ogLookupsUsed < MAX_OG_LOOKUPS_PER_POLL;
-      if (allowNetwork) ogLookupsUsed++;
-      const imageUrl = await resolveImage(allowNetwork, item);
+      const resolved = await resolveImage(allowNetwork, item);
+      // Charge the budget only for an item that actually paid for a download.
+      // Charging every item that *could* have used the network let free inline
+      // and Media RSS images consume the allowance the items genuinely needing
+      // a page fetch never got.
+      if (resolved.viaNetwork) ogLookupsUsed++;
+      const imageUrl = resolved.url;
 
       prepared.push({
         title: titleText,
@@ -711,7 +822,7 @@ export interface ThumbnailRecoverySummary {
 export async function recoverMissingThumbnails(
   opts: { limit?: number; network?: boolean; onProgress?: (p: ThumbnailRecoveryProgress) => void } = {}
 ): Promise<ThumbnailRecoverySummary> {
-  const limit = Math.min(Math.max(opts.limit ?? 25, 1), 100);
+  const limit = Math.min(Math.max(opts.limit ?? RECOVERY_BATCH_LIMIT, 1), 100);
   const allowNetwork = opts.network !== false;
 
   const candidates = await prisma.rssArticle.findMany({

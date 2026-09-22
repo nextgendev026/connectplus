@@ -77,6 +77,7 @@ crons = [
   "*/15 * * * *",   # radio-status-sweep — now-playing / listener counts
   "*/30 * * * *",   # sports-intel     — model training + pick regeneration
   "30 */6 * * *",   # payments-lifecycle — reconcile PayPal, expire lapsed plans
+  "45 */6 * * *",   # thumbnail-recovery — covers for syndicated posts that arrived without one
 ]
 
 [observability]

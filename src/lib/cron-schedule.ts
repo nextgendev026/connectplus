@@ -150,7 +150,15 @@ export const CRON_JOBS: readonly CronJobDef[] = [
     description: "Re-derives cover images for syndicated posts that shipped without one.",
     cron: "15 */6 * * *",
     everyMinutes: 360,
-    essential: false,
+    // Essential, not optional. This is the only thing that can repair a story
+    // that was imported before its publisher's image was available, and it is
+    // the difference between a feed of covers and a feed of painted
+    // placeholders. While it was non-essential it was reachable *only* through
+    // Inngest, so when that queue went quiet the backlog simply stopped
+    // shrinking and nothing anywhere said so. As an essential job the Vercel
+    // safety net also picks it up when its heartbeat is stale, which costs
+    // nothing while Inngest is healthy.
+    essential: true,
     run: () => runRecoverThumbnails(20),
   },
   {

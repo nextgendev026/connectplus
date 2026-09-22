@@ -48,6 +48,7 @@ const CRON_SCHEDULES = [
   { cron: "*/15 * * * *", trigger: "radio-status-sweep" },
   { cron: "*/30 * * * *", trigger: "sports-intel" },
   { cron: "30 */6 * * *", trigger: "payments-lifecycle" },
+  { cron: "45 */6 * * *", trigger: "thumbnail-recovery" },
 ];
 
 if (!TOKEN || !ACCOUNT) {

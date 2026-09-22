@@ -572,6 +572,13 @@ const SCHEDULES = [
   { cron: "*/15 * * * *", trigger: "radio-status-sweep" },
   { cron: "*/30 * * * *", trigger: "sports-intel" },
   { cron: "30 */6 * * *", trigger: "payments-lifecycle" },
+  // Cover repair for syndicated stories. On the worker rather than Inngest for
+  // the same reason as the two above: a story imported without a cover stays
+  // coverless until something re-reads its publisher page, and "nothing re-read
+  // it" is indistinguishable from "the feed has no images" on the front end.
+  // Four passes a day clears a backlog in a couple of days and costs one page
+  // fetch per still-coverless story.
+  { cron: "45 */6 * * *", trigger: "thumbnail-recovery" },
 ];
 
 /**
