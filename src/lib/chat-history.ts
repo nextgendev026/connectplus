@@ -82,3 +82,77 @@ export function deriveConversationTitle(message: string, max = 60): string {
   const lastSpace = clipped.lastIndexOf(" ");
   return `${(lastSpace > max * 0.5 ? clipped.slice(0, lastSpace) : clipped).trimEnd()}…`;
 }
+
+/** How much of the last thing said the history list shows. */
+export const PREVIEW_CHARS = 140;
+
+/** The shape the list query selects, as plain data. */
+export interface ConversationSummarySource {
+  id: string;
+  title: string;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+  shareToken: string | null;
+  _count: { messages: number };
+  /** The newest message only, as `orderBy createdAt desc, take 1` returns it. */
+  messages: { content: string; role: string }[];
+}
+
+/** One row of the saved-chat list. Serialisable, because it is sent as JSON. */
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  preview: string;
+  shared: boolean;
+}
+
+/** A date that is already a string, or is unparseable, must not throw. */
+function isoOrEmpty(value: Date | string | null | undefined): string {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
+/**
+ * The one-line gist of a message, safe for a list row.
+ *
+ * Collapsed to a single line because the source is model output or a pasted
+ * article and both arrive full of newlines — a preview that keeps them breaks
+ * the row layout and shows the reader the whitespace instead of the words.
+ */
+export function previewOf(content: string | null | undefined, max = PREVIEW_CHARS): string {
+  return (content ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+/**
+ * Turn a row of the history query into what the console renders.
+ *
+ * This lives here, and not in the route, for one reason: it is the part of the
+ * saved-chat read path that can be wrong without anything failing. A list that
+ * is empty because a mapper threw is indistinguishable, from the console, from
+ * a list that is empty because there is nothing in it — and the same is true of
+ * a preview that is blank, a count that reads zero, or a thread that claims to
+ * be shared when it is not. Being a plain function over plain data makes each of
+ * those assertable.
+ *
+ * Defensive about its input because the row is a join: `messages` can be an
+ * empty array for a thread whose transcript was pruned, `_count` is a nested
+ * object that a future query might stop selecting, and dates deserialise as
+ * strings the moment a row comes back from a cache instead of Postgres. Any of
+ * those used to be an unhandled throw in a route — which the console showed as
+ * "no saved chats".
+ */
+export function toConversationSummary(row: ConversationSummarySource): ConversationSummary {
+  return {
+    id: row.id,
+    title: row.title,
+    createdAt: isoOrEmpty(row.createdAt),
+    updatedAt: isoOrEmpty(row.updatedAt),
+    messageCount: row._count?.messages ?? 0,
+    preview: previewOf(row.messages?.[0]?.content),
+    shared: Boolean(row.shareToken),
+  };
+}

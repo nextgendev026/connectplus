@@ -350,6 +350,8 @@ export default function BrainChatWidget() {
   const [copied, setCopied] = useState(false);
   const [rows, setRows] = useState<ConversationRow[]>([]);
   const [loadingRows, setLoadingRows] = useState(false);
+  /** Why the saved-chat list is empty or stale. Null when it loaded cleanly. */
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [rowSearch, setRowSearch] = useState("");
   const [openingId, setOpeningId] = useState<string | null>(null);
 
@@ -381,13 +383,43 @@ export default function BrainChatWidget() {
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  /**
+   * Load the saved-chat list.
+   *
+   * This used to ignore the status entirely and write `data.conversations ?? []`
+   * into state, so a refused or failed request rendered the same thing as an
+   * empty history: "No conversations yet". The operator who reported their saved
+   * chats could not be fetched had nothing on screen and nothing in the console
+   * to say why, and there was no way to tell a permissions problem from a
+   * genuinely empty list without opening devtools.
+   *
+   * Two rules now. A non-2xx response reports itself, with the server's own
+   * wording — the route returns a specific message for a 403 and for a 500, and
+   * repeating it here is what makes the failure actionable. And a failed fetch
+   * leaves the rows already on screen alone rather than replacing them, because
+   * a transient blip should not look like the history being deleted.
+   */
   const loadConversations = useCallback(async (search = "") => {
     setLoadingRows(true);
     try {
       const query = search ? `&search=${encodeURIComponent(search)}` : "";
       const res = await fetch(`/api/admin/neural/conversations?limit=40${query}`, { credentials: "include" });
+      if (!res.ok) {
+        const detail = (await res.json().catch(() => null)) as { error?: string } | null;
+        setHistoryError(
+          detail?.error
+            ? `Your saved chats could not be loaded (${res.status}): ${detail.error}`
+            : `Your saved chats could not be loaded (HTTP ${res.status}).`
+        );
+        return;
+      }
       const data = (await res.json().catch(() => ({}))) as { conversations?: ConversationRow[] };
       setRows(data.conversations ?? []);
+      setHistoryError(null);
+    } catch {
+      // Offline, blocked, or the request never completed. Distinguished from a
+      // refusal because the reader's next move is different.
+      setHistoryError("Your saved chats could not be loaded — the request did not complete.");
     } finally {
       setLoadingRows(false);
     }
@@ -459,7 +491,14 @@ export default function BrainChatWidget() {
     setError(null);
     try {
       const res = await fetch(`/api/admin/neural/conversations/${id}`, { credentials: "include" });
-      if (!res.ok) throw new Error("That conversation could not be opened.");
+      if (!res.ok) {
+        const detail = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(
+          detail?.error
+            ? `That conversation could not be opened (${res.status}): ${detail.error}`
+            : `That conversation could not be opened (HTTP ${res.status}).`
+        );
+      }
       const data = await res.json();
       const conversation = data.conversation as {
         id: string;
@@ -982,8 +1021,17 @@ export default function BrainChatWidget() {
             </div>
           </div>
 
+          {historyError ? (
+            <p
+              role="alert"
+              className="shrink-0 border-b border-red-500/20 bg-red-500/10 px-3 py-2 text-[11px] leading-relaxed text-danger-strong"
+            >
+              {historyError}
+            </p>
+          ) : null}
+
           <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5">
-            {loadingRows && rows.length === 0 ? (
+            {historyError && rows.length === 0 ? null : loadingRows && rows.length === 0 ? (
               <div className="flex items-center justify-center gap-2 py-10 text-[12px] text-surface-400">
                 <Loader2 className="h-4 w-4 animate-spin" /> Loading history…
               </div>

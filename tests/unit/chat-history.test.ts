@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { chronologicalHistory, deriveConversationTitle, historyFetchSize, HISTORY_TURNS } from "@/lib/chat-history";
+import {
+  chronologicalHistory,
+  deriveConversationTitle,
+  historyFetchSize,
+  previewOf,
+  toConversationSummary,
+  HISTORY_TURNS,
+  PREVIEW_CHARS,
+} from "@/lib/chat-history";
 
 /**
  * The conversation window the console's chat is composed against.
@@ -144,5 +152,110 @@ describe("deriveConversationTitle", () => {
 
   it("respects the caller's own limit", () => {
     expect(deriveConversationTitle("abcdef", 4).length).toBeLessThanOrEqual(5);
+  });
+});
+
+/**
+ * The saved-chat list row.
+ *
+ * This is the half of the history pipeline that can be wrong *silently*. The
+ * list is built by a join, and every way that join can come back differently —
+ * no messages, no `_count`, dates that arrived as strings rather than `Date` —
+ * used to be an unhandled throw inside the route. The console renders an empty
+ * list for any failure, so the operator saw "no saved chats" and nothing
+ * anywhere said why. Pinning the tolerant behaviour is what keeps it from
+ * drifting back into that state.
+ */
+describe("toConversationSummary", () => {
+  const row = {
+    id: "conv_1",
+    title: "How is the platform health?",
+    createdAt: new Date("2026-09-23T15:00:00.000Z"),
+    updatedAt: new Date("2026-09-23T15:49:44.837Z"),
+    shareToken: null as string | null,
+    _count: { messages: 4 },
+    messages: [{ content: "The scheduler is healthy.", role: "assistant" }],
+  };
+
+  it("maps a row to exactly what the console renders", () => {
+    expect(toConversationSummary(row)).toEqual({
+      id: "conv_1",
+      title: "How is the platform health?",
+      createdAt: "2026-09-23T15:00:00.000Z",
+      updatedAt: "2026-09-23T15:49:44.837Z",
+      messageCount: 4,
+      preview: "The scheduler is healthy.",
+      shared: false,
+    });
+  });
+
+  it("reads a row that has no preview rather than failing on it", () => {
+    // A thread whose transcript was pruned, or that exists only as a title.
+    const summary = toConversationSummary({ ...row, messages: [] });
+    expect(summary.preview).toBe("");
+    expect(summary.title).toBe("How is the platform health?");
+  });
+
+  it("survives dates that arrive as strings", () => {
+    // Which is what happens the moment a row comes back from a cache or a JSON
+    // boundary instead of straight out of Postgres. `.toISOString()` on a string
+    // is the exact throw that turned the whole list into "no saved chats".
+    const summary = toConversationSummary({
+      ...row,
+      createdAt: "2026-09-23T15:00:00.000Z",
+      updatedAt: "2026-09-23T15:49:44.837Z",
+    });
+    expect(summary.createdAt).toBe("2026-09-23T15:00:00.000Z");
+    expect(summary.updatedAt).toBe("2026-09-23T15:49:44.837Z");
+  });
+
+  it("never renders an Invalid Date, and never a count it does not have", () => {
+    const summary = toConversationSummary({
+      ...row,
+      createdAt: "not a date",
+      updatedAt: undefined as unknown as Date,
+      _count: undefined as unknown as { messages: number },
+    });
+    expect(summary.createdAt).toBe("");
+    expect(summary.updatedAt).toBe("");
+    expect(summary.messageCount).toBe(0);
+  });
+
+  it("reports a shared thread, and only from the token", () => {
+    expect(toConversationSummary({ ...row, shareToken: "tok_abc" }).shared).toBe(true);
+    expect(toConversationSummary({ ...row, shareToken: "" }).shared).toBe(false);
+  });
+
+  it("carries the newest message as the preview", () => {
+    // The query returns the newest first; the row shown is that one, not the
+    // opening question, which is what makes the list scannable.
+    const summary = toConversationSummary({
+      ...row,
+      messages: [{ content: "and the queue is draining", role: "assistant" }],
+    });
+    expect(summary.preview).toBe("and the queue is draining");
+  });
+});
+
+describe("previewOf", () => {
+  it("collapses a multi-line message onto one line", () => {
+    // Model output and pasted articles both arrive full of newlines; keeping
+    // them shows the reader whitespace instead of words.
+    expect(previewOf("first line\n\nsecond   line\t third")).toBe("first line second line third");
+  });
+
+  it("truncates at the preview length and not at the full body", () => {
+    const preview = previewOf("x".repeat(500));
+    expect(preview.length).toBe(PREVIEW_CHARS);
+  });
+
+  it("is empty rather than undefined for a missing message", () => {
+    expect(previewOf(null)).toBe("");
+    expect(previewOf(undefined)).toBe("");
+    expect(previewOf("   ")).toBe("");
+  });
+
+  it("honours a caller's own length", () => {
+    expect(previewOf("abcdefghij", 4)).toBe("abcd");
   });
 });
