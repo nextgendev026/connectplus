@@ -141,7 +141,31 @@ async function withFeedFallback<T extends unknown[]>(
     const cached = await cacheGet<T>(FALLBACK_KEY).catch(() => null);
     if (cached !== null) return reviveFeedDates(cached);
     if (memoryFeedCache) return reviveFeedDates(memoryFeedCache.value as T);
-    throw err;
+
+    // Last resort: render the page with nothing in the pools rather than
+    // throwing.
+    //
+    // Every layer above this one has to fail at once to reach here — no Redis
+    // snapshot, no 24-hour fallback copy, no process memory, and a database that
+    // did not answer. The old code rethrew, which turned a database hiccup into
+    // a 500 on the platform's most important URL, and turned a build with no
+    // database into a failed deploy: `next build` prerenders `/`, every Prisma
+    // call in the pool failed, and the whole build exited non-zero even though
+    // every other route had compiled.
+    //
+    // A homepage whose feed is empty is degraded and visibly so; a homepage that
+    // returns an error page is broken. The log line is what makes the difference
+    // reportable — silence here is exactly the failure mode the platform's own
+    // health modules exist to end.
+    //
+    // The cast is the cost of the pool's shape being generic: the caller asked
+    // for `[posts, heroes, categories, creators]` and is given an empty version
+    // of the same tuple, which every consumer below already handles.
+    console.error(
+      `[home] feed pools unavailable — rendering degraded (${scope}):`,
+      err instanceof Error ? err.message : String(err)
+    );
+    return pages.map(() => []) as unknown as T;
   }
 }
 
