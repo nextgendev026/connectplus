@@ -316,23 +316,75 @@ export async function getCronStatus(): Promise<CronJobStatus[]> {
 
 export interface SafetyNetResult {
   checked: number;
+  /** Which registry slice this sweep considered. */
+  scope: SafetyNetScope;
   ran: { jobId: string; ageMinutes: number | null; result: unknown }[];
   skipped: { jobId: string; ageMinutes: number | null }[];
+  /** Due, but not started because the sweep ran out of its time budget. */
+  deferred: string[];
   errors: { jobId: string; error: string }[];
 }
 
 /**
- * Vercel safety net: run the essential jobs that Inngest appears to have
- * stopped delivering. Fresh heartbeats mean the queue is doing its job, so
- * this returns immediately without touching the database, feeds or upstreams.
+ * `"essential"` is the jobs whose absence a reader can see. `"all"` is the
+ * whole registry.
  */
-export async function runStaleEssentialJobs(
-  opts: { force?: boolean } = {}
-): Promise<SafetyNetResult> {
-  const beats = await readHeartbeats(ESSENTIAL_JOBS.map((j) => j.id));
-  const out: SafetyNetResult = { checked: ESSENTIAL_JOBS.length, ran: [], skipped: [], errors: [] };
+export type SafetyNetScope = "essential" | "all";
 
-  for (const job of ESSENTIAL_JOBS) {
+export interface SafetyNetOptions {
+  force?: boolean;
+  /**
+   * Which jobs to consider. Defaults to `"essential"`, which is what Vercel's
+   * once-a-day safety net wants.
+   *
+   * `"all"` exists because of a gap that a live production check made obvious:
+   * four jobs (`feed-health`, `platform-pulse`, `analytics-retention`,
+   * `status-daily-snapshot`) reported `lastRun: null` — they had **never run
+   * once**. They are the ones with no second scheduler: they are
+   * `essential: false`, so the safety net skipped them by design, and Inngest —
+   * their only other owner — was not delivering. A job that has never run is
+   * indistinguishable from a job that is broken, which is exactly the silent
+   * failure this module was written to end.
+   */
+  scope?: SafetyNetScope;
+  /**
+   * Stop starting new jobs once this much time has elapsed. A sweep can find
+   * many jobs due at once — after an outage, or on the first tick after deploy —
+   * and a serverless invocation has a hard ceiling. Deferred jobs stay stale and
+   * run on the next tick, which is the correct failure direction: late, never
+   * lost, and never a truncated response that looks like success.
+   */
+  budgetMs?: number;
+}
+
+/** Leaves headroom under the 300s function ceiling for the response itself. */
+const DEFAULT_SWEEP_BUDGET_MS = 240_000;
+
+/**
+ * Run the jobs whose own heartbeat says they are overdue.
+ *
+ * A fresh heartbeat means whatever else owns the job is delivering, so this
+ * returns immediately without touching the database, the feeds or an upstream.
+ * That is what makes it safe to call from a frequent tick: the cost of a sweep
+ * with nothing due is a handful of ledger reads.
+ */
+export async function runStaleJobs(opts: SafetyNetOptions = {}): Promise<SafetyNetResult> {
+  const scope: SafetyNetScope = opts.scope ?? "essential";
+  const jobs = scope === "all" ? CRON_JOBS : ESSENTIAL_JOBS;
+  const budgetMs = opts.budgetMs ?? DEFAULT_SWEEP_BUDGET_MS;
+  const deadline = Date.now() + budgetMs;
+
+  const beats = await readHeartbeats(jobs.map((j) => j.id));
+  const out: SafetyNetResult = {
+    checked: jobs.length,
+    scope,
+    ran: [],
+    skipped: [],
+    deferred: [],
+    errors: [],
+  };
+
+  for (const job of jobs) {
     const hb = beats[job.id] ?? null;
     const stale = opts.force === true || isStale(hb, job.everyMinutes);
     if (!stale) {
@@ -340,13 +392,19 @@ export async function runStaleEssentialJobs(
       continue;
     }
 
+    if (Date.now() >= deadline) {
+      out.deferred.push(job.id);
+      continue;
+    }
+
     try {
       log.warn("safety net running stalled job", {
         jobId: job.id,
+        scope,
         ageMinutes: heartbeatAgeMinutes(hb),
       });
       const result = await job.run();
-      await recordHeartbeat(job.id, { ok: true, detail: "run by Vercel safety net" });
+      await recordHeartbeat(job.id, { ok: true, detail: `run by ${scope} sweep` });
       out.ran.push({ jobId: job.id, ageMinutes: heartbeatAgeMinutes(hb), result });
     } catch (err) {
       out.errors.push({ jobId: job.id, error: err instanceof Error ? err.message : String(err) });
@@ -354,4 +412,17 @@ export async function runStaleEssentialJobs(
   }
 
   return out;
+}
+
+/**
+ * The essential-only sweep Vercel still owns.
+ *
+ * Kept as its own name because the scope is a real part of the contract: this
+ * is the reader-facing slice, and the once-a-day cadence only makes sense for
+ * it. New callers that want everything should say so explicitly.
+ */
+export function runStaleEssentialJobs(
+  opts: Omit<SafetyNetOptions, "scope"> = {}
+): Promise<SafetyNetResult> {
+  return runStaleJobs({ ...opts, scope: "essential" });
 }

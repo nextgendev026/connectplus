@@ -109,7 +109,10 @@ describe("cron ownership", () => {
     const triggers = [...worker.matchAll(/trigger: "([a-z-]+)"/g)].map((m) => m[1]!);
     expect(triggers.length).toBeGreaterThan(0);
     const ids = new Set(CRON_JOBS.map((j) => j.id));
-    const unknown = triggers.filter((t) => !ids.has(t));
+    // `due-sweep` is not a job: it names an endpoint, and the endpoint decides
+    // for itself what is overdue. Everything else must be a registry job.
+    const SYNTHETIC = new Set(["due-sweep"]);
+    const unknown = triggers.filter((t) => !ids.has(t) && !SYNTHETIC.has(t));
     expect(unknown, `edge schedules naming jobs that do not exist: ${unknown.join(", ")}`).toEqual([]);
 
     // The deploy script registers the same crons as the worker maps.
@@ -120,6 +123,69 @@ describe("cron ownership", () => {
         `cron: "${cron}"`
       );
     }
+  });
+
+  it("stays inside Cloudflare's five-trigger free-plan ceiling", () => {
+    // This list held SIX triggers once. The API rejects the whole upload when
+    // the ceiling is exceeded, the deploy script only printed the error, and the
+    // result was that `thumbnail-recovery` had no Cron Trigger at all while the
+    // deploy reported success. A limit is only a limit if the build notices it.
+    const WORKER_LIMIT = 5;
+
+    const workerCrons = new Set(
+      [...read("workers/edge-cache/src/index.mjs").matchAll(/cron: "([^"]+)"/g)].map(
+        (m) => m[1]!
+      )
+    );
+    expect(workerCrons.size).toBeLessThanOrEqual(WORKER_LIMIT);
+
+    const deployCrons = new Set(
+      [...read("scripts/deploy-worker.mjs").matchAll(/cron: "([^"]+)"/g)].map((m) => m[1]!)
+    );
+    expect(deployCrons.size).toBeLessThanOrEqual(WORKER_LIMIT);
+
+    // A trigger the deploy script never registers is a schedule that does not
+    // exist, and vice versa. They have to be the same set.
+    expect([...deployCrons].sort()).toEqual([...workerCrons].sort());
+  });
+
+  it("gives the jobs with no other scheduler a sweep of their own", () => {
+    // Production showed four jobs with `lastRun: null` — never run once. Each is
+    // `essential: false`, so the Vercel safety net skipped them by design, and
+    // their only other owner is Inngest. A registry job with no scheduler is a
+    // job that is silently dead, which is the failure this module exists to end.
+    const worker = read("workers/edge-cache/src/index.mjs");
+    expect(worker).toContain("trigger: \"due-sweep\"");
+    expect(worker).toContain("/api/cron/safety-net?scope=all");
+
+    // The endpoint has to accept the scope, and `all` has to mean the whole
+    // registry rather than a second name for the essential slice.
+    const route = read("src/app/api/cron/safety-net/route.ts");
+    expect(route).toContain('=== "all" ? "all" : "essential"');
+
+    const schedule = read("src/lib/cron-schedule.ts");
+    expect(schedule).toContain('scope === "all" ? CRON_JOBS : ESSENTIAL_JOBS');
+
+    // Every job without a scheduler of its own has to be one the sweep reaches.
+    for (const id of [
+      "feed-health",
+      "platform-pulse",
+      "analytics-retention",
+      "status-daily-snapshot",
+    ]) {
+      const job = CRON_JOBS.find((j) => j.id === id);
+      expect(job, `${id} is missing from the registry`).toBeDefined();
+      expect(job?.essential, `${id} is essential, so it is not the case this guards`).toBe(false);
+    }
+  });
+
+  it("bounds a sweep so it cannot outlive the function", () => {
+    // A sweep can find many jobs due at once — after an outage, or on the first
+    // tick after deploy. Running them all inline would exceed the invocation
+    // ceiling and return a truncated response that looks like success.
+    const schedule = read("src/lib/cron-schedule.ts");
+    expect(schedule).toContain("DEFAULT_SWEEP_BUDGET_MS");
+    expect(schedule).toContain("deferred");
   });
 
   it("schedules a payment reconciliation job", () => {

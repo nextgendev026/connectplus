@@ -48,8 +48,27 @@ const CRON_SCHEDULES = [
   { cron: "*/15 * * * *", trigger: "radio-status-sweep" },
   { cron: "*/30 * * * *", trigger: "sports-intel" },
   { cron: "30 */6 * * *", trigger: "payments-lifecycle" },
-  { cron: "45 */6 * * *", trigger: "thumbnail-recovery" },
 ];
+
+/**
+ * Cloudflare's free plan allows FIVE Cron Triggers per Worker.
+ *
+ * This list used to have six, the extra one being a second six-hourly slot for
+ * `thumbnail-recovery`. The API rejects the whole upload when the limit is
+ * exceeded. The old code printed the error and carried on, so the sixth trigger
+ * was simply never registered and nothing said so. The tell was in production:
+ * `thumbnail-recovery` had heartbeats from other schedulers and none matching
+ * its own cron.
+ *
+ * Low-frequency jobs no longer need a trigger of their own. The `due-sweep` on
+ * the fifteen-minute slot asks the app to run whatever its registry says is
+ * overdue, which covers `thumbnail-recovery` and the four jobs that had never
+ * run at all — for one trigger instead of six.
+ *
+ * (In a block comment, never write a cron expression whose minute field is a
+ * wildcard: the two characters that end this comment appear inside it.)
+ */
+const CRON_TRIGGER_LIMIT_FREE = 5;
 
 if (!TOKEN || !ACCOUNT) {
   console.error("CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are required");
@@ -201,6 +220,17 @@ if (REGISTER_CRONS) {
       ? CRON_SCHEDULES.map((s) => `${s.cron} → ${s.trigger}`).join(", ")
       : JSON.stringify(schedulesBody.errors)
   );
+  // A rejected schedule list is a silent outage: the worker keeps running and
+  // every job it was supposed to drive stops firing, with the only evidence a
+  // line in this log. Fail the deploy instead.
+  if (!schedulesBody.success) {
+    throw new Error(
+      `Cron Trigger upload failed (${schedules.status}): ${JSON.stringify(schedulesBody.errors)}` +
+        (CRON_SCHEDULES.length > CRON_TRIGGER_LIMIT_FREE
+          ? ` — ${CRON_SCHEDULES.length} triggers configured but the free plan allows ${CRON_TRIGGER_LIMIT_FREE}. Consolidate onto the due-sweep slot or upgrade the plan.`
+          : "")
+    );
+  }
 } else {
   console.log("schedules: skipped (CRON_TRIGGERS=off)");
 }

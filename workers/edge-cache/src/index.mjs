@@ -572,13 +572,29 @@ const SCHEDULES = [
   { cron: "*/15 * * * *", trigger: "radio-status-sweep" },
   { cron: "*/30 * * * *", trigger: "sports-intel" },
   { cron: "30 */6 * * *", trigger: "payments-lifecycle" },
-  // Cover repair for syndicated stories. On the worker rather than Inngest for
-  // the same reason as the two above: a story imported without a cover stays
-  // coverless until something re-reads its publisher page, and "nothing re-read
-  // it" is indistinguishable from "the feed has no images" on the front end.
-  // Four passes a day clears a backlog in a couple of days and costs one page
-  // fetch per still-coverless story.
-  { cron: "45 */6 * * *", trigger: "thumbnail-recovery" },
+  // ── The catch-all ───────────────────────────────────────────────────────────
+  // Asks the app to run every job its OWN registry says is overdue, rather than
+  // naming one job per cron.
+  //
+  // This replaced a `45 */6` entry for `thumbnail-recovery`, which had never
+  // actually fired: Cloudflare's free plan allows five Cron Triggers, the
+  // rejected upload was only logged, and the sixth trigger was quietly absent.
+  //
+  // It also closes a second, larger gap. Four jobs — `feed-health`,
+  // `platform-pulse`, `analytics-retention` and `status-daily-snapshot` —
+  // reported `lastRun: null` in production, meaning they had never run once.
+  // Each is `essential: false`, so the Vercel safety net skipped them by design
+  // and Inngest, their only other owner, was not delivering. Judging jobs by
+  // their own cadence makes the registry self-scheduling: a job runs because it
+  // is overdue, so a job added to `cron-schedule.ts` needs no deploy here.
+  //
+  // It rides the `*/15` slot that already exists, so it costs no extra trigger.
+  // The cost of a tick with nothing due is a few ledger reads on the origin.
+  {
+    cron: "*/15 * * * *",
+    trigger: "due-sweep",
+    path: "/api/cron/safety-net?scope=all",
+  },
 ];
 
 /**
@@ -1144,7 +1160,15 @@ export default {
         return { trigger, action: "skipped-fresh", snapshots: guarded.map((s) => s.id) };
       }
 
-      const url = `${origin}/api/cron?trigger=${encodeURIComponent(trigger)}&source=cloudflare-cron`;
+      // Most entries name a job for `/api/cron?trigger=`. `due-sweep` is the
+      // exception: it targets the safety-net endpoint and decides for itself
+      // what is due, so the entry carries its own path.
+      const entry = SCHEDULES.find((s) => s.trigger === trigger);
+      const path =
+        entry && entry.path
+          ? entry.path
+          : `/api/cron?trigger=${encodeURIComponent(trigger)}`;
+      const url = `${origin}${path}${path.includes("?") ? "&" : "?"}source=cloudflare-cron`;
       let ping = "ok";
       try {
         const res = await fetch(url, { method: "GET", headers });

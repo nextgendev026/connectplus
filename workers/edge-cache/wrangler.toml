@@ -71,13 +71,18 @@ REMOTE_KV_URL = ""
 # A trigger only reaches the origin when the worker's own cached snapshot for
 # that job has actually gone stale (SNAPSHOTS in src/index.mjs) — under reader
 # traffic the board keeps that copy current and the tick costs Vercel nothing.
+#
+# FIVE triggers, which is the free plan's ceiling. This list had six once and the
+# API silently rejected the whole upload, so `thumbnail-recovery` never had a
+# trigger at all. Keep it at five: low-frequency jobs are covered by the
+# `due-sweep` on the */15 slot, which runs whatever the app's registry reports as
+# overdue. `scripts/deploy-worker.mjs` now fails the deploy if this is exceeded.
 crons = [
-  "*/2 * * * *",    # sports-live      — snapshot + settle picks
-  "*/5 * * * *",    # sports-notify    — favourite match alerts
-  "*/15 * * * *",   # radio-status-sweep — now-playing / listener counts
-  "*/30 * * * *",   # sports-intel     — model training + pick regeneration
+  "*/2 * * * *",    # sports-live        — snapshot + settle picks
+  "*/5 * * * *",    # sports-notify      — favourite match alerts
+  "*/15 * * * *",   # radio-status-sweep + due-sweep (every overdue job)
+  "*/30 * * * *",   # sports-intel       — model training + pick regeneration
   "30 */6 * * *",   # payments-lifecycle — reconcile PayPal, expire lapsed plans
-  "45 */6 * * *",   # thumbnail-recovery — covers for syndicated posts that arrived without one
 ]
 
 [observability]

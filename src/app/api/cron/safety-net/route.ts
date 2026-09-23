@@ -1,20 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { runStaleEssentialJobs } from "@/lib/cron-schedule";
+import { runStaleJobs, type SafetyNetScope } from "@/lib/cron-schedule";
 import { hasSharedSecret } from "@/lib/shared-secret";
 import { createLogger } from "@/lib/logger";
 
 /**
- * The one job Vercel's cron still owns.
+ * The catch-up sweep: run whatever the heartbeat ledger says is overdue.
  *
- * Inngest drives every cadence (see src/inngest/functions.ts). This endpoint
- * exists purely as a fallback for the case where the Inngest app is unsynced,
- * paused, or unlinked: it inspects the cron heartbeat ledger and runs ONLY the
- * essential jobs whose last heartbeat is stale. While Inngest is healthy this
- * is a cheap no-op — a few Redis reads and an empty response.
+ * `scope=essential` is the Vercel safety net — the once-a-day pass over the
+ * jobs whose absence a reader can see.
  *
- *   GET /api/cron/safety-net             stale essentials only
- *   GET /api/cron/safety-net?force=1     run all essentials now (admin/secret)
+ * `scope=all` is the Cloudflare tick's pass over the WHOLE registry. It exists
+ * because four jobs had never run at all: they are `essential: false`, so this
+ * sweep skipped them by design, and Inngest — their only other scheduler — was
+ * not delivering. Judging every job against its own cadence makes the registry
+ * self-healing: a job runs because it is overdue, not because someone remembered
+ * to add a cron trigger for it.
+ *
+ *   GET /api/cron/safety-net               stale essentials only
+ *   GET /api/cron/safety-net?scope=all     every registry job that is overdue
+ *   GET /api/cron/safety-net?force=1       run the selected scope now, due or not
  *
  * Authorization: Bearer <CRON_SECRET> | x-cron-secret | ?key=/?secret= | admin.
  */
@@ -44,13 +49,20 @@ export async function GET(request: NextRequest) {
   }
 
   const force = request.nextUrl.searchParams.get("force") === "1";
+  // An unknown value is treated as the default rather than an error: this is a
+  // scheduler endpoint, and answering 400 to a scheduler leaves the sweep
+  // silently not happening. `essential` is the conservative reading.
+  const scope: SafetyNetScope =
+    request.nextUrl.searchParams.get("scope") === "all" ? "all" : "essential";
   const startedAt = Date.now();
 
   try {
-    const result = await runStaleEssentialJobs({ force });
+    const result = await runStaleJobs({ force, scope });
     log.info("safety net complete", {
+      scope,
       checked: result.checked,
       ran: result.ran.length,
+      deferred: result.deferred.length,
       elapsedMs: Date.now() - startedAt,
     });
     return NextResponse.json({

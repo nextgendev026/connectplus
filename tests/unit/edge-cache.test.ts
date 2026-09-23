@@ -450,6 +450,22 @@ describe("edge cron — cache-first snapshots", () => {
 
   const cronFetches = () => originFetches.filter((u) => u.includes("/api/cron"));
 
+  /**
+   * The cron pings for ONE trigger.
+   *
+   * The fifteen-minute slot carries two triggers: the radio sweep, which is
+   * skipped while its snapshots are fresh, and the always-on `due-sweep`, which
+   * asks the app for whatever its registry says is overdue and therefore fires
+   * on every tick by design. Assertions about a guarded trigger have to look
+   * past it, or "the tick stayed quiet" becomes untestable.
+   */
+  const jobFetches = (trigger: string) =>
+    cronFetches().filter((u) => u.includes(`trigger=${trigger}`));
+
+  /** The catch-all sweep's own ping — it targets the safety-net endpoint. */
+  const sweepFetches = () =>
+    originFetches.filter((u) => u.includes("/api/cron/safety-net?scope=all"));
+
   async function tick(cron: string): Promise<void> {
     // No execution context: a Cron Trigger has no response to return early
     // from, so the tick awaits everything itself rather than handing work to
@@ -600,12 +616,15 @@ describe("edge cron — cache-first snapshots", () => {
     // is by itself reason enough to fire the sweep.
     seedSnapshot("radio-stations", 30, "[]");
     await tick("*/15 * * * *");
-    expect(cronFetches()).toEqual([]);
+    expect(jobFetches("radio-status-sweep")).toEqual([]);
+    // …while the due-sweep still runs. It is not a job with a snapshot to guard;
+    // it asks the app which jobs are overdue, so a quiet tick is not its job.
+    expect(sweepFetches()).toHaveLength(1);
 
     // …and refreshes it once the copy is past its five-minute window.
     seedSnapshot("status", 600, '{"overall":"operational"}');
     await tick("*/15 * * * *");
-    expect(cronFetches()).toEqual([
+    expect(jobFetches("radio-status-sweep")).toEqual([
       "https://origin.test/api/cron?trigger=radio-status-sweep&source=cloudflare-cron",
     ]);
     expect(originFetches).toContain("https://origin.test/api/status");
@@ -621,10 +640,25 @@ describe("edge cron — cache-first snapshots", () => {
 
     await tick("*/15 * * * *");
 
-    expect(cronFetches()).toEqual([
+    expect(jobFetches("radio-status-sweep")).toEqual([
       "https://origin.test/api/cron?trigger=radio-status-sweep&source=cloudflare-cron",
     ]);
     expect(originFetches).toContain("https://origin.test/api/radio/stations");
+  });
+
+  it("sweeps for overdue jobs on the fifteen-minute slot", async () => {
+    // Four jobs had never run at all in production. They are `essential: false`,
+    // so Vercel's safety net skipped them by design and Inngest — their only
+    // other owner — was not delivering. The sweep is what gives them a scheduler.
+    originReturns("[]", "application/json");
+    seedSnapshot("status", 30, '{"overall":"operational"}');
+    seedSnapshot("radio-stations", 30, "[]");
+
+    await tick("*/15 * * * *");
+
+    expect(sweepFetches()).toEqual([
+      "https://origin.test/api/cron/safety-net?scope=all&source=cloudflare-cron",
+    ]);
   });
 
   it("still rebuilds when the snapshot entry has no usable date", async () => {
