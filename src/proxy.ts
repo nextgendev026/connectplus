@@ -108,6 +108,15 @@ const RATE_LIMIT_NAMES = {
   SIGNIN: "/api/auth/signin",
   UPLOAD: "/api/upload",
   COMMENTS: "/api/comments",
+  // Declared before POSTS because the first prefix match wins, and POSTS is a
+  // prefix of this path. Without it the home feed's "has anything changed?"
+  // poll — a Redis version compare, read once a minute by every visitor — was
+  // throttled as if it were creating a story: 30/min, sharing a bucket with real
+  // post writes and with every unattributed caller's share of that bucket.
+  // Exhausted, it answers 429, `FeedLiveRefresh` treats any non-ok response as
+  // "nothing changed", and the feed simply stops updating with nothing on screen
+  // to say why. It is a cheap read, so its ceiling is generous on purpose.
+  POSTS_CHECK: "/api/posts/check",
   POSTS: "/api/posts",
   FOLLOWS: "/api/follows",
   BOOKMARKS: "/api/bookmarks",
@@ -162,6 +171,7 @@ const DEFAULTS: Record<LimitKey, LimitRule> = {
   SIGNIN: { limit: 10, windowMs: 15 * 60 * 1000 },
   UPLOAD: { limit: 20, windowMs: 60 * 1000 },
   COMMENTS: { limit: 30, windowMs: 60 * 1000 },
+  POSTS_CHECK: { limit: 120, windowMs: 60 * 1000 },
   POSTS: { limit: 30, windowMs: 60 * 1000 },
   FOLLOWS: { limit: 30, windowMs: 60 * 1000 },
   BOOKMARKS: { limit: 60, windowMs: 60 * 1000 },
@@ -220,6 +230,23 @@ function resolveRule(key: LimitKey): LimitRule {
   const windowMs = parseInt(match[2]!, 10);
   if (!Number.isFinite(limit) || !Number.isFinite(windowMs)) return fallback;
   return { limit, windowMs };
+}
+
+/**
+ * Which rate-limit rule a path falls under, or `undefined` for the default.
+ *
+ * Exported because the rule is a *prefix* match, and a prefix match is only as
+ * good as the order of the table it reads. `/api/posts/check` is a read that sits
+ * under `/api/posts`, a write; `/api/thumb/...` and `/api/optimize` are the
+ * page's own images. Which bucket each of those lands in is the difference
+ * between a feed that live-refreshes and a feed that quietly stops, and it is not
+ * something a reader of the table can be expected to hold in their head. Being a
+ * pure function makes each case an assertion instead of an inference.
+ */
+export function rateLimitKeyFor(pathname: string): LimitKey | undefined {
+  return Object.entries(RATE_LIMIT_NAMES).find(([, path]) => pathname.startsWith(path))?.[0] as
+    | LimitKey
+    | undefined;
 }
 
 function defaultApiLimit(): LimitRule {
@@ -336,9 +363,7 @@ export async function proxy(request: NextRequest) {
   if (request.nextUrl.pathname.startsWith("/api/")) {
     const identity = await resolveRateIdentity(request);
 
-    const matchedKey = Object.entries(RATE_LIMIT_NAMES).find(([, path]) =>
-      request.nextUrl.pathname.startsWith(path)
-    )?.[0] as LimitKey | undefined;
+    const matchedKey = rateLimitKeyFor(request.nextUrl.pathname);
 
     if (matchedKey) {
       const rule = resolveRule(matchedKey);
