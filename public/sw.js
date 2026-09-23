@@ -11,7 +11,9 @@
  * previous build's JS, so the page renders copy that no longer exists in the
  * source. Only content-hashed asset URLs are cached; everything else under
  * /_next/ is network-first and never stored. */
-const CACHE_VERSION = "connectplus-v10";
+// v11 purges the image caches written by v10, which could hold a permanent
+// copy of a thumbnail *placeholder* — see cacheFirstImage.
+const CACHE_VERSION = "connectplus-v11";
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 const IMAGE_CACHE = `${CACHE_VERSION}-images`;
@@ -261,18 +263,69 @@ async function swrAsset(request) {
 /** Cache-first for Next.js optimized images — saves mobile data by not
  *  re-fetching images already downloaded. Cap at 200 entries to limit storage. */
 const IMAGE_CACHE_MAX = 200;
+
+/**
+ * How long a cached image is served before the network is consulted again.
+ *
+ * "Cache-first, forever" was the bug rather than the optimisation. A cover URL
+ * is not immutable: `/api/thumb/post/<id>` answers the story's cover *or* a
+ * branded placeholder depending on whether the import had one, and
+ * `thumbnail-recovery` backfills the missing ones four times a day. Once a
+ * placeholder had been stored, a reader kept seeing it for the life of the
+ * cache — through repairs, redeploys and every fix to the cache headers on the
+ * server, because the service worker never asked the server again.
+ */
+const IMAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** When this SW stored a response. Absent on entries from an older version. */
+const STORED_AT = "x-sw-stored-at";
+
+function imageExpired(response) {
+  const at = Number(response.headers.get(STORED_AT) || 0);
+  // An entry with no stamp is from an older cache version and cannot be aged,
+  // so treat it as expired: re-fetching one image is cheap, showing a stale one
+  // indefinitely is not.
+  return !at || Date.now() - at > IMAGE_TTL_MS;
+}
+
+/**
+ * Whether a 200 is safe to keep.
+ *
+ * A 404 for a cover whose upstream died, or a 400 from a malformed thumb code,
+ * is not worth keeping — and neither is a 200 that is a *negative* answer. The
+ * placeholder is `200 image/svg+xml` with `X-Thumb-Source: placeholder`, so the
+ * status check alone let it through and it outlived every repair. The painted
+ * thumb for a story with no cover is `X-Thumb-Source: painted`, and is
+ * deterministic from its URL, so it stays cacheable.
+ */
+function storableImage(res) {
+  return res.headers.get("X-Thumb-Source") !== "placeholder";
+}
+
 async function cacheFirstImage(request) {
   const cache = await caches.open(IMAGE_CACHE);
   const cached = await cache.match(request);
-  if (cached) return cached;
+  if (cached && !imageExpired(cached)) return cached;
+
   try {
     const res = await fetch(request);
-    // Only a real 200 is worth keeping: a 404 for a cover whose upstream died,
-    // or a 400 from a malformed thumb code, would otherwise be cached forever
-    // and outlive the fix.
-    if (res.ok) putCapped(cache, IMAGE_CACHE_MAX, request, res.clone()).catch(() => {});
+    if (res.ok && storableImage(res)) {
+      // Stamp the copy as it is stored, so age comes from when we wrote it
+      // rather than from a `Date` header a cache may rewrite.
+      const headers = new Headers(res.headers);
+      headers.set(STORED_AT, String(Date.now()));
+      const stamped = new Response(res.clone().body, {
+        status: res.status,
+        statusText: res.statusText,
+        headers,
+      });
+      putCapped(cache, IMAGE_CACHE_MAX, request, stamped).catch(() => {});
+    }
     return res;
   } catch {
+    // Offline, or the request failed: an expired copy still beats a broken
+    // image. This is the one case where stale wins.
+    if (cached) return cached;
     return Response.error();
   }
 }

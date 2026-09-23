@@ -465,6 +465,79 @@ describe("service worker cover cache", () => {
     await settle();
     expect(imageStore()?.size ?? 0).toBe(0);
   });
+
+  it("does not remember a placeholder, because the cover may be repaired later", async () => {
+    // The placeholder is `200 image/svg+xml` with `X-Thumb-Source: placeholder`,
+    // so the old `res.ok` check kept it for the life of the cache. A story whose
+    // cover arrived without an image, then got one backfilled by the recovery
+    // sweep, kept showing the placeholder to that reader through every repair —
+    // and through every fix to the cache headers on the server, because the
+    // worker never asked again. One reader's stale cache is not something a
+    // server-side header can reach.
+    vi.stubGlobal(
+      "fetch",
+      async () =>
+        new Response("<svg/>", {
+          headers: { "Content-Type": "image/svg+xml", "X-Thumb-Source": "placeholder" },
+        })
+    );
+
+    const res = await dispatch(new Request("https://app.test/api/thumb/post/nocover12345"));
+    await settle();
+
+    // Still served — a negative answer is a usable image for now…
+    expect(await res?.text()).toBe("<svg/>");
+    // …but not kept, so the next visit asks the server again.
+    expect(imageStore()?.size ?? 0).toBe(0);
+  });
+
+  it("still remembers a painted thumb, which is deterministic from its URL", async () => {
+    // The distinction is the header, not the SVG content type. A painted thumb
+    // encodes its own title in the URL, so it cannot go stale and staying
+    // cacheable is what keeps the offline feed illustrated.
+    vi.stubGlobal(
+      "fetch",
+      async () =>
+        new Response("<svg/>", {
+          headers: { "Content-Type": "image/svg+xml", "X-Thumb-Source": "painted" },
+        })
+    );
+
+    await dispatch(new Request("https://app.test/api/thumb/abc123def456"));
+    await settle();
+    expect(imageStore()?.size ?? 0).toBe(1);
+  });
+
+  it("ages a stored cover, so nothing is cached forever", async () => {
+    // Even a real cover is not immutable: publishers replace images, and a
+    // reader who cached one years ago should eventually see the replacement.
+    // The stamp is written by this worker rather than read from `Date`, because
+    // an intermediary is free to rewrite `Date`.
+    const url = "https://app.test/api/thumb/post/agecheck12345";
+    let fetches = 0;
+    vi.stubGlobal("fetch", async () => {
+      fetches++;
+      return new Response("cover-bytes", { headers: { "Content-Type": "image/jpeg" } });
+    });
+
+    await dispatch(new Request(url));
+    await settle();
+    expect(fetches).toBe(1);
+
+    // A second read inside the window must come from the cache.
+    await dispatch(new Request(url));
+    expect(fetches).toBe(1);
+
+    // Replace the stored copy with one carrying no stamp, which is what an entry
+    // from an older cache version looks like. It cannot be aged, so it must be
+    // treated as expired rather than trusted indefinitely.
+    const store = imageStore()!;
+    const key = [...store.keys()].find((k) => k.includes("agecheck"))!;
+    store.set(key, new Response("cover-bytes", { headers: { "Content-Type": "image/jpeg" } }));
+
+    await dispatch(new Request(url));
+    expect(fetches).toBe(2);
+  });
 });
 
 /**
