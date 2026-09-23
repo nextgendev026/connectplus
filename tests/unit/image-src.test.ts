@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { avatarSrc, fallbackSource, imageMimeFromUrl, isOptimizable, optimizedImageSrc } from "@/lib/image-src";
+import {
+  avatarSrc,
+  fallbackSource,
+  imageMimeFromUrl,
+  isOptimizable,
+  optimizedImageSrc,
+  requestKey,
+} from "@/lib/image-src";
 
 describe("fallbackSource", () => {
   const derived = "/api/optimize?url=https%3A%2F%2Fpublisher.example%2Fa.jpg&preset=cover";
@@ -39,6 +46,82 @@ describe("fallbackSource", () => {
       const result = fallbackSource(derived, original, tried.slice(0, n));
       expect([derived, original, ""]).toContain(result);
     }
+  });
+});
+
+describe("requestKey", () => {
+  it("treats a relative URL and its absolute form as the same request", () => {
+    // The browser only ever reports `img.currentSrc`, which is absolute, while
+    // this module deals in root-relative URLs. Comparing the raw strings never
+    // matched, so a real failure of a source went unrecognised.
+    expect(requestKey("/api/thumb/post/abc")).toBe(
+      requestKey("https://connectplusapp.vercel.app/api/thumb/post/abc")
+    );
+  });
+
+  it("keeps a srcset candidate distinct from the src it was chosen from", () => {
+    // The distinction whose absence blanked covers. A `srcset` candidate fails
+    // as `…/abc?w=960`; recording that against `…/abc` told the component its one
+    // and only source had died, so it unmounted the image instead of simply
+    // asking for the width-less URL that was never tried.
+    expect(requestKey("/api/thumb/post/abc?w=960")).not.toBe(requestKey("/api/thumb/post/abc"));
+  });
+
+  it("is stable and empty-safe for input it cannot parse", () => {
+    // The exact string does not matter — only that the same input always keys
+    // the same way, so a failure list stays comparable, and that a missing URL
+    // is not mistaken for a URL that failed.
+    expect(requestKey("not a url")).toBe(requestKey("not a url"));
+    expect(requestKey(null)).toBe("");
+    expect(requestKey(undefined)).toBe("");
+    expect(requestKey("")).toBe("");
+  });
+});
+
+describe("fallbackSource with a terminal", () => {
+  const derived = "/api/optimize?url=https%3A%2F%2Fpublisher.example%2Fa.jpg&preset=cover";
+  const original = "https://publisher.example/a.jpg";
+  const branded = "/api/thumb/bWFyay1icmFuZGVk";
+
+  it("rescues a card cover, which has no original to fall back to", () => {
+    // `/api/thumb/post/<id>` is both the source and its own derived form, so
+    // without a terminal this chain was one link long: the first failure
+    // returned `null`, and `null` is not a broken image — it is no image, with
+    // nothing on screen to say so.
+    const cover = "/api/thumb/post/abc";
+    expect(fallbackSource(cover, "", [cover], branded)).toBe(branded);
+  });
+
+  it("does not reach for the terminal while an earlier link is still alive", () => {
+    expect(fallbackSource(derived, original, [], branded)).toBe(derived);
+    expect(fallbackSource(derived, original, [derived], branded)).toBe(original);
+  });
+
+  it("lands on the terminal once the original has failed too", () => {
+    expect(fallbackSource(derived, original, [derived, original], branded)).toBe(branded);
+  });
+
+  it("still gives up rather than repeating itself when the terminal failed as well", () => {
+    expect(fallbackSource(derived, original, [derived, original, branded], branded)).toBe("");
+  });
+
+  it("is unchanged when no terminal is supplied", () => {
+    expect(fallbackSource(derived, original, [derived, original])).toBe("");
+  });
+
+  it("terminates on every prefix of the chain it can be handed", () => {
+    // The failure mode worth excluding is a cycle: an `<img>` whose onError
+    // puts back the URL it was already showing re-requests it forever.
+    const chain = [derived, original, branded];
+    let seen: string[] = [];
+    for (let i = 0; i <= chain.length + 1; i++) {
+      const next = fallbackSource(derived, original, seen, branded);
+      expect([...chain, ""]).toContain(next);
+      if (!next) break;
+      expect(seen).not.toContain(next);
+      seen = [...seen, next];
+    }
+    expect(fallbackSource(derived, original, seen, branded)).toBe("");
   });
 });
 

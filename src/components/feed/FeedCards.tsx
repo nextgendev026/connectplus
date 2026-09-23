@@ -5,7 +5,7 @@ import { ArrowRight, Bookmark, Clock, Heart, MessageCircle, PenLine, SearchX, Sp
 import OptimizedImage from "@/components/ui/OptimizedImage";
 import { ViewCount } from "@/components/ui/ViewCount";
 import { avatarSrc } from "@/lib/image-src";
-import { coverSrc } from "@/lib/thumb";
+import { coverSrc, thumbUrl } from "@/lib/thumb";
 import { formatCompact } from "@/lib/format-views";
 import { cn, estimateReadTime, timeAgo } from "@/lib/utils";
 
@@ -50,11 +50,24 @@ export function AnimatedCard({
   children: React.ReactNode;
   index: number;
 }) {
+  // The entrance is CSS-only, and the card is visible without it.
+  //
+  // It used to be the opposite: this element shipped `opacity-0 translate-y-4`
+  // and an inline observer script added `is-visible` on scroll. Visibility was
+  // therefore imperative state that React did not own — so any re-render (the
+  // live-refresh tick, a category switch, the ranked swap right after
+  // hydration) re-applied `opacity-0` to cards already on screen, and nothing
+  // put it back: the observer had unobserved them, and its MutationObserver
+  // watched `childList` only, so an attribute change was invisible to it. The
+  // cover was loaded, the card was blank, and it stayed that way.
+  //
+  // Now the keyframes only play the card *in*; the resting state is visible. A
+  // re-render cannot hide a card, and neither can a failed animation.
+  //
+  // The delay is capped because a pool of twenty cards would otherwise hold the
+  // last one back for 1.6s — invisible for no editorial reason.
   return (
-    <div
-      className="stagger-card opacity-0 translate-y-4"
-      style={{ transitionDelay: `${index * 80}ms` }}
-    >
+    <div className="stagger-card" style={{ animationDelay: `${Math.min(index, 8) * 80}ms` }}>
       {children}
     </div>
   );
@@ -85,8 +98,17 @@ export function PostCard({
             featured ? "h-56 md:h-72" : "h-40 md:h-48"
           )}
         >
+          {/* `fallback` is the branded thumbnail this card would have shown if
+              the story had no picture at all. A card is the one place a missing
+              image is worse than a generic one, so the chain has somewhere to
+              land rather than unmounting onto the gradient underneath. */}
           <OptimizedImage
             src={coverSrc(post.coverImage, {
+              title: post.title,
+              category: post.category?.name,
+              seed: post.slug,
+            })}
+            fallback={thumbUrl({
               title: post.title,
               category: post.category?.name,
               seed: post.slug,
@@ -188,6 +210,11 @@ export function FeaturedStoryBanner({ post }: { post: FeedPost }) {
               category: post.category?.name,
               seed: post.slug,
             })}
+            fallback={thumbUrl({
+              title: post.title,
+              category: post.category?.name,
+              seed: post.slug,
+            })}
             alt={post.title}
             fill
             preset="cover"
@@ -233,7 +260,15 @@ export function FeaturedStoryBanner({ post }: { post: FeedPost }) {
                   <p className="text-sm font-medium text-white">
                     {post.author.name ?? post.author.username}
                   </p>
-                  <p className="text-xs text-white/70">{timeAgo(post.createdAt)}</p>
+                  {/* Time-dependent text cannot match a server render that was
+                    cached up to a minute earlier, and React answers a mismatch
+                    by regenerating the whole tree on the client — which is how
+                    a feed that had already painted ended up re-rendered under
+                    the reader. The value is allowed to differ; the element is
+                    not replaced. */}
+                <p className="text-xs text-white/70" suppressHydrationWarning>
+                  {timeAgo(post.createdAt)}
+                </p>
                 </div>
               </div>
               <div className="flex items-center gap-4 text-white/70 text-xs">

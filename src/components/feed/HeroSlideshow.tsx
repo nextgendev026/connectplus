@@ -5,7 +5,7 @@ import Link from "next/link";
 import OptimizedImage from "@/components/ui/OptimizedImage";
 import { cn, timeAgo } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, ArrowRight } from "lucide-react";
-import { coverSrc } from "@/lib/thumb";
+import { coverSrc, thumbUrl } from "@/lib/thumb";
 import { ViewCount } from "@/components/ui/ViewCount";
 
 export interface HeroSlide {
@@ -205,8 +205,12 @@ export function HeroSlideshow({ slides, stats }: HeroSlideshowProps) {
               i === active ? "opacity-100" : "opacity-0"
             )}
           >
+            {/* The branded thumbnail is the last resort, so a hero whose cover
+                route fails paints the story's own card instead of leaving the
+                slide as a black panel. */}
             <OptimizedImage
               src={s.coverImage ?? coverSrc(null, { title: s.title, category: s.category?.name, seed: s.slug })}
+              fallback={thumbUrl({ title: s.title, category: s.category?.name, seed: s.slug })}
               alt=""
               fill
               preset="cover"
@@ -262,7 +266,12 @@ export function HeroSlideshow({ slides, stats }: HeroSlideshowProps) {
                 by {slide.author.name ?? slide.author.username}
               </span>
               <span className="w-1 h-1 rounded-full bg-white/40" />
-              <span className="text-xs text-white/60">
+              {/* Relative time is computed from `Date.now()` on both sides, so
+                  a hero served from the 60s page cache can say "29m ago" while
+                  the client computes "30m ago". React treats that as a
+                  hydration mismatch and regenerates the tree; allowing this one
+                  text node to differ keeps the HTML the server sent. */}
+              <span className="text-xs text-white/60" suppressHydrationWarning>
                 {timeAgo(slide.createdAt.toISOString())}
               </span>
             </div>

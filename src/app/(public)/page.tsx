@@ -1,7 +1,6 @@
 import Link from "next/link";
 import OptimizedImage from "@/components/ui/OptimizedImage";
 import { avatarSrc } from "@/lib/image-src";
-import Script from "next/script";
 import nextDynamic from "next/dynamic";
 import { prisma } from "@/lib/prisma";
 import { postCoverSrc } from "@/lib/thumb";
@@ -442,39 +441,7 @@ export default async function HomeFeedPage() {
         </div>
       </FeedCategoryProvider>
 
-      <StaggerObserverScript />
-
       <FeedLiveRefresh />
     </div>
-  );
-}
-
-function StaggerObserverScript() {
-  return (
-    <Script id="stagger-observer" strategy="afterInteractive">
-      {`
-        (function() {
-          var observer = new IntersectionObserver(function(entries) {
-            entries.forEach(function(entry) {
-              if (entry.isIntersecting) {
-                entry.target.classList.add('is-visible');
-                observer.unobserve(entry.target);
-              }
-            });
-          }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
-
-          function observeCards() {
-            document.querySelectorAll('.stagger-card:not(.is-visible)').forEach(function(card) {
-              observer.observe(card);
-            });
-          }
-
-          observeCards();
-
-          var mo = new MutationObserver(observeCards);
-          mo.observe(document.documentElement, { childList: true, subtree: true });
-        })();
-      `}
-    </Script>
   );
 }

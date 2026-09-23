@@ -6,6 +6,7 @@ import {
   optimizedImageSrc,
   fallbackSource,
   isOptimizable,
+  requestKey,
   responsiveSrcSet,
   sizesForPreset,
   widthsForPreset,
@@ -47,7 +48,8 @@ interface OptimizedImageProps {
   priority?: boolean;
   /** Skip the optimizer entirely. */
   unoptimized?: boolean;
-  /** Used when `src` is empty (e.g. an avatar fallback). */
+  /** Used when `src` is empty, and as the last resort if every derived form of
+   *  `src` fails to load. For a feed cover this is the branded thumbnail. */
   fallback?: string;
   /** Override the preset's default `sizes` for an unusual layout. */
   sizes?: string;
@@ -80,35 +82,53 @@ export default function OptimizedImage({
   const resolved = unoptimizedSrc ? (raw ?? "") : optimizedImageSrc(raw, { preset, width, height, quality });
 
   /**
-   * Sources that have already failed to load, in the order they were tried.
+   * Sources that have already failed to load, keyed by the request that failed.
    *
    * An image can fail for reasons that have nothing to do with us: the
    * optimizer route can be over quota, a publisher can rotate a cover URL, a
    * proxy can time out. Any of those used to render as nothing at all, because
-   * a broken `<img>` is silent. This gives every source one second chance at the
-   * URL it was derived from — the raw publisher or upload URL, which needs no
-   * server work — and only gives up after that has failed too.
+   * a broken `<img>` is silent.
    *
-   * That ordering is the point: the failure people hit most is the *derived* URL
-   * failing while the original is perfectly fine, which is exactly what happens
-   * when an image optimizer runs out of quota. Retrying the original turns a
-   * blank card into a heavier but correct one.
+   * The key is `requestKey`, not the raw string, and that is the whole point.
+   * With a `srcset` the browser picks a candidate, and on failure reports it as
+   * an absolute `currentSrc` such as `…?w=960` — while this component's own idea
+   * of the source is the bare `…`. Recording the bare URL (or comparing an
+   * absolute against a relative one) made the component conclude that its only
+   * source had died, and it unmounted the image. The cover had loaded; the card
+   * went blank and stayed blank.
    */
   const [failed, setFailed] = useState<string[]>([]);
 
-  const derivedFailed = failed.includes(resolved);
   const original = raw && raw !== resolved ? raw : "";
-  // Optimized → original → nothing. The chain itself lives in `fallbackSource`
-  // so its order is asserted in a test rather than inferred from this render.
-  const current = fallbackSource(resolved, original, failed);
+  // The caller's fallback is the last resort, and only worth adding when it is
+  // neither of the URLs already in the chain.
+  const terminal =
+    fallback && fallback !== raw && fallback !== resolved ? fallback : "";
+  // Optimized → original → the caller's fallback → nothing. The order lives in
+  // `fallbackSource` so it is asserted in a test rather than inferred here.
+  const current = fallbackSource(resolved, original, failed, terminal);
 
   if (!current) return null;
 
   // A responsive set only when the caller did not pin a width and did not opt
   // out; `width` means "this exact size", so offering others would fight it.
   const candidates = widths ?? (width ? [] : widthsForPreset(preset));
+
+  /**
+   * A `srcset` describes alternatives to the *primary* source, so it is only
+   * offered while we are still on that source. Two reasons it has to go:
+   *
+   *  • Once anything has failed, letting the browser pick another candidate
+   *    risks re-choosing the one that just broke and failing in a loop. The
+   *    saved bytes are not worth a cover that flickers.
+   *  • A candidate list built from `raw` describes the *derived* URL only. On a
+   *    fallback the `<img>` is pointing somewhere else entirely — the original
+   *    publisher file, or the branded thumbnail — and handing the browser
+   *    optimizer candidates alongside it would send it straight back to the
+   *    thing that failed. `src` and `srcset` must not disagree.
+   */
   const srcSet =
-    unoptimizedSrc || derivedFailed || candidates.length < 2
+    unoptimizedSrc || failed.length > 0 || current !== resolved || candidates.length < 2
       ? ""
       : responsiveSrcSet(raw, candidates, { preset, height, quality });
 
@@ -133,7 +153,11 @@ export default function OptimizedImage({
       {...lazyProps}
       data-optimized={isOptimizable(raw) && !unoptimizedSrc ? "true" : undefined}
       onError={(event) => {
-        setFailed((prev) => (prev.includes(current) ? prev : [...prev, current]));
+        // Attribute the failure to the request the browser actually made.
+        // `currentSrc` is empty when a load failed before any candidate was
+        // chosen, in which case the URL we asked for is the right key.
+        const requested = requestKey(event.currentTarget?.currentSrc || current);
+        setFailed((prev) => (prev.includes(requested) ? prev : [...prev, requested]));
         if (typeof callerOnError === "function") {
           (callerOnError as ReactEventHandler<HTMLImageElement>)(event);
         }

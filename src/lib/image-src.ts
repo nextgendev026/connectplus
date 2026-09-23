@@ -172,31 +172,71 @@ export function responsiveSrcSet(
 }
 
 /**
+ * A comparable key for "which request was this?".
+ *
+ * The browser reports a failed image as `img.currentSrc`, which is always an
+ * *absolute* URL, while this module works with root-relative ones. Comparing the
+ * two as strings therefore never matches: a genuine failure of
+ * `/api/thumb/post/x` was recorded as `https://host/api/thumb/post/x` and then
+ * not recognised as that same request at all.
+ *
+ * The key is the path and query, which is identical across both spellings — and,
+ * crucially, *different* for a `srcset` candidate (`…/x?w=960`) than for the
+ * `src` it was chosen from (`…/x`). Collapsing those two was the bug: a single
+ * failed candidate was recorded against the `src` it never came from, so the
+ * component decided its only source had died and unmounted the image.
+ *
+ * The origin is deliberately not part of the key. Two hosts sharing a path is
+ * possible in principle but harmless here — the worst case is skipping a
+ * fallback that would have worked, never a loop.
+ */
+export function requestKey(url: string | null | undefined): string {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url, "http://local.invalid");
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return url;
+  }
+}
+
+/**
  * Which URL an `<img>` should actually request, given what has already failed.
  *
- * The chain is optimized → original → nothing, and it exists because a broken
- * `<img>` is silent: when the derived URL fails, the reader sees a hole and
- * nothing anywhere says why. The failure this was written for is specific and
- * common — an image optimizer running out of quota answers `402` with an HTML
- * body instead of a picture, and every affected cover disappears at once while
- * the original file, one rewrite away, is perfectly intact.
+ * The chain is derived → original → terminal → nothing. It exists because a
+ * broken `<img>` is silent: when the derived URL fails, the reader sees a hole
+ * and nothing anywhere says why. The failure this was written for is specific
+ * and common — an image optimizer running out of quota answers `402` with an
+ * HTML body instead of a picture, and every affected cover disappears at once
+ * while the original file, one rewrite away, is perfectly intact.
  *
- * Pure and exported so the *order* can be asserted. Both halves are easy to get
- * wrong in ways no single render would reveal: retrying the same URL forever
- * (a request loop), or skipping the original and giving up (a hole that did not
- * have to be one).
+ * `terminal` is the caller's designated last resort — for a feed cover, the
+ * branded thumbnail that already exists for stories published without a
+ * picture. Without it a cover whose every derived form failed had nowhere to
+ * land but `null`, and `null` is a blank card: an `<img>` that renders nothing
+ * at all and reports nothing. With it the worst case is a less specific image,
+ * which is strictly better than a hole.
  *
- * `original` is ignored when it equals `resolved` — passing the same URL back
- * would look like a fallback while requesting exactly what just failed.
+ * Pure and exported so the *order* can be asserted. Each half is easy to get
+ * wrong in a way no single render reveals: retrying the same URL forever (a
+ * request loop), or skipping a candidate and giving up (a hole that did not have
+ * to be one).
+ *
+ * Entries that repeat an earlier one are skipped, because requesting exactly
+ * what just failed would look like a fallback while doing nothing.
  */
 export function fallbackSource(
   resolved: string,
   original: string | null | undefined,
-  failed: readonly string[]
+  failed: readonly string[],
+  terminal?: string | null
 ): string {
   if (!resolved) return "";
-  if (!failed.includes(resolved)) return resolved;
-  if (original && original !== resolved && !failed.includes(original)) return original;
+  const dead = new Set(failed.map(requestKey));
+  for (const candidate of [resolved, original, terminal]) {
+    if (!candidate) continue;
+    if (!dead.has(requestKey(candidate))) return candidate;
+  }
   return "";
 }
 
