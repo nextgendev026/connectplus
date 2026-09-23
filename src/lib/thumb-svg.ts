@@ -122,4 +122,37 @@ export const THUMB_HEADERS = {
   "Content-Type": "image/svg+xml; charset=utf-8",
   "Cache-Control": "public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400",
   "X-Content-Type-Options": "nosniff",
+  // Which of the two answers this is. A painted thumb is a *covered* answer;
+  // the placeholder below is a *negative* one and is cached very differently,
+  // so the distinction has to be visible from outside the app.
+  "X-Thumb-Source": "painted",
+} as const;
+
+/**
+ * Headers for a NEGATIVE answer: "this story has no cover, here is a fallback".
+ *
+ * Why this is not `THUMB_HEADERS`, and why that was a real bug:
+ *
+ * `/api/thumb/post/<id>` answers one of two things for the *same URL* — the
+ * story's cover, or the branded placeholder when the import arrived without
+ * one. The placeholder used to carry the cover's cache policy (`s-maxage` seven
+ * days) because both were returned with the same header set.
+ *
+ * That made cover repair invisible. `thumbnail-recovery` runs four times a day
+ * and backfills the covers that syndicated feeds omit; the front end kept
+ * serving the week-old placeholder from the CDN at a byte-identical URL, so a
+ * repaired story looked exactly like a broken one for up to seven days. The
+ * repair job was doing its work and no reader could see it.
+ *
+ * A negative answer is therefore short-lived and racy-by-design: five minutes in
+ * the browser, fifteen at the edge, with an hour of `stale-while-revalidate` so
+ * a slow origin never blocks a card. Measured against the old seven days that is
+ * a 672x reduction, and the worst case for a newly repaired cover is now a
+ * quarter of an hour rather than a week.
+ */
+export const THUMB_MISS_HEADERS = {
+  "Content-Type": "image/svg+xml; charset=utf-8",
+  "Cache-Control": "public, max-age=300, s-maxage=900, stale-while-revalidate=3600",
+  "X-Content-Type-Options": "nosniff",
+  "X-Thumb-Source": "placeholder",
 } as const;

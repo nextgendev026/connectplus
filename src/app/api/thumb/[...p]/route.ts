@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { paintThumb, THUMB_HEADERS } from "@/lib/thumb-svg";
+import { paintThumb, THUMB_HEADERS, THUMB_MISS_HEADERS } from "@/lib/thumb-svg";
 import { isInlineImage } from "@/lib/thumb";
 
 interface ThumbCode {
@@ -202,13 +202,18 @@ async function postCover(id: string, width: number | null): Promise<Response> {
   }
 
   // No usable cover — paint the branded thumbnail instead of a broken image.
+  //
+  // This is the NEGATIVE answer for a URL that may later answer positively: the
+  // same story can be backfilled a cover by `thumbnail-recovery`. It therefore
+  // gets the short-lived miss policy, not the cover policy — see
+  // THUMB_MISS_HEADERS for why the difference is load-bearing.
   const svg = paintThumb({
     title: post.title,
     category: post.category?.name ?? "Story",
     author: post.author?.name ?? post.author?.username ?? "",
     seed: id,
   });
-  return new NextResponse(svg, { status: 200, headers: { ...THUMB_HEADERS, ...COVER_HEADERS } });
+  return new NextResponse(svg, { status: 200, headers: { ...THUMB_MISS_HEADERS } });
 }
 
 /**
