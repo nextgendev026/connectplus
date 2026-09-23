@@ -60,10 +60,6 @@ function dayKey(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-function compact(date: Date): string {
-  return dayKey(date).replace(/-/g, "");
-}
-
 /** Team-name slug, for de-duplicating the two sources' spelling of one fixture. */
 function slug(value: string): string {
   return value
@@ -91,11 +87,32 @@ async function fetchEspnRange(
   const leagues = days > LONG_RANGE_DAYS ? [...LONG_RANGE_LEAGUES] : Object.keys(ESPN_SOCCER_LEAGUES);
 
   const sportPath = ESPN_SPORT_PATH;
-  const range = `${compact(from)}-${compact(to)}`;
 
+  /**
+   * No `dates` parameter — and that is the whole fix.
+   *
+   * This used to ask for `dates=YYYYMMDD-YYYYMMDD`, the range form the endpoint
+   * is widely documented to accept. It does not accept it any more: measured
+   * against production, a range answers **HTTP 400 `Failed to get events
+   * endpoint`** for every league tried (eng.1, esp.1, ger.1, usa.1,
+   * uefa.champions), while the same URL with no `dates` answers 200 with the
+   * current matchday and a single `dates=YYYYMMDD` answers 200.
+   *
+   * So every ESPN request failed, `fetchEspnRange` returned nothing, and the
+   * calendar fell through to the openfootball archive alone — which fills
+   * October onward but holds nothing for the current week. That is why the
+   * calendar rendered its "no fixtures" state on a date when matches were being
+   * played: not an empty season, an empty source.
+   *
+   * Leaving `dates` off is also the cheaper query. The endpoint's default window
+   * is the one a reader means by "the calendar", the league set is unchanged,
+   * and this stays at one request per league instead of one per league per day —
+   * which at fifty-six leagues would have been hundreds of requests per render.
+   * The archive still supplies the far future, and its merge is unchanged.
+   */
   const results = await Promise.allSettled(
     leagues.map(async (slugName) => {
-      const url = `${ESPN_BASE}/${sportPath}/${slugName}/scoreboard?dates=${range}&limit=400`;
+      const url = `${ESPN_BASE}/${sportPath}/${slugName}/scoreboard?limit=400`;
       const res = await fetch(url, {
         headers: { accept: "application/json", "user-agent": "connectPlus/1.0 (+sports desk)" },
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
