@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { classifyIntent, applyLearnedAliases, extractUrls, isUrl, type Intent } from "@/lib/neural-intent";
+import { classifyIntent, applyLearnedAliases, extractUrls, isUrl, isRecordIntent, type Intent } from "@/lib/neural-intent";
 import { extractKeywords, analyzeSentiment, extractEntities, summarizeText, stripHtml } from "@/lib/neural-text";
 import { hiveBrain, type EngagementSnapshot, type HiveStatus } from "@/lib/hive-brain";
 import { createLogger } from "@/lib/logger";
@@ -29,6 +29,32 @@ import {
   generateTopics,
   type GenerateResult,
 } from "@/lib/neural-generate";
+
+/**
+ * Whether an answer is knowledge the hive should keep.
+ *
+ * The teaching loop distils every admin interaction into a lesson, which is only
+ * sound while the answer actually contains something learned. A model that could
+ * not see the data answers *about* its own inability — "the hive mind report is
+ * not available", "I cannot access that", "no matching records" — and storing
+ * that as a lesson is worse than storing nothing at all: the next answer recalls
+ * it, reads it as a platform fact, and cites it as the reason it cannot help
+ * either. The loop then reinforces the refusal every time it runs.
+ *
+ * So an answer is learnable when it is substantive and does not read as a
+ * refusal, an absence, or a failure. The pattern is deliberately narrow — a
+ * false positive here silently deletes a real lesson, so it matches explicit
+ * statements of unavailability rather than anything merely negative-sounding.
+ * Exported so the rule is asserted directly instead of inferred from the
+ * database.
+ */
+export function isLearnableAnswer(answer: string | null | undefined): boolean {
+  const text = (answer ?? "").replace(/\s+/g, " ").trim();
+  if (text.length < 40) return false;
+  const refusal =
+    /\b(?:not|never)\s+(?:available|found|present|in the (?:live |platform )?readings|in (?:my|the) (?:memory|records|data))\b|\bunavailable\b|\bi\s+(?:can(?:no|')t|cannot|could ?n[o']t|do(?:es)? not have|don't have|am unable|was unable)\b|\bunable to\b|\bno (?:data|records?|information|matching|results?|entries|knowledge)\b|\b(?:failed|could not|couldn't|cannot) (?:to )?(?:generate|retrieve|find|access|produce)\b|\bsomething went wrong\b/i;
+  return !refusal.test(text);
+}
 
 export interface NeuralResponse {
   text: string;
@@ -2226,7 +2252,30 @@ class NeuralMindEngine {
   async learnFromInteraction(input: string, intent: Intent, answer: string): Promise<boolean> {
     if (intent === "unknown" || intent === "general_platform") return false;
 
+    // How the admin phrased the question is worth learning whatever the answer
+    // was — that is what makes the classifier recognise the phrasing next time.
     await this.teachIntentPhrase(input, intent);
+
+    /*
+     * But the ANSWER is not always knowledge, and this used to be assumed.
+     *
+     * Two kinds of answer must never become a memory:
+     *
+     *   • **A reading.** A report is a point-in-time rendering of live records
+     *     (`isRecordIntent`), not a durable fact about the world. Filing it as a
+     *     lesson makes a number from 14:03 recallable forever as though it were
+     *     still true.
+     *
+     *   • **A refusal or an error.** This is the one that actually bit us. The
+     *     hive report was routed to the model, the model said it could not see
+     *     one, and that apology was stored as `AI lesson (hive_report): …`. Recall
+     *     then surfaced it to the next answer as evidence, and the model cited it
+     *     back — "the hive memory explicitly records that the report is not
+     *     available". The pipeline had learned its own failure as a fact and was
+     *     reinforcing it on every subsequent question. Silence is recoverable; a
+     *     poisoned memory argues for its own correctness.
+     */
+    if (isRecordIntent(intent) || !isLearnableAnswer(answer)) return false;
 
     const body = `${input} ${answer}`;
     const summary = summarizeText(stripHtml(body), 1).slice(0, 140);
