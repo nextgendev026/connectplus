@@ -34,7 +34,6 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.74",
-    "@ai-sdk/react": "^4.0.116",
     "@prisma/client": "^6.6.0",
     "@sentry/nextjs": "^10.75.0",
     "ai": "^7.0.113",
@@ -49,8 +48,8 @@
     "lucide-react": "^1.41.0",
     "next": "^16.3.4",
     "next-auth": "^5.0.0-beta.32",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
     "recharts": "^2.15.0",
     "rss-parser": "^3.13.0",
     "sharp": "^0.35.4",
