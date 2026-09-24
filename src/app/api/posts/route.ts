@@ -11,15 +11,16 @@ import { rankFeed } from "@/lib/feed-ranker";
 import type { FeedRankVariant } from "@/lib/experiments";
 import { autoTagPost } from "@/lib/auto-tag";
 import { findDuplicate } from "@/lib/neural-vector";
-import { postCoverSrc } from "@/lib/thumb";
+import { serializePosts } from "@/lib/feed-serialize";
 import { convexViewCounts, mergeLiveViewCounts } from "@/lib/convex";
 import { checkPostsQuota, QuotaError } from "@/lib/plans";
 import { claimCreate, completeCreate, readIdempotencyKey, releaseClaim } from "@/lib/studio/save-ledger";
 
 // NOTE: `coverImage` is deliberately absent — stored covers can be multi-MB
 // base64 data URIs, and selecting them bloated every feed response (and the
-// Redis body cache) by megabytes. Responses carry a small /api/thumb/post/<id>
-// URL instead (see LIST_COVER mapping in GET).
+// Redis body cache) by megabytes. Every response derives a small
+// /api/thumb/post/<id> URL instead, via `serializePosts` — which is why every
+// branch of GET below must run its rows through that one function.
 const POST_SELECT = {
   id: true,
   title: true,
@@ -154,7 +155,9 @@ export async function GET(request: NextRequest) {
       });
       const { posts: ranked, variant } = await rankFeed(pool, authorId);
       const total = ranked.length;
-      const pagePosts = await withSources(ranked.slice(skip, skip + limit));
+      // `serializePosts` attaches the derived cover URL. Both branches go
+      // through the same function so neither can be the one that forgets it.
+      const pagePosts = serializePosts(await withSources(ranked.slice(skip, skip + limit)));
       // Live totals, so a "load more" card shows the same number as the article
       // page it links to. Always a miss for this branch (personalized reads are
       // never cached), and bounded to one page of ids.
@@ -182,10 +185,7 @@ export async function GET(request: NextRequest) {
       prisma.post.count({ where }),
     ]);
     const enriched = mergeLiveViewCounts(
-      (await withSources(posts)).map((post) => ({
-        ...post,
-        coverImage: postCoverSrc(post.id),
-      })),
+      serializePosts(await withSources(posts)),
       // Resolved before the body is cached: a Redis hit returns above and costs
       // no Convex call at all, while a miss bakes the live numbers into the
       // copy every visitor in the next 45s receives.
