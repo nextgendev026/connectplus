@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "radio:check": "vitest run tests/unit/radio-dial.test.ts",
+    "radio:logos": "node scripts/_probe-radio-logos.mjs",
     "test:e2e": "playwright test",
     "db:generate": "prisma generate",
     "db:guard": "ts-node --project scripts/tsconfig.script.json scripts/assert-db-target.ts",

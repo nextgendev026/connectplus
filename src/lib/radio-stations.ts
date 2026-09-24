@@ -255,7 +255,13 @@ const REGIONAL_STATIONS: RadioStation[] = [
     color: "#ef4444",
     icon: "C",
     tagline: "Kenya's #1 hit music station",
-    logoUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4a/Capital_Fm_Logo.svg/200px-Capital_Fm_Logo.svg.png",
+    // The broadcaster's own mark, served from their domain. The Wikimedia link
+    // that used to be here answers 400 with an HTML error page, which is worse
+    // than no URL at all: an <img> pointed at HTML is blocked by the browser's
+    // opaque-response check (net::ERR_BLOCKED_BY_ORB), so the one station with a
+    // "real" logo rendered as a broken tile and nothing said why. Verified 200
+    // image/x-icon.
+    logoUrl: "https://www.capitalfm.co.ke/favicon.ico",
     programming: ["Morning Drive", "Hits", "News Bulletins", "Talk"],
     favorite: true,
     verified: true,
@@ -461,7 +467,10 @@ const REGIONAL_STATIONS: RadioStation[] = [
     official: true,
     color: "#22c55e",
     icon: "K",
-    logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2322c55e'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3EKM%3C/text%3E%3C/svg%3E",
+    // Real logo, sourced and verified by `npm run radio:logos` (see
+    // scripts/_probe-radio-logos.mjs). The branded tile is still the fallback:
+    // `icon` and `color` below are what render if this ever stops answering.
+    logoUrl: "https://cdn.radiosphere.io/images/f6b2a79d-b842-40f7-993a-d0ec902b156f_1720863384.webp.90?type=medium&blocking=false",
     tagline: "Kikuyu hits, news and talk",
     programming: ["Kikuyu Classics", "Community Talk"],
     favorite: false,
@@ -560,7 +569,7 @@ const REGIONAL_STATIONS: RadioStation[] = [
     // is what found it.
     color: "#8b5cf6",
     icon: "NU",
-    logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%238b5cf6'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3ENU%3C/text%3E%3C/svg%3E",
+    logoUrl: "https://www.nrgug.radio/favicon.ico",
     tagline: "Uganda's trending sound",
     programming: ["NRG Drive", "Trending Now"],
     favorite: false,
@@ -603,7 +612,7 @@ const REGIONAL_STATIONS: RadioStation[] = [
     ],
     color: "#eab308",
     icon: "NR",
-    logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23eab308'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3ENR%3C/text%3E%3C/svg%3E",
+    logoUrl: "https://nextradio.co.ug/wp-content/uploads/2018/09/cropped-logo-1-180x180.gif",
     tagline: "The next big thing",
     programming: ["New Music First", "Kampala Nights"],
     favorite: false,
@@ -623,7 +632,7 @@ const REGIONAL_STATIONS: RadioStation[] = [
     fallbacks: ["http://s44.myradiostream.com:8138/stream"],
     color: "#f97316",
     icon: "S",
-    logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23f97316'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='24' fill='white' text-anchor='middle'%3ES%3C/text%3E%3C/svg%3E",
+    logoUrl: "https://sanyufm.com/favicon.ico",
     tagline: "Uganda's oldest private station",
     programming: ["Morning Breeze", "Luganda Hits", "Classic Show"],
     favorite: false,
@@ -702,7 +711,7 @@ const REGIONAL_STATIONS: RadioStation[] = [
     bitrateKbps: 128,
     color: "#8b5cf6",
     icon: "CF",
-    logoUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%238b5cf6'/%3E%3Ctext x='32' y='42' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'%3ECF%3C/text%3E%3C/svg%3E",
+    logoUrl: "https://cloudsmedia.co.tz/build/assets/clouds_icon-4199f5a8.png",
     tagline: "Tanzania's #1 Bongo Flava station",
     programming: ["Clouds Breakfast", "Bongo Hot", "Mic Tamtam"],
     favorite: false,
