@@ -262,9 +262,37 @@ describe("collaboration trace", () => {
 
   it("says readings could not be taken rather than reporting calm", () => {
     const trace = collaboration(null, null);
-    expect(trace.subsystems.every((s) => s.state !== "ok" || s.state === "ok")).toBe(true);
+    // With nothing readable the board must not look calm — but it must not look
+    // *broken* either. Every node is unproven, which is a separate bucket from
+    // degraded: an engine nobody has observed is a gap in observation, and
+    // counting it as a fault is what made a two-unmeasured-subsystem board read
+    // as two broken engines.
+    expect(trace.subsystems.every((s) => s.state === "unproven")).toBe(true);
     expect(trace.subsystems.some((s) => s.evidence.includes("could not be taken"))).toBe(true);
-    expect(trace.degraded).toBe(trace.subsystems.length);
+    expect(trace.degraded).toBe(0);
+    expect(trace.unproven).toBe(trace.subsystems.length);
+  });
+
+  it("counts an unmeasurable reading as unproven, not degraded", () => {
+    // A probe that could not be taken, and nothing that could. The node must not
+    // carry a warning, because no warning was ever observed — but it must not be
+    // green either, because nothing was measured.
+    const blind = {
+      generatedAt: new Date().toISOString(),
+      taken: 0,
+      missing: 1,
+      state: "unknown" as const,
+      text: "",
+      readings: [
+        { id: "rss-feeds", area: "Syndication", label: "Source feeds", value: "unavailable", state: "unknown" as const },
+      ],
+    } as unknown as BrainReadings;
+
+    const trace = collaboration(blind, null);
+    const research = trace.subsystems.find((s) => s.id === "neural-research");
+    expect(research?.state).toBe("unproven");
+    expect(trace.degraded).toBe(0);
+    expect(trace.unproven).toBeGreaterThan(0);
   });
 
   it("keeps every declared hand-off pointing at a real engine", () => {

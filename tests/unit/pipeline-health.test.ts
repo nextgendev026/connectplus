@@ -191,13 +191,37 @@ describe("scheduler heartbeats", () => {
   });
 
   it("is critical when an essential job has stopped firing", () => {
+    // The ledger is demonstrably recording — `hive-sweep` has a beat — so a job
+    // with no record at all has provably never run. That is a real fault, and
+    // this is the case the empty-registry rule below must not swallow.
     const check = classifyScheduler({
-      jobs: [job({ lastRun: null, ageMinutes: null, stale: true })],
+      jobs: [
+        job({ id: "hive-sweep", name: "Nightly hive training", ageMinutes: 700, stale: false }),
+        job({ lastRun: null, ageMinutes: null, stale: true }),
+      ],
       ledger: "redis",
     });
     expect(check.state).toBe("critical");
     expect(check.headline).toContain("essential job");
     expect(check.detail).toContain("never");
+  });
+
+  it("reports a registry nobody has ever recorded as unmeasured", () => {
+    /*
+     * The bug this pins down: every job reading "never ran" used to be summed
+     * into "N of N behind", so a fresh instance, a development workstation, or a
+     * deployment whose scheduler had not started yet reported an emergency — and
+     * so did a scheduler that had genuinely stopped, indistinguishably. With no
+     * observation anywhere in the registry, staleness is not measurable, and the
+     * console has to say that instead of inventing a cause.
+     */
+    const check = classifyScheduler({
+      jobs: [job({ lastRun: null, ageMinutes: null, stale: true })],
+      ledger: "redis",
+    });
+    expect(check.state).toBe("unknown");
+    expect(check.headline).toContain("No run recorded");
+    expect(check.detail).toContain("unmeasured rather than late");
   });
 
   it("only warns when a non-essential job is behind", () => {

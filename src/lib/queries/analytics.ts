@@ -143,19 +143,36 @@ export async function platformTotals(): Promise<{
 }> {
   const weekAgo = new Date(Date.now() - 7 * DAY_MS);
 
+  /*
+   * Budgets here are `aggregate`, not `point`.
+   *
+   * Every one of these is a whole-table aggregate — `COUNT(*)` over User, Post or
+   * Comment, or a `SUM` over every published post's `viewCount`. Postgres answers
+   * each with a sequential scan, and the `point` budget (1.5s) is documented for a
+   * single indexed row. On a cold pooled connection the platform's own `User`
+   * count exceeded it in practice, and because `withinBudget` *rejects*, one slow
+   * count took the whole `platformTotals()` call with it — which surfaced as the
+   * admin console reporting the audience as "unavailable" and the platform-senses
+   * engine as degraded, when nothing was actually wrong with the query.
+   *
+   * `aggregate` is the right ceiling by the module's own rule: the grouped
+   * `regionalUsers`/`regionalPosts` queries scan these exact tables under an
+   * `aggregate` budget and complete. A plain count of the same table cannot
+   * honestly be given a tighter one than the group-by it is cheaper than.
+   */
   const [totalUsers, totalPosts, totalComments, viewAgg, pendingModeration, usersThisWeek, postsThisWeek, activeRows] =
     await Promise.all([
-      withinBudget("analytics.totalUsers", "point", () => prisma.user.count()),
-      withinBudget("analytics.totalPosts", "point", () => prisma.post.count({ where: { status: "PUBLISHED" } })),
-      withinBudget("analytics.totalComments", "point", () => prisma.comment.count()),
-      withinBudget("analytics.totalViews", "point", () =>
+      withinBudget("analytics.totalUsers", "aggregate", () => prisma.user.count()),
+      withinBudget("analytics.totalPosts", "aggregate", () => prisma.post.count({ where: { status: "PUBLISHED" } })),
+      withinBudget("analytics.totalComments", "aggregate", () => prisma.comment.count()),
+      withinBudget("analytics.totalViews", "aggregate", () =>
         prisma.post.aggregate({ _sum: { viewCount: true }, where: { status: "PUBLISHED" } })
       ),
-      withinBudget("analytics.pendingModeration", "point", () =>
+      withinBudget("analytics.pendingModeration", "aggregate", () =>
         prisma.post.count({ where: { moderationStatus: "PENDING" } })
       ),
-      withinBudget("analytics.usersThisWeek", "point", () => prisma.user.count({ where: { createdAt: { gte: weekAgo } } })),
-      withinBudget("analytics.postsThisWeek", "point", () => prisma.post.count({ where: { createdAt: { gte: weekAgo } } })),
+      withinBudget("analytics.usersThisWeek", "aggregate", () => prisma.user.count({ where: { createdAt: { gte: weekAgo } } })),
+      withinBudget("analytics.postsThisWeek", "aggregate", () => prisma.post.count({ where: { createdAt: { gte: weekAgo } } })),
       withinBudget("analytics.activeAuthors", "aggregate", () =>
         prisma.$queryRaw<{ n: bigint }[]>`
           SELECT COUNT(DISTINCT "authorId")::bigint AS n

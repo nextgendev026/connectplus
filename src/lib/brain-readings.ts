@@ -2,11 +2,11 @@ import { prisma } from "@/lib/prisma";
 import { createLogger } from "@/lib/logger";
 import { neuralMind } from "@/lib/neural-mind";
 import { hiveBrain } from "@/lib/hive-brain";
-import { getCronStatus } from "@/lib/cron-schedule";
+import { getSchedulerStatus } from "@/lib/cron-schedule";
 import { getPipelineHealth } from "@/lib/pipeline-health";
 import { openIssues } from "@/lib/brain-issues";
 import { activeCacheBackend } from "@/lib/redis";
-import { getAiConfig } from "@/lib/ai-provider";
+import { getAiConfig, resolveToolCallingTarget } from "@/lib/ai-provider";
 import { convexAvailable, convexHealth } from "@/lib/convex";
 
 /**
@@ -99,12 +99,13 @@ export async function gatherReadings(opts: { live?: boolean } = {}): Promise<Bra
   const [
     stats,
     hive,
-    cron,
+    scheduler,
     pipeline,
     issues,
     feeds,
     snapshot,
     ai,
+    toolTarget,
     drafts,
     tips,
   ] = await Promise.all([
@@ -113,7 +114,7 @@ export async function gatherReadings(opts: { live?: boolean } = {}): Promise<Bra
       return null;
     }),
     hiveBrain.status().catch(() => null),
-    getCronStatus().catch(() => null),
+    getSchedulerStatus().catch(() => null),
     getPipelineHealth().catch(() => null),
     openIssues().catch(() => null),
     prisma.rssFeed
@@ -123,6 +124,10 @@ export async function gatherReadings(opts: { live?: boolean } = {}): Promise<Bra
       .catch(() => null),
     brainOffloadState(),
     getAiConfig().catch(() => null),
+    // What the *agent* would actually run on, which is a different model from the
+    // writing one and is resolved through the same gateway. Reported here so the
+    // console can answer "which model is the runtime using" without guessing.
+    resolveToolCallingTarget().catch(() => null),
     prisma.post.count({ where: { status: "DRAFT" } }).catch(() => null),
     prisma.tip
       .aggregate({ _sum: { amount: true }, _count: { _all: true } })
@@ -195,19 +200,42 @@ export async function gatherReadings(opts: { live?: boolean } = {}): Promise<Bra
     readings.push(unknown("economy", "Economy", "Creator tips", "the tip ledger could not be read"));
   }
 
-  /* Scheduler — the subsystem whose silence is least visible. */
-  if (cron && cron.length > 0) {
-    const stale = cron.filter((j) => j.stale);
-    const failing = cron.filter((j) => j.lastRun && j.ok === false);
+  /*
+   * Scheduler — the subsystem whose silence is least visible.
+   *
+   * The unmeasured case is checked first and deliberately, because the two
+   * readings are indistinguishable row-by-row and opposite in meaning. When no
+   * registered job has ever recorded a run, every job legitimately reads "never",
+   * and reporting that as critical turns a fresh or local instance into an
+   * emergency that does not exist — while a scheduler that genuinely stopped
+   * looks exactly the same. Saying "unmeasured" is the only honest option, and it
+   * is what stops this reading from crying wolf until the operator stops reading
+   * it.
+   */
+  if (scheduler && scheduler.jobs.length > 0 && !scheduler.measured) {
+    readings.push(
+      unknown(
+        "scheduler",
+        "Scheduler",
+        "Scheduled jobs",
+        scheduler.ledger === "unavailable"
+          ? "the heartbeat ledger answered in neither tier, so job staleness cannot be measured"
+          : `no run has been recorded for any of the ${scheduler.jobs.length} registered jobs, so staleness is unmeasured rather than late (ledger: ${scheduler.ledger})`
+      )
+    );
+  } else if (scheduler && scheduler.jobs.length > 0) {
+    const jobs = scheduler.jobs;
+    const stale = jobs.filter((j) => j.stale);
+    const failing = jobs.filter((j) => j.lastRun && j.ok === false);
     const essentialStale = stale.filter((j) => j.essential);
     readings.push(
       stale.length === 0
-        ? ok("scheduler", "Scheduler", "Scheduled jobs", `all ${cron.length} jobs ran on time`)
+        ? ok("scheduler", "Scheduler", "Scheduled jobs", `all ${jobs.length} jobs ran on time`)
         : {
             id: "scheduler",
             area: "Scheduler",
             label: "Scheduled jobs",
-            value: `${stale.length} of ${cron.length} behind: ${stale
+            value: `${stale.length} of ${jobs.length} behind: ${stale
               .slice(0, 4)
               .map((j) => `${j.id} (${ageLabel(j.ageMinutes)})`)
               .join(", ")}`,
@@ -215,7 +243,7 @@ export async function gatherReadings(opts: { live?: boolean } = {}): Promise<Bra
             detail: failing.length > 0 ? `${failing.length} of the last runs reported failure.` : undefined,
           }
     );
-    const feedPoll = cron.find((j) => j.id.includes("rss") || j.id.includes("poll") || j.id.includes("feed"));
+    const feedPoll = jobs.find((j) => j.id.includes("rss") || j.id.includes("poll") || j.id.includes("feed"));
     if (feedPoll) {
       readings.push(
         ok(
@@ -227,7 +255,7 @@ export async function gatherReadings(opts: { live?: boolean } = {}): Promise<Bra
       );
     }
   } else {
-    readings.push(unknown("scheduler", "Scheduler", "Scheduled jobs", "the heartbeat ledger is unreadable"));
+    readings.push(unknown("scheduler", "Scheduler", "Scheduled jobs", "the scheduler's job registry could not be read"));
   }
 
   /* Ingested feeds. */
@@ -261,6 +289,20 @@ export async function gatherReadings(opts: { live?: boolean } = {}): Promise<Bra
   /* Pipelines — the view fold is the one that makes numbers wrong, not slow. */
   if (pipeline) {
     const bad = pipeline.checks.filter((c) => c.state !== "ok");
+    /*
+     * The reading mirrors the severity of the checks underneath it instead of
+     * collapsing everything non-green into `warn`. A pipeline whose state is
+     * `unknown` was not measured, and promoting that to `warn` claims a fault no
+     * probe observed — which then propagates into the collaboration trace and
+     * paints the engine that owns it amber for a reason that does not exist.
+     */
+    const state: ReadingState = bad.some((c) => c.state === "critical")
+      ? "critical"
+      : bad.some((c) => c.state === "warn")
+        ? "warn"
+        : bad.length > 0
+          ? "unknown"
+          : "ok";
     readings.push(
       bad.length === 0
         ? ok("pipelines", "Pipelines", "Background pipelines", `${pipeline.checks.length} checks green`)
@@ -269,7 +311,7 @@ export async function gatherReadings(opts: { live?: boolean } = {}): Promise<Bra
             area: "Pipelines",
             label: "Background pipelines",
             value: bad.map((c) => `${c.label}: ${c.state}`).join("; "),
-            state: bad.some((c) => c.state === "critical") ? "critical" : "warn",
+            state,
             detail: bad.map((c) => c.detail).join(" | ").slice(0, 400),
           }
     );
@@ -334,16 +376,36 @@ export async function gatherReadings(opts: { live?: boolean } = {}): Promise<Bra
     readings.push(unknown("hive", "Mind", "Hive memory", "the memory store could not be read"));
   }
 
+  /*
+   * The model.
+   *
+   * Two different models matter and the reading names both, because "the mind has
+   * no model" was previously the whole message and it hid the more useful fact
+   * that the platform's gateway resolution has two independent answers: the prose
+   * model, and the tool-calling model the agent runtime drives. A deployment can
+   * easily have one and not the other, and the operator needs to know which.
+   */
   readings.push(
     ai && ai.provider !== "builtin"
-      ? ok("model", "Mind", "Writing model", `${ai.provider} configured`, ai.model ? `Model: ${ai.model}` : undefined)
+      ? ok(
+          "model",
+          "Mind",
+          "Models",
+          `${ai.provider} configured`,
+          [
+            ai.model ? `writing: ${ai.model}` : "writing: gateway default",
+            toolTarget ? `tools: ${toolTarget.model}` : "tools: unavailable",
+          ].join(" · ")
+        )
       : {
           id: "model",
           area: "Mind",
-          label: "Writing model",
-          value: "none configured",
+          label: "Models",
+          value: "no gateway key configured",
           state: "warn",
-          detail: "The deterministic engines answer instead. Configure a provider in Admin → AI for model answers.",
+          detail:
+            "Nothing is in `aiProvider`, `openrouterApiKey` or `opencodeApiKey`, so the deterministic engines answer and the agent's tool loop stays off. " +
+            "Add a free OpenRouter or OpenCode key under Admin, then AI (or set OPENROUTER_API_KEY) to turn both on. Until then every model-backed feature reports degraded, which is honest but not a fault.",
         }
   );
 

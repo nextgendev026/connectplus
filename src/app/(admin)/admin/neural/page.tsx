@@ -33,6 +33,7 @@ import { OperationsChat, type ChatSeed } from "@/components/admin/OperationsChat
 import NeuralChat from "@/components/admin/NeuralChat";
 import NeuralInsights from "@/components/admin/NeuralInsights";
 import NeuralKnowledgeBase from "@/components/admin/NeuralKnowledgeBase";
+import { AgentPipelinePanel } from "@/components/admin/AgentPipelinePanel";
 import HivePanel from "@/components/admin/HivePanel";
 import type { AdminDomain, CalibrationMove, MindCollaboration } from "@/lib/admin-intelligence";
 import type { AwarenessDomain } from "@/lib/brain-awareness";
@@ -68,7 +69,7 @@ import type { ProposalDTO } from "@/lib/brain-approvals";
  * the collaboration tab for the boundary written out.
  */
 
-type Tab = "assistant" | "collaboration" | "awareness" | "next" | "approvals" | "knowledge";
+type Tab = "assistant" | "pipeline" | "collaboration" | "awareness" | "next" | "approvals" | "knowledge";
 
 interface Overview {
   readings: { taken: number; missing: number; state: string; items: { label: string; value: string; state: string }[] } | null;
@@ -97,10 +98,13 @@ const AWARENESS_TONE: Record<string, "positive" | "warning" | "danger" | "info" 
   unknown: "neutral",
 };
 
-const STATE_TONE: Record<string, "positive" | "warning" | "danger" | "neutral"> = {
+const STATE_TONE: Record<string, "positive" | "warning" | "danger" | "info" | "neutral"> = {
   ok: "positive",
   warn: "warning",
   critical: "danger",
+  // Unmeasured, not broken. Rendering it as a warning is what made an engine
+  // nobody had ever observed look like an engine that needed repairing.
+  unproven: "info",
   unknown: "neutral",
 };
 
@@ -194,9 +198,13 @@ export default function OperationsMindPage() {
         />
         <AdminStat
           icon={Layers}
-          label="Engines not green"
+          label="Engines degraded"
           value={collab?.degraded ?? 0}
-          sub={collab ? `${collab.subsystems.length} subsystems in the combined mind` : "reading…"}
+          sub={
+            collab
+              ? `${collab.subsystems.length} subsystems, ${collab.unproven} unmeasured`
+              : "reading…"
+          }
           tone={(collab?.degraded ?? 0) > 0 ? "warning" : "positive"}
         />
       </AdminStatGrid>
@@ -206,6 +214,7 @@ export default function OperationsMindPage() {
         onChange={setTab}
         options={[
           { value: "assistant", label: "Assistant" },
+          { value: "pipeline", label: "Pipeline" },
           { value: "collaboration", label: "Collaboration" },
           { value: "awareness", label: "Awareness" },
           { value: "next", label: `Do next${moves.length ? ` (${moves.length})` : ""}` },
@@ -213,6 +222,14 @@ export default function OperationsMindPage() {
           { value: "knowledge", label: "Knowledge" },
         ]}
       />
+
+      {/*
+       * The pipeline tab sits next to the assistant rather than under it, because the
+       * two answer different questions: the assistant says what the platform is doing,
+       * and this says what the intelligence is *allowed* to do and what it has been
+       * tuned to. An operator debugging a refusal needs the second one first.
+       */}
+      {tab === "pipeline" ? <AgentPipelinePanel /> : null}
 
       {tab === "assistant" ? (
         <AdminPanel

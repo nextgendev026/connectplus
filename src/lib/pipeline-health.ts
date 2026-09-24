@@ -1,6 +1,6 @@
 import { prisma } from "./prisma";
 import { createLogger } from "./logger";
-import { CRON_JOBS, getCronStatus } from "./cron-schedule";
+import { CRON_JOBS, getSchedulerStatus } from "./cron-schedule";
 import {
   heartbeatAgeMinutes,
   heartbeatLedger,
@@ -456,15 +456,36 @@ export function classifyScheduler(input: SchedulerSignals): PipelineCheck {
     });
   }
 
-  // A ledger that cannot be read is not an absence of heartbeats. Saying so is
-  // the difference between "the jobs are dead" and "we cannot see the jobs".
-  if (ledger === "unavailable" && everRan.length === 0) {
+  /*
+   * Nothing in the registry has ever recorded a run here.
+   *
+   * That is deliberately checked before any staleness verdict, because it is the
+   * one situation where every row looks equally alarming and none of them is a
+   * measurement. Seventeen jobs reading "never ran" is not seventeen failures:
+   * a registry with no observations at all is the ordinary state of a fresh
+   * instance, a development workstation, or a deployment whose scheduler has not
+   * started, whereas seventeen simultaneous collapses is not a state a running
+   * system reaches. The console used to report the second for the first, which
+   * sent operators to check cron delivery on machines that had simply never been
+   * scheduled. An absence of any observation is not evidence of failure, so it
+   * reports as unmeasured and names the difference.
+   *
+   * The two sub-cases stay separate because their instructions differ: a ledger
+   * nobody can read is an infrastructure problem, a readable ledger with no
+   * record in it is a scheduler that has not been watched yet.
+   */
+  if (everRan.length === 0) {
     return {
       ...base,
       state: "unknown",
-      headline: "Heartbeat ledger unavailable",
+      headline:
+        ledger === "unavailable"
+          ? "Heartbeat ledger unavailable"
+          : `No run recorded by any of the ${plural(jobs.length, "job")}`,
       detail:
-        "Neither Redis nor Postgres returned a heartbeat, so job staleness cannot be measured. This is blind, not quiet — do not read it as healthy.",
+        ledger === "unavailable"
+          ? "Neither Redis nor Postgres answered, so job staleness cannot be measured. This is blind, not quiet — do not read it as healthy."
+          : `The ledger is readable (${ledger === "redis" ? "Redis" : "Postgres"}) and holds no heartbeat for any registered job, so staleness is unmeasured rather than late. On a new or local instance this is expected; if this is production, check that Inngest and the edge cron are actually being triggered, because a scheduler that has never run looks exactly like one that is broken.`,
       lastSuccessAt: null,
       ageMinutes: null,
       evidence,
@@ -559,9 +580,9 @@ export async function getPipelineHealth(now = Date.now()): Promise<PipelineHealt
   const foldExpectedMinutes = expectedMinutesFor("hive-sweep", 1440);
   const rssExpectedMinutes = expectedMinutesFor("rss-poll", 720);
 
-  const [configured, jobs, lastFold, feeds, lastImport] = await Promise.all([
+  const [configured, scheduler, lastFold, feeds, lastImport] = await Promise.all([
     convexAvailable().catch(() => false),
-    getCronStatus().catch((error) => {
+    getSchedulerStatus().catch((error) => {
       log.warn("cron status unavailable", { error: String(error) });
       return null;
     }),
@@ -598,6 +619,7 @@ export async function getPipelineHealth(now = Date.now()): Promise<PipelineHealt
   }
   const convex = convexHealth();
 
+  const jobs = scheduler?.jobs ?? null;
   const jobRows: SchedulerJobSignal[] = (jobs ?? []).map((job) => ({
     id: job.id,
     name: job.name,
@@ -646,7 +668,11 @@ export async function getPipelineHealth(now = Date.now()): Promise<PipelineHealt
     ),
     classifyScheduler({
       jobs: jobRows,
-      ledger: heartbeatLedger(),
+      // The tier the *read* used, which the scheduler status just captured. The
+      // module-level `heartbeatLedger()` is the same value here by construction,
+      // but reading it from the status keeps the classification tied to the
+      // exact snapshot the job list came from.
+      ledger: scheduler?.ledger ?? heartbeatLedger(),
     }),
   ];
 
@@ -654,7 +680,7 @@ export async function getPipelineHealth(now = Date.now()): Promise<PipelineHealt
     generatedAt: new Date(now).toISOString(),
     overall: overallPipelineState(checks),
     checks,
-    scheduler: { ledger: heartbeatLedger(), jobs: jobRows },
+    scheduler: { ledger: scheduler?.ledger ?? heartbeatLedger(), jobs: jobRows },
     viewSync: {
       configured,
       urlSource: convexUrlSource(),

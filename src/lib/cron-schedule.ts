@@ -2,8 +2,10 @@ import { createLogger } from "./logger";
 import {
   isStale,
   heartbeatAgeMinutes,
+  heartbeatLedger,
   readHeartbeats,
   recordHeartbeat,
+  type HeartbeatLedger,
   type JobHeartbeat,
 } from "./job-heartbeat";
 import {
@@ -300,9 +302,38 @@ export interface CronJobStatus extends CronJobDef {
 const log = createLogger("cron-schedule");
 
 /** Schedule + last-run + staleness for every job, for the admin console. */
-export async function getCronStatus(): Promise<CronJobStatus[]> {
+/**
+ * The scheduler's state, with the one thing a per-job list cannot express:
+ * whether *any* of it has ever been observed here.
+ *
+ * This exists because the console read `getCronStatus()` and reported "17 of 17
+ * jobs behind" on an instance whose heartbeat ledger had never recorded a single
+ * run. Every individual row said "never ran", which is true, and the sum of them
+ * was a lie: seventeen independent schedulers failing at once is not a state a
+ * running system reaches, while a registry that nothing has been recorded for is
+ * the ordinary state of a fresh instance, a development workstation, or a
+ * deployment whose scheduler has not started yet. Those two situations produce
+ * identical rows and completely different instructions, so `measured` — not the
+ * job list — is what callers must branch on before claiming anything is late.
+ */
+export interface SchedulerStatus {
+  generatedAt: string;
+  jobs: CronJobStatus[];
+  /** Registered jobs that have a heartbeat, i.e. that have provably run here. */
+  observed: number;
+  /** Which tier served the heartbeats, which is what makes them trustworthy. */
+  ledger: HeartbeatLedger;
+  /**
+   * Whether staleness is a measurement. False when nothing at all has been
+   * recorded, in which case "never ran" is the absence of evidence rather than
+   * evidence of failure.
+   */
+  measured: boolean;
+}
+
+export async function getSchedulerStatus(): Promise<SchedulerStatus> {
   const beats = await readHeartbeats(CRON_JOBS.map((j) => j.id));
-  return CRON_JOBS.map((job) => {
+  const jobs = CRON_JOBS.map((job) => {
     const hb: JobHeartbeat | null = beats[job.id] ?? null;
     return {
       ...job,
@@ -312,6 +343,26 @@ export async function getCronStatus(): Promise<CronJobStatus[]> {
       ok: hb?.ok ?? false,
     };
   });
+
+  const observed = jobs.filter((j) => j.ageMinutes !== null).length;
+  return {
+    generatedAt: new Date().toISOString(),
+    jobs,
+    observed,
+    ledger: heartbeatLedger(),
+    measured: observed > 0,
+  };
+}
+
+/**
+ * The per-job last-run table.
+ *
+ * Kept as-is because the safety net and the integrations registry genuinely
+ * want the list; anything deciding whether to *alarm* belongs on
+ * `getSchedulerStatus()` instead, where `measured` is available.
+ */
+export async function getCronStatus(): Promise<CronJobStatus[]> {
+  return (await getSchedulerStatus()).jobs;
 }
 
 export interface SafetyNetResult {

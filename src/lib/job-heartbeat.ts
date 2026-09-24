@@ -47,6 +47,13 @@ const DB_KEY_PREFIX = "cron-heartbeat:";
  * Where the last heartbeat was actually read from. The console needs this: "12
  * jobs have never run" is a very different claim from "the ledger is
  * unavailable", and only one of them is the operator's problem.
+ *
+ * The distinction is about the *read path*, not about whether a record was
+ * found. A tier that answered — even with "no such key" — is readable, and an
+ * empty-but-readable ledger is a genuine measurement of silence. A tier that
+ * threw told us nothing at all. Collapsing both into "unavailable" is how the
+ * console came to report seventeen jobs as overdue on the strength of a ledger
+ * that had never been written to, so the two cases are kept apart here.
  */
 export type HeartbeatLedger = "redis" | "database" | "unavailable";
 
@@ -65,17 +72,37 @@ export function heartbeatLedgerHealthy(): boolean {
   return ledgerTier !== "unavailable";
 }
 
-async function dbRead(jobId: string): Promise<JobHeartbeat | null> {
+/**
+ * Test seam — resets the tier so a suite is not affected by earlier reads.
+ *
+ * The tier is upgraded as reads succeed and never downgraded, deliberately: a
+ * single transient failure should not flip a working ledger to "blind" and send
+ * an operator looking for an outage that is not there. That makes the value
+ * process-global, which is correct at runtime and needs a reset in tests.
+ */
+export function resetHeartbeatLedger(): void {
+  ledgerTier = "unavailable";
+}
+
+/**
+ * The durable tier's answer, with the *absence* of a record kept separate from
+ * the failure to ask. A missing row and a rejected query both used to return
+ * `null`, which is why a working-but-never-written ledger was indistinguishable
+ * from a broken one.
+ */
+type DbRead = { state: "found"; beat: JobHeartbeat } | { state: "missing" } | { state: "error" };
+
+async function dbRead(jobId: string): Promise<DbRead> {
   try {
     const row = await prisma.platformSetting.findUnique({
       where: { key: `${DB_KEY_PREFIX}${jobId}` },
       select: { value: true },
     });
-    if (!row?.value) return null;
+    if (!row?.value) return { state: "missing" };
     const parsed = JSON.parse(row.value) as JobHeartbeat;
-    return parsed?.at ? parsed : null;
+    return parsed?.at ? { state: "found", beat: parsed } : { state: "missing" };
   } catch {
-    return null;
+    return { state: "error" };
   }
 }
 
@@ -135,7 +162,17 @@ export async function recordHeartbeat(
 
 export async function readHeartbeat(jobId: string): Promise<JobHeartbeat | null> {
   if (redisAvailable()) {
-    const raw = await redisGetRaw(`${KEY_PREFIX}${jobId}`).catch(() => null);
+    let raw: string | null = null;
+    let answered = false;
+    try {
+      raw = await redisGetRaw(`${KEY_PREFIX}${jobId}`);
+      answered = true;
+    } catch {
+      // A configured Redis that refuses the command is a blind fast tier, not an
+      // empty one. Fall through and let the durable tier speak.
+      answered = false;
+    }
+
     if (raw) {
       try {
         const parsed = JSON.parse(raw) as JobHeartbeat;
@@ -144,14 +181,33 @@ export async function readHeartbeat(jobId: string): Promise<JobHeartbeat | null>
           return parsed;
         }
       } catch {
-        // fall through to the durable tier
+        // Malformed payload: treat the durable tier as the source of truth.
       }
+    } else if (answered && ledgerTier === "unavailable") {
+      /*
+       * The fast tier answered, and holds no record for this job. That is an
+       * authoritative *absence*, and it means the ledger is readable — so record
+       * which tier is speaking before the durable tier gets a turn. Without
+       * this, a healthy Redis with nothing in it left the tier at "unavailable",
+       * and every caller that treats "unavailable" as blindness reported a
+       * ledger outage instead of a scheduler that has not run.
+       */
+      ledgerTier = "redis";
     }
   }
 
   const fromDb = await dbRead(jobId);
-  if (fromDb) ledgerTier = "database";
-  return fromDb;
+  if (fromDb.state === "found") {
+    ledgerTier = "database";
+    return fromDb.beat;
+  }
+  if (fromDb.state === "missing" && ledgerTier === "unavailable") {
+    // The durable tier was asked and answered: there is no such row. Same
+    // reasoning as above — a missing record is a readable ledger reporting
+    // silence, which is the one case where "this job has never run" is a fact.
+    ledgerTier = "database";
+  }
+  return null;
 }
 
 export async function readHeartbeats(

@@ -282,11 +282,30 @@ async function pipelineDomain(): Promise<AwarenessDomain> {
     facts.push({ label: check.label, value: check.state });
   }
 
+  /*
+   * Mirror the checks rather than upgrade them.
+   *
+   * Every non-green check used to become `warn`, which turned a pipeline nobody
+   * had been able to measure into a *degraded* one — an asserted fault with no
+   * observation behind it. `unknown` means the measurement could not be taken,
+   * and the honest label for that is `unproven`, which the console already
+   * renders differently from a warning (see `AWARENESS_TONE`).
+   */
+  const critical = bad.filter((c) => c.state === "critical");
+  const warned = bad.filter((c) => c.state === "warn");
+  const state = critical.length > 0 ? "critical" : warned.length > 0 ? "warn" : bad.length > 0 ? "unproven" : "ok";
+  const plural = `${bad.length} pipeline${bad.length === 1 ? "" : "s"}`;
+
   return {
     id: "pipelines",
     label: "Pipelines",
-    headline: bad.length === 0 ? "All pipelines green" : `${bad.length} pipeline${bad.length === 1 ? "" : "s"} degraded`,
-    state: bad.some((c) => c.state === "critical") ? "critical" : bad.length > 0 ? "warn" : "ok",
+    headline:
+      state === "ok"
+        ? "All pipelines green"
+        : state === "unproven"
+          ? `${plural} not yet measured`
+          : `${plural} degraded`,
+    state,
     facts,
     notes: bad.slice(0, 3).map((c) => `${c.label}: ${c.detail}`),
   };

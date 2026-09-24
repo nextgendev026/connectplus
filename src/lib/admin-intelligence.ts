@@ -273,13 +273,25 @@ export function surfaceAllows(surfaceId: BrainSurface["id"], tool: string): bool
 
 /* ── The mind's collaboration, as a live diagram ─────────────────────────── */
 
+/**
+ * A node's state.
+ *
+ * `unproven` is the one that earns its place. It means nothing here was
+ * measured, so the node can say neither "fine" nor "faulty" — and it is kept
+ * apart from `degraded` for the reason the prompt in this module already gives
+ * verbatim: an unproven model is not a failing one. Folding the two together is
+ * what made a board with two unmeasured subsystems on it read as a board with
+ * two broken ones.
+ */
+export type SubsystemState = "ok" | "warn" | "critical" | "unproven";
+
 export interface SubsystemTrace {
   id: string;
   mind: BrainMind;
   name: string;
   role: string;
   capabilities: string[];
-  state: "ok" | "warn" | "critical" | "unknown";
+  state: SubsystemState;
   /** The live line the console shows under the node. */
   evidence: string;
 }
@@ -296,8 +308,15 @@ export interface MindCollaboration {
   subsystems: SubsystemTrace[];
   minds: { mind: BrainMind; label: string; subsystems: number; online: boolean }[];
   links: CollaborationLink[];
-  /** How many subsystems are reporting a problem. */
+  /** How many subsystems have a *measured* problem. */
   degraded: number;
+  /**
+   * How many could not be measured at all. Reported separately because these are
+   * not faults and must not be counted as any: an engine nobody has observed is
+   * a gap in observation, and the fix for it is to go and look, not to go and
+   * repair the engine.
+   */
+  unproven: number;
 }
 
 /**
@@ -372,16 +391,27 @@ export function collaboration(
     const probes = (SUBSYSTEM_READING[sub.id] ?? []).map((id) => byId.get(id)).filter(Boolean) as BrainReading[];
 
     /* The starting state is the domain's calibration, not "ok": a subsystem
-     * whose domain is unproven or degraded should not render a green node. */
+     * whose domain is unproven or degraded should not render a green node. Its
+     * own state is carried through unchanged, so an unmeasured domain yields an
+     * unmeasured node rather than an amber one. */
     const awareId = SUBSYSTEM_AWARENESS[sub.id];
     const awareState = awareId ? aware?.domains.find((d) => d.id === awareId)?.state : undefined;
-    const start: "ok" | "warn" | "critical" | "unknown" =
-      awareState === "critical" ? "critical" : awareState === "warn" || awareState === "unproven" ? "warn" : "ok";
+    const start: SubsystemState =
+      awareState === "critical"
+        ? "critical"
+        : awareState === "warn"
+          ? "warn"
+          : awareState === "unproven"
+            ? "unproven"
+            : "ok";
 
-    const worst = probes.reduce<"ok" | "warn" | "critical" | "unknown">((acc, p) => {
+    const worst = probes.reduce<SubsystemState>((acc, p) => {
       if (p.state === "critical") return "critical";
       if (p.state === "warn" && acc !== "critical") return "warn";
-      if (p.state === "unknown" && acc === "ok") return "unknown";
+      // A reading nobody could take is unproven, never a warning: it is an
+      // absence of observation and this platform's readings say so in as many
+      // words when they cannot be taken.
+      if (p.state === "unknown" && (acc === "ok" || acc === "unproven")) return "unproven";
       return acc;
     }, start);
 
@@ -398,7 +428,7 @@ export function collaboration(
       name: sub.name,
       role: sub.role,
       capabilities: [...sub.capabilities],
-      state: probes.length === 0 ? (readings ? "ok" : "unknown") : worst,
+      state: probes.length === 0 ? (readings ? "ok" : "unproven") : worst,
       evidence,
     };
   });
@@ -415,7 +445,8 @@ export function collaboration(
     subsystems,
     minds,
     links: [...COLLABORATION_LINKS],
-    degraded: subsystems.filter((s) => s.state === "warn" || s.state === "critical" || s.state === "unknown").length,
+    degraded: subsystems.filter((s) => s.state === "warn" || s.state === "critical").length,
+    unproven: subsystems.filter((s) => s.state === "unproven").length,
   };
 }
 
@@ -811,7 +842,7 @@ async function groundedAnswer(
   const user = [
     ctx.readings?.text ?? "No live readings could be taken — say so and answer from what follows.",
     ctx.awareness ? `\nAWARENESS (how well calibrated the mind is per domain):\n${formatAwarenessText(ctx.awareness)}` : "",
-    `\nTHE COMBINED MIND (${ctx.collab.subsystems.length} subsystems, ${ctx.collab.degraded} not green):\n${ctx.collab.subsystems
+    `\nTHE COMBINED MIND (${ctx.collab.subsystems.length} subsystems, ${ctx.collab.degraded} degraded, ${ctx.collab.unproven} unmeasured):\n${ctx.collab.subsystems
       .map((s) => `${s.name} [${s.mind}/${s.state}]: ${s.evidence}`)
       .join("\n")}`,
     ctx.issues.length
@@ -894,7 +925,13 @@ export function briefAnswer(ctx: {
   }
   if (ctx.collab.degraded > 0 && ctx.domain.id === "operations") {
     attention.push(
-      `${ctx.collab.degraded} of ${ctx.collab.subsystems.length} engines in the combined mind are not reporting clean.`
+      `${ctx.collab.degraded} of ${ctx.collab.subsystems.length} engines in the combined mind is reporting a measured problem.`
+    );
+  } else if (ctx.collab.unproven > 0 && ctx.domain.id === "operations") {
+    // Worth saying, and worth saying differently: something here was never
+    // observed, so the honest instruction is to go and look, not to go and fix.
+    attention.push(
+      `${ctx.collab.unproven} of ${ctx.collab.subsystems.length} engines in the combined mind could not be measured — that is a gap in observation, not a fault.`
     );
   }
   if (attention.length > 0) {

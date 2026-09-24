@@ -27,11 +27,14 @@ vi.mock("@/lib/redis", () => ({
 
 /** Minimal stand-in for the PlatformSetting row the durable tier uses. */
 const db = new Map<string, string>();
+/** When true, the durable tier is *broken* rather than merely empty. */
+const dbState = { fail: false };
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     platformSetting: {
       findUnique: async ({ where }: { where: { key: string } }) => {
+        if (dbState.fail) throw new Error("connection terminated unexpectedly");
         const value = db.get(where.key);
         return value === undefined ? null : { value };
       },
@@ -61,6 +64,7 @@ import {
   isStale,
   readHeartbeat,
   recordHeartbeat,
+  resetHeartbeatLedger,
 } from "../../src/lib/job-heartbeat";
 import { runThrottled } from "../../src/lib/throttled-job";
 
@@ -69,6 +73,8 @@ beforeEach(() => {
   redisState.available = true;
   redisState.raw = null;
   redisState.failWrite = false;
+  dbState.fail = false;
+  resetHeartbeatLedger();
 });
 
 describe("heartbeat ledger", () => {
@@ -106,6 +112,24 @@ describe("heartbeat ledger", () => {
   it("reports a job as stale when it has never run at all", () => {
     expect(isStale(null, 5)).toBe(true);
     expect(heartbeatAgeMinutes(null)).toBeNull();
+  });
+
+  it("treats an empty ledger as readable rather than blind", async () => {
+    /*
+     * The distinction the scheduler alarm turns on. Redis answered and holds no
+     * key, and Postgres answered and holds no row: both are authoritative
+     * silences. Reporting the tier as "unavailable" here is what made the console
+     * announce a ledger outage for a scheduler that had simply never run.
+     */
+    expect(await readHeartbeat("publish-scheduled")).toBeNull();
+    expect(heartbeatLedger()).not.toBe("unavailable");
+  });
+
+  it("reports unreadable only when no tier can answer", async () => {
+    redisState.available = false;
+    dbState.fail = true;
+    expect(await readHeartbeat("publish-scheduled")).toBeNull();
+    expect(heartbeatLedger()).toBe("unavailable");
   });
 
   it("keeps a fresh heartbeat out of the stale bucket", async () => {
