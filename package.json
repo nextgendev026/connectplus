@@ -38,7 +38,7 @@
     "@prisma/client": "^6.6.0",
     "@sentry/nextjs": "^10.75.0",
     "ai": "^7.0.113",
-    "autoprefixer": "^10.5.5",
+    "autoprefixer": "^10.6.1",
     "bcryptjs": "^2.4.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
