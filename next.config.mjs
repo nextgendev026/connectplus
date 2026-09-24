@@ -2,6 +2,7 @@
 // the build warns about it on every run. It stops working in Sentry v11, so this
 // is the kind of warning that becomes a broken build on a dependency bump rather
 // than at the moment someone changes the code.
+import { cpus as osCpus } from "node:os";
 import { withSentryConfig } from "@sentry/nextjs/config";
 
 /** @type {import('next').NextConfig} */
@@ -200,8 +201,21 @@ const nextConfig = {
      * serial, few enough that peak concurrent connections stay inside a pool
      * sized for a small deployment. Builds get slower; builds that finish are
      * worth more than builds that are quick.
+     *
+     * `4` is a *ceiling*, not a fixed count — which the literal number was not.
+     * Vercel's builder is two cores, so an explicit `cpus: 4` forced four workers
+     * onto two cores: more context switching rather than more throughput, and
+     * twice the pool demand the safety argument above is trying to limit. On that
+     * machine every build spent upwards of fourteen minutes in `next build`,
+     * which is what backs the deploy queue up — a superseded build still runs to
+     * completion, so one slow build delays everything behind it.
+     *
+     * Taking the smaller of the two keeps the documented cap intact (an eight-core
+     * developer machine still gets four) and stops the builder from being asked
+     * for parallelism it does not have. On a two-core builder that is 2 workers ×
+     * 5 pooled connections instead of 20.
      */
-    cpus: 4,
+    cpus: Math.min(4, osCpus().length || 1),
   },
   /**
    * The auth URLs people actually type.
