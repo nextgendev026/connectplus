@@ -288,6 +288,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </div>
       ) : null}
 
+      {/*
+       * One widget, not two.
+       *
+       * The agent's tools are driven through this same console and this same
+       * endpoint — an operator gets one conversation that can read, reason, predict
+       * and act, rather than a second floating panel to keep track of. The agent's
+       * tool events arrive on the same NDJSON stream as everything else.
+       */}
       <BrainChatWidget />
     </SessionProvider>
   );

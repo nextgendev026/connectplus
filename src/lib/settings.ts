@@ -100,6 +100,40 @@ export const SETTINGS_CATALOG: SettingDef[] = [
       "What the brain may do about a fault it finds in its own diagnosis. `off` reports nothing and does nothing; `observe` (default) records exactly what it would have done; `enforce` lets it re-fire a stalled job, re-warm a cold edge snapshot and retry the view fold. Only repairs listed in lib/brain-repair can run, at most three per night, and every one is logged with its outcome.",
     type: "text",
   },
+  // ── Sports prediction calibration ────────────────────────────────────────
+  //
+  // Written by the agent's `calibratePredictionWeights` tool, and read by
+  // `simulateMatchFixture`. They live in the catalogue rather than a config file
+  // because `updateSettings` ignores a key it does not know (`if (!def) continue`),
+  // so an unregistered key would make calibration silently do nothing — the worst
+  // possible failure for a loop whose whole job is to correct itself.
+  {
+    key: "sportsRecencyWeight",
+    defaultValue: "1",
+    group: "general",
+    label: "Prediction recency weight",
+    hint:
+      "How strongly recent form is weighted against longer history, 0.5-1.5. Above 1 the model leans on the last few matches; below 1 it smooths toward the season. Written by the agent's calibration tool from settled results, and bounded so a bad calibration cannot make the dial absurd.",
+    type: "number",
+  },
+  {
+    key: "sportsGoalExpectationFactor",
+    defaultValue: "1",
+    group: "general",
+    label: "Goal expectation factor",
+    hint:
+      "Multiplier on modelled expected goals, 0.7-1.3. It exists because a league can drift higher- or lower-scoring across a season, and a model fitted on last season's rates will be systematically short or long. Written by the agent's calibration tool.",
+    type: "number",
+  },
+  {
+    key: "agentModel",
+    defaultValue: "nvidia/nemotron-3-super-120b-a12b:free",
+    group: "api",
+    label: "Agent model",
+    hint:
+      "The model the autonomous agent uses for tool calling, on whichever gateway `aiProvider` selects. This is deliberately separate from the writing model: prose models are picked for tone and cost, and a small one will accept a tool schema then answer in prose without calling anything. Must be a free-tier id — a paid one is replaced with the free default rather than billed.",
+    type: "text",
+  },
   {
     key: "siteTagline",
     defaultValue: "Voices of the Silicon Savanna",

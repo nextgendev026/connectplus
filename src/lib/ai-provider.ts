@@ -305,6 +305,100 @@ export async function getAiConfig(): Promise<AiConfig> {
   return { provider: "builtin", apiKey: "", model: "" };
 }
 
+/**
+ * Models suited to *calling tools*, which is a different job from writing prose.
+ *
+ * The configured writing model is not reused here on purpose. It is chosen for
+ * tone and cost — the roster's own default is a 2.6B model — and a model that
+ * small will accept a tool schema and then answer in prose without ever calling
+ * one, which looks like the agent being lazy rather than the model being unable.
+ * Tool use needs a model that reliably emits structured calls.
+ */
+const AGENT_DEFAULT_MODEL: Record<GatewayName, string> = {
+  // Verified by making a real tool-calling request, not by reading the roster: it
+  // answers in ~2.8s with a well-formed call, where the writing default
+  // (`z-ai/glm-5.2:free`) has no endpoint that supports tools at all.
+  openrouter: "nvidia/nemotron-3-super-120b-a12b:free",
+  opencode: "deepseek-v4-flash-free",
+};
+
+/**
+ * Free models that cannot call tools.
+ *
+ * Taken from the gateway's own `supported_parameters` for every `:free` entry,
+ * where these two are the only ones missing `tools`. They are listed rather than
+ * inferred because the failure they cause is the most confusing kind: the model
+ * accepts the tool schema, replies fluently, and never calls anything, so it reads
+ * as the agent being lazy instead of the model being incapable.
+ *
+ * A model absent from this set is permitted, so a new gateway model works without
+ * a code change — only the known-bad ones are redirected.
+ */
+const TOOL_INCAPABLE_FREE_MODELS = new Set<string>([
+  "z-ai/glm-5.2:free",
+  "inclusionai/ling-3.0-flash-vl:free",
+]);
+
+const FREE_PREDICATE: Record<GatewayName, (id: string) => boolean> = {
+  openrouter: isFreeOpenRouterModel,
+  opencode: isFreeOpenCodeModel,
+};
+
+/** An OpenAI-compatible endpoint the AI SDK can be pointed at. */
+export interface OpenAiCompatibleTarget {
+  provider: GatewayName;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  extraHeaders?: Record<string, string>;
+}
+
+/**
+ * Resolve the provider, endpoint and model for the autonomous agent.
+ *
+ * This is what makes the agent part of the platform's AI pipeline rather than a
+ * second, parallel one. Before this, the agent read `OPENAI_API_KEY` directly and
+ * a deployment with OpenRouter or OpenCode configured — which is this project's
+ * actual configuration — reported "no model configured" while an entire working
+ * gateway sat unused behind the settings layer.
+ *
+ * Returns `null` when the resolved provider is the deterministic `builtin` brain,
+ * because a tool loop has nothing to drive without a model. Callers must treat
+ * that as "tools unavailable", never as "no such feature".
+ */
+export async function resolveToolCallingTarget(): Promise<OpenAiCompatibleTarget | null> {
+  const cfg = await getAiConfig();
+  if (cfg.provider === "builtin" || !cfg.apiKey) return null;
+
+  const gateway = OPENAI_COMPATIBLE[cfg.provider as GatewayName];
+  if (!gateway) return null;
+
+  const provider = cfg.provider as GatewayName;
+  const settings = await getSettings().catch(() => ({}) as Record<string, string>);
+
+  // The admin's explicit choice wins when it is free, and the free-only rule is
+  // enforced here for the same reason as everywhere else: a paid id fails on every
+  // single call, which reads as an outage rather than a misconfiguration.
+  const configured = (settings.agentModel || "").trim();
+
+  // Free, and able to call a tool. Two independent refusals, because they have
+  // different causes and the operator needs to know which one bit: a paid id is a
+  // billing problem, an incapable id is a capability problem.
+  const usable = configured && FREE_PREDICATE[provider](configured) && !TOOL_INCAPABLE_FREE_MODELS.has(configured);
+
+  if (configured && FREE_PREDICATE[provider](configured) && TOOL_INCAPABLE_FREE_MODELS.has(configured)) {
+    console.warn(
+      `[ai-provider] agent model "${configured}" has no endpoint that supports tool use — using "${AGENT_DEFAULT_MODEL[provider]}" instead.`
+    );
+  }
+
+  const model = usable
+    ? configured
+    : freeOrFallback(configured, FREE_PREDICATE[provider], AGENT_DEFAULT_MODEL[provider], `${provider} agent`);
+
+  return { provider, baseUrl: gateway.baseUrl, apiKey: cfg.apiKey, model, extraHeaders: gateway.extraHeaders };
+}
+
 export function isContentIntent(intent: Intent): boolean {
   return CONTENT_INTENTS.includes(intent);
 }
