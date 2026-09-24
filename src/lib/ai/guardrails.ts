@@ -116,7 +116,14 @@ export function resolveRepoPath(candidate: string, mode: "read" | "write"): stri
   }
 
   const root = process.cwd();
-  const absolute = path.resolve(root, candidate);
+  // `turbopackIgnore` is for the bundler, not the runtime: a dynamic
+  // `path.resolve` here makes Turbopack trace the whole project into every
+  // serverless bundle that imports this module (the build warns about it
+  // explicitly, because it slows deployments). The path is resolved from
+  // caller input at request time by design — containment is the job of the
+  // checks below, not of the bundler. Same pattern as `resolvedPath` in
+  // lib/ai/tools.ts.
+  const absolute = path.resolve(/* turbopackIgnore: true */ root, candidate);
   const relative = path.relative(root, absolute);
 
   // Escaping the repository is always a refusal, including via `..` and via a

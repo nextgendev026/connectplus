@@ -95,37 +95,32 @@ const getPost = cache((slug: string) =>
 );
 
 /**
- * The newest stories, prerendered at build.
+ * A cached route that prerenders nothing.
  *
- * This is not decoration: in the App Router a dynamic segment that is not
- * registered here is rendered on demand and, unlike a page, is **not** written
+ * This is not decoration: in the App Router a dynamic segment without this
+ * export is rendered on demand and, unlike a page, is **not** written
  * to the full route cache — so `revalidate` above would have been inert and
- * every article view would still have cost a render. Declaring the params makes
- * the route a cached one, where these twenty are built ahead of time and every
- * other slug is rendered on first request and then cached for `revalidate`.
+ * every article view would still have cost a render. Declaring the export makes
+ * the route a cached one: whatever slugs the list declares are built ahead of
+ * time, and every other slug is rendered on first request, then cached for
+ * `revalidate`.
  *
- * Kept short on purpose. These are the stories a share link lands on within
- * minutes of publishing; the long tail pays its own way by being rendered on
- * first request and cached. A longer list buys nothing and costs a lot: the
- * build runs against the same shared free-tier Postgres as everything else, in
- * parallel workers, and a bigger prerender list has already exhausted its
- * connection pool (P2024) and failed the build outright.
+ * The declared list is the documented empty array: a cached route renders zero
+ * slugs when it is empty, so the build renders none of these — the build used
+ * to bake the six newest stories, each a full render of the heaviest page in
+ * the app (body, comment tree, related-post query) against a Postgres an ocean
+ * away from the builder. A longer prerender list has already exhausted that
+ * shared free-tier connection pool (P2024) and failed the build outright.
  *
- * A build with no database still has to succeed, so a failure here returns
- * nothing and leaves the route entirely to on-demand generation.
+ * Nothing here touches the database any more, so a build with no database
+ * still succeeds — trivially. The first request for any slug renders once,
+ * cached for `revalidate`, which covers the long tail a fixed shortlist never
+ * did; `revalidatePath` in `PUT /api/posts/[id]` still invalidates instantly.
  */
 export async function generateStaticParams() {
-  try {
-    const posts = await prisma.post.findMany({
-      where: { status: "PUBLISHED", moderationStatus: "APPROVED" },
-      orderBy: { createdAt: "desc" },
-      take: 6,
-      select: { slug: true },
-    });
-    return posts.map((post) => ({ slug: post.slug }));
-  } catch {
-    return [];
-  }
+  // An empty list is the documented way to keep a dynamic segment ISR-cached
+  // while rendering none of its slugs at build time — see the comment above.
+  return [];
 }
 
 export async function generateMetadata({ params }: ArticleParams): Promise<Metadata> {

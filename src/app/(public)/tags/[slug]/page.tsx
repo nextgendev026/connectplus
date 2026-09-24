@@ -20,9 +20,10 @@ import type { PostWithAuthor } from "@/types";
  *
  * `revalidate` on its own is inert for a dynamic segment: without
  * `generateStaticParams` the App Router renders on demand and never writes the
- * result to the full route cache. Declaring the busiest tags makes this a
- * cached route, and every other tag is generated on its first request and
- * cached from then on — which matters more here than elsewhere, because the
+ * result to the full route cache. Declaring it — even with the documented
+ * empty list — makes this a cached route, and every tag is generated on its
+ * first request and cached from then on — which matters more here than
+ * elsewhere, because the
  * table holds thousands of tags and only a few hundred are ever linked to.
  */
 export const revalidate = 300;
@@ -44,38 +45,31 @@ const getTag = cache((slug: string) =>
 );
 
 /**
- * The tags worth rendering ahead of time: the busiest few, which are what the
- * sidebar and the article badges point at most often.
+ * A cached route that prerenders nothing.
  *
- * Deliberately a short list. Declaring *any* params is what matters — it is
- * what registers the route as a cached one, and every other tag is generated on
- * its first request and cached from then on. Rendering more at build time buys
- * nothing and costs real money at build time: this runs against the same shared
- * free-tier Postgres as the rest of the build, in parallel workers, and a long
- * prerender list exhausted the connection pool (P2024) outright when it was
- * fifty. The shortlist is also aggregated in SQL rather than through
- * `orderBy: { posts: { _count: "desc" } }`, which sorts every tag in the table
- * through a correlated subquery while holding a connection.
+ * Declaring *any* params is what matters — it registers the route as a cached
+ * one, so a tag rendered on its first request is written to the full route
+ * cache and served as static HTML for `revalidate` from then on. Without this
+ * export the render would be per request forever and `revalidate` above would
+ * be inert. The declared list is the documented empty array: a cached route
+ * prerenders zero slugs when it is empty, so the build runs none of these.
  *
- * A build with no database returns nothing and leaves every tag to on-demand
- * generation.
+ * It used to declare the eight busiest tags, found through an aggregation over
+ * the whole `_PostToTag` join table — a GROUP BY that sorts every tag on the
+ * platform (the raw `orderBy: { posts: { _count: "desc" } }` equivalent, held
+ * against a connection) — and then rendered each of the eight, four queries
+ * each, against the same shared free-tier Postgres in parallel build workers.
+ * A longer prerender list exhausted the connection pool (P2024) outright when
+ * it was fifty. None of that is bought at build time any more: the first
+ * request for any tag pays one render and caches it, exactly what the sidebar
+ * and every article badge point at, with no shortlist that drifts out of date
+ * between deploys.
+ *
+ * Nothing here touches the database at build time, so a build with no database
+ * still succeeds — trivially.
  */
 export async function generateStaticParams() {
-  try {
-    const busiest = await prisma.$queryRaw<{ slug: string }[]>`
-      SELECT t.slug
-      FROM "_PostToTag" pt
-      JOIN "Post" po ON po.id = pt."A"
-      JOIN "Tag" t ON t.id = pt."B"
-      WHERE po.status = 'PUBLISHED' AND po."moderationStatus" = 'APPROVED'
-      GROUP BY t.slug
-      ORDER BY COUNT(*) DESC
-      LIMIT 8
-    `;
-    return busiest.map((tag) => ({ slug: tag.slug }));
-  } catch {
-    return [];
-  }
+  return [];
 }
 
 async function siteOrigin(): Promise<string> {

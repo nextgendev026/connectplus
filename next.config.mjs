@@ -190,12 +190,17 @@ const nextConfig = {
      * names the pool, so it reads like a bug in whichever route happened to be
      * rendering when the wait expired.
      *
-     * This repo has already been bitten by exactly that: see the note on
-     * `generateStaticParams` in the article page, where a longer prerender list
-     * "has already exhausted its connection pool (P2024) and failed the build
-     * outright". Raising the pool is not an option from here — it is set on the
-     * connection string in the deployment's own environment — so the lever that
-     * is available is to stop asking for so many connections at once.
+     * This repo has already been bitten by exactly that: a longer prerender
+     * list on the article route exhausted the connection pool (P2024) and
+     * failed the build outright. That specific fan-out is gone now — the
+     * article and tag `generateStaticParams` return the documented empty
+     * array, so the build prerenders no slugs and pays a fraction of the
+     * database round trips it used to — but build-time rendering still reads
+     * settings and the marketing/feeds pages still query, so the pool remains
+     * shared and the ceiling stays. Raising the pool is not an option from
+     * here — it is set on the connection string in the deployment's own
+     * environment — so the lever that is available is to stop asking for so
+     * many connections at once.
      *
      * Four is a deliberate compromise: enough parallelism that the build is not
      * serial, few enough that peak concurrent connections stay inside a pool
