@@ -25,7 +25,7 @@ import {
   planArticle,
   type ArticlePlan,
 } from "@/lib/article-forge";
-import { coerceCopilotOutcome, recordCopilotOutcomes } from "@/lib/copilot-skills";
+import { coerceCopilotOutcome, copilotSkillNotesFromStore, recordCopilotOutcomes } from "@/lib/copilot-skills";
 
 /**
  * ── The copilot's boundary ────────────────────────────────────────────────
@@ -170,10 +170,75 @@ function boundedTags(value: unknown): string[] {
  * brain returns the result (write), and the UI applies it at the cursor, the
  * title field, the excerpt field or the tag list.
  */
-/** Try the LLM for a studio action, falling back to `null` on any failure. */
-async function tryLlmAction(action: StudioAction, user: string, minLen = 40): Promise<string | null> {
+/**
+ * What this publication's writers have actually accepted, as prompt guidance.
+ *
+ * The studio has always *recorded* its outcomes — every keep and discard is filed
+ * as a `copilot-outcome` memory — but only the inline pilot ever read them back,
+ * so every other model-backed action asked the same model the same question with
+ * no knowledge of the editor's established taste and no way to improve. This is
+ * the read half of that loop.
+ *
+ * Memoised for a minute on purpose. The studio calls the copilot on a debounce
+ * while a writer types, and the profile is a digest of a bounded slice of memory;
+ * it cannot meaningfully change between two keystrokes. Grounding every action
+ * without this would add one indexed read per keystroke — the kind of "efficiency"
+ * that turns a good idea into a cost.
+ *
+ * Failure and an empty history both mean "no notes": a publication that has never
+ * used the copilot must still get a working copilot, not invented house style.
+ */
+const SKILL_NOTE_TTL_MS = 60_000;
+let skillNoteCache: { at: number; notes: string[] } | null = null;
+
+/**
+ * Drop the memoised notes.
+ *
+ * Called when a new outcome is recorded, so the cache is invalidated at exactly
+ * the moment its contents changed rather than on a timer — which is the only
+ * reason a one-minute TTL is safe to hold against a prompt. Exported as a test
+ * seam as well, because the memo is process-global.
+ */
+export function resetCopilotGrounding(): void {
+  skillNoteCache = null;
+}
+
+async function copilotGrounding(): Promise<string> {
+  if (!skillNoteCache || Date.now() - skillNoteCache.at >= SKILL_NOTE_TTL_MS) {
+    const notes = await copilotSkillNotesFromStore().catch(() => []);
+    skillNoteCache = { at: Date.now(), notes };
+  }
+  if (skillNoteCache.notes.length === 0) return "";
+  return [
+    "What this publication's writers usually accept (learned from their own keep/discard decisions — guidance, not rules):",
+    ...skillNoteCache.notes.map((n) => `- ${n}`),
+  ].join("\n");
+}
+
+/**
+ * Ask the model for a studio action, grounded in the app's own intelligence.
+ *
+ * Everything a model sees is assembled here, in one place, so no action can be
+ * added that quietly asks the model without the publication's context — the
+ * failure mode this replaced, where the copilot was ungrounded on twelve actions
+ * and grounded on exactly one.
+ *
+ * Order matters: the learned guidance and the post context are stated *before*
+ * the task body, because a draft appended after the instruction is the strongest
+ * signal in the prompt and would otherwise drown both out.
+ */
+async function tryLlmAction(
+  action: StudioAction,
+  user: string,
+  minLen = 40,
+  context = ""
+): Promise<string | null> {
   if (user.trim().length < minLen) return null;
-  return generateText({ system: studioSystemPrompt(action), user, maxTokens: 700 });
+  const grounding = await copilotGrounding();
+  const body = [grounding, context ? `The post being worked on:\n${context}` : "", user]
+    .filter(Boolean)
+    .join("\n\n");
+  return generateText({ system: studioSystemPrompt(action), user: body, maxTokens: 700 });
 }
 
 function parseHeadlineOptions(text: string): { primary: string; alternatives: string[] } | null {
@@ -211,7 +276,12 @@ export async function runStudioBrain(req: StudioRequest): Promise<StudioResult> 
 
   switch (action) {
     case "rewrite": {
-      const llm = await tryLlmAction(action, `Rewrite this draft tightly — then list key changes as short bullets after a line starting with "Changes:":\n\n${draft}`);
+      const llm = await tryLlmAction(
+        action,
+        `Rewrite this draft tightly — then list key changes as short bullets after a line starting with "Changes:":\n\n${draft}`,
+        40,
+        composerContext
+      );
       if (llm) {
         const idx = llm.indexOf("Changes:");
         const text = (idx > 0 ? llm.slice(0, idx) : llm).trim();
@@ -235,7 +305,12 @@ export async function runStudioBrain(req: StudioRequest): Promise<StudioResult> 
     }
 
     case "continue": {
-      const llm = await tryLlmAction(action, `Continue writing from where this draft stops — match its voice and extend it by a paragraph or two:\n\n${draft}`);
+      const llm = await tryLlmAction(
+        action,
+        `Continue writing from where this draft stops — match its voice and extend it by a paragraph or two:\n\n${draft}`,
+        40,
+        composerContext
+      );
       if (llm) return { action, text: llm };
       const ext = continueText(draft || prompt);
       return {
@@ -246,7 +321,12 @@ export async function runStudioBrain(req: StudioRequest): Promise<StudioResult> 
     }
 
     case "outline": {
-      const llm = await tryLlmAction(action, `Build a clear post outline for this draft/topic:\n\n${draft || prompt}`);
+      const llm = await tryLlmAction(
+        action,
+        `Build a clear post outline for this draft/topic:\n\n${draft || prompt}`,
+        40,
+        composerContext
+      );
       if (llm) return { action, text: llm };
       const outline = buildOutline(draft || prompt);
       const text = [`**Intro** — ${outline.intro}`, "", ...outline.sections, "", `**Closing** — ${outline.closing}`].join("\n");
@@ -254,7 +334,12 @@ export async function runStudioBrain(req: StudioRequest): Promise<StudioResult> 
     }
 
     case "summarize": {
-      const llm = await tryLlmAction(action, `Write a punchy 2-sentence excerpt (max 280 characters) for this draft — no quotes, no labels:\n\n${draft}`);
+      const llm = await tryLlmAction(
+        action,
+        `Write a punchy 2-sentence excerpt (max 280 characters) for this draft — no quotes, no labels:\n\n${draft}`,
+        40,
+        composerContext
+      );
       if (llm) return { action, text: llm.slice(0, 280) };
       const summary = summarizeText(stripHtml(draft || prompt), 2).slice(0, 280);
       return { action, text: summary };
@@ -262,7 +347,12 @@ export async function runStudioBrain(req: StudioRequest): Promise<StudioResult> 
 
     case "headline": {
       const firstLine = (draft.split(/\n/)[0] || title || "Untitled").slice(0, 60);
-      const llm = await tryLlmAction(action, `Suggest 5 headlines for this piece (one per line, numbered). Best first:\n\nTitle: ${firstLine}\n\nDraft:\n${draft}`, 60);
+      const llm = await tryLlmAction(
+        action,
+        `Suggest 5 headlines for this piece (one per line, numbered). Best first:\n\nTitle: ${firstLine}\n\nDraft:\n${draft}`,
+        60,
+        composerContext
+      );
       if (llm) {
         const parsed = parseHeadlineOptions(llm);
         if (parsed) return { action, text: parsed.primary, alternatives: parsed.alternatives };
@@ -534,6 +624,10 @@ export async function runStudioBrain(req: StudioRequest): Promise<StudioResult> 
         .map(coerceCopilotOutcome)
         .filter((outcome): outcome is NonNullable<ReturnType<typeof coerceCopilotOutcome>> => outcome !== null);
       const stored = await recordCopilotOutcomes(outcomes);
+      // The notes this prompt is grounded in just changed. Invalidate rather
+      // than wait out the TTL, so a writer can teach the copilot and see it
+      // applied on their next action instead of within the next minute.
+      if (stored > 0) resetCopilotGrounding();
       return {
         action,
         text: stored > 0 ? `Learned from ${stored} decision${stored === 1 ? "" : "s"}.` : "Nothing to learn from that.",
