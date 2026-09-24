@@ -35,7 +35,11 @@
  * revisions alone would accept a suggestion written against different text.
  */
 
-import { createHash } from "node:crypto";
+// `@/lib/sha256`, not `node:crypto`: this module is imported by the composer
+// page, which is a client component, and webpack cannot resolve the `node:`
+// scheme in a browser chunk. The digest is identical, so hashes already held in
+// a session still compare equal.
+import { sha256Hex } from "@/lib/sha256";
 
 /** The document as the composer holds it. A snapshot, never a live reference. */
 export interface ComposerState {
@@ -113,7 +117,7 @@ export function hashComposerDocument(
     categoryId: state.categoryId,
     coverImage: state.coverImage,
   });
-  return createHash("sha256").update(canonical).digest("hex");
+  return sha256Hex(canonical);
 }
 
 /** A fresh session. `documentId` is null until the first successful create. */
@@ -429,7 +433,7 @@ export function hashPilotBase(base: {
     excerpt: base.excerpt.trim(),
     tags: canonicalTags(base.tags),
   });
-  return createHash("sha256").update(canonical).digest("hex");
+  return sha256Hex(canonical);
 }
 
 /** Tags compared the way the save path compares them, not the way they were typed. */

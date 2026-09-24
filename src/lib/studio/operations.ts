@@ -33,7 +33,10 @@
  * possible — the writer can see exactly what would change before anything does.
  */
 
-import { createHash } from "node:crypto";
+// `@/lib/sha256`, not `node:crypto`: the operation path is reached from the
+// composer page, so it is bundled for the browser too. See that module for why
+// the digest is byte-identical to `createHash("sha256")`.
+import { sha256Hex } from "@/lib/sha256";
 import {
   applyComposerPatch,
   checkStale,
@@ -456,7 +459,7 @@ export function applyOperations(
   }
 
   const transaction: EditTransaction = {
-    id: `tx-${createHash("sha256").update(`${state.sessionId}:${state.revision}:${Date.now()}`).digest("hex").slice(0, 12)}`,
+    id: `tx-${sha256Hex(`${state.sessionId}:${state.revision}:${Date.now()}`).slice(0, 12)}`,
     at: new Date().toISOString(),
     source: opts.source ?? "copilot",
     reason: opts.reason ?? summariseOperations(applied),
