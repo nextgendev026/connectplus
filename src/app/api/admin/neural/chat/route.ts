@@ -6,7 +6,15 @@ import { hiveBrain } from "@/lib/hive-brain";
 import { appBrain } from "@/lib/app-brain";
 import { pendingProposals } from "@/lib/brain-approvals";
 import { parseDirective, saveDirective } from "@/lib/mind-directives";
-import { chronologicalHistory, deriveConversationTitle, historyFetchSize } from "@/lib/chat-history";
+import {
+  chronologicalHistory,
+  deriveConversationTitle,
+  historyFetchSize,
+  type ReadingState,
+  type StoredReading,
+} from "@/lib/chat-history";
+import { agentModelConfigured, redactAgentEvent, streamAgentEvents } from "@/lib/ai/agent-loop";
+import { shouldRunAgent } from "@/lib/ai/agent-trigger";
 
 /**
  * The console's conversation endpoint.
@@ -23,6 +31,40 @@ import { chronologicalHistory, deriveConversationTitle, historyFetchSize } from 
  * isolating. The route fetches the newest rows and hands them to a function that
  * reverses them; it does not build the ordering inline.
  */
+/**
+ * How many individual readings are kept with a turn.
+ *
+ * The evidence panel is a summary of what the answer was grounded in, not an
+ * archive of the probe list, and a metadata column that grows without a ceiling
+ * is a column that eventually cannot be read back.
+ */
+const MAX_STORED_READINGS = 40;
+
+/**
+ * The evidence for one turn, built once and used for both destinations.
+ *
+ * This is deliberately a single function rather than two inline literals, which
+ * is what it used to be: the object streamed to the console carried the readings
+ * themselves, while the object written to the database carried only the counts.
+ * Nothing noticed, because a live turn renders from the stream — and then
+ * reopening that conversation from history handed the console the thinner shape,
+ * where `readings.items.length` is a `TypeError` on `undefined`. React surfaced
+ * it as the whole admin page dropping into its error boundary, so a saved chat
+ * appeared to lead nowhere. Deriving both from one builder makes that drift
+ * unrepresentable instead of merely fixed.
+ */
+function turnEvidence(
+  readings: { taken: number; missing: number; state: ReadingState; readings: StoredReading[] } | null | undefined
+): { taken: number; missing: number; state: ReadingState; items: StoredReading[] } | null {
+  if (!readings) return null;
+  return {
+    taken: readings.taken,
+    missing: readings.missing,
+    state: readings.state,
+    items: (readings.readings ?? []).slice(0, MAX_STORED_READINGS),
+  };
+}
+
 export async function POST(request: NextRequest) {
   try {
     const session = await auth();
@@ -48,6 +90,27 @@ export async function POST(request: NextRequest) {
     }
 
     const asked = message.trim();
+
+    /*
+     * Where does this turn go — the grounded record answer, or the tool loop?
+     *
+     * Decided up front so the console can be told *why*, and reported on the
+     * metadata event. An operator who cannot see the routing cannot tell a model
+     * that declined from a pipeline that never tried.
+     */
+    const agentPlan = shouldRunAgent(asked, (body as { agent?: unknown }).agent);
+    const agentBlocked = agentPlan.run && userRole !== "SUPER_ADMIN";
+    const agentReady = agentPlan.run && !agentBlocked ? await agentModelConfigured() : false;
+    const agentWillRun = agentPlan.run && !agentBlocked && agentReady;
+    const agentRouting = {
+      ran: agentWillRun,
+      reason: agentBlocked
+        ? "This needs the agent, which is Super Admin only."
+        : agentPlan.run && !agentReady
+          ? "This needs the agent, but no model gateway is configured."
+          : agentPlan.reason,
+      intent: agentPlan.intent,
+    };
 
     /*
      * Resume, or start.
@@ -144,7 +207,7 @@ export async function POST(request: NextRequest) {
 
     const hiveStatus = await hiveBrain.status();
 
-    await prisma.neuralMessage.create({
+    const assistantMessage = await prisma.neuralMessage.create({
       data: {
         conversationId: conversation.id,
         role: "assistant",
@@ -155,7 +218,7 @@ export async function POST(request: NextRequest) {
           confidence: response.confidence,
           sources: response.sources,
           understanding: response.understanding,
-          readings: response.readings ? { taken: response.readings.taken, missing: response.readings.missing, state: response.readings.state } : null,
+          readings: turnEvidence(response.readings),
         }),
       },
     });
@@ -171,18 +234,15 @@ export async function POST(request: NextRequest) {
                 conversationId,
                 intent: response.intent,
                 enginesUsed: response.enginesUsed,
+                // Which engine answered this turn, and why. Surfaced rather than
+                // inferred, because "no tools ran" and "the tools were refused"
+                // look identical from the outside.
+                agent: agentRouting,
                 // What the brain understood, and what it grounded the answer in.
                 // Both are shown in the console: an answer whose evidence the
                 // operator cannot see is an answer they have to take on faith.
                 understanding: response.understanding,
-                readings: response.readings
-                  ? {
-                      taken: response.readings.taken,
-                      missing: response.readings.missing,
-                      state: response.readings.state,
-                      items: response.readings.readings,
-                    }
-                  : null,
+                readings: turnEvidence(response.readings),
               }) + "\n"
             )
           );
@@ -210,7 +270,48 @@ export async function POST(request: NextRequest) {
             await new Promise(r => setTimeout(r, 15));
           }
 
-          controller.enqueue(encoder.encode(JSON.stringify({ type: "done", fullText: text }) + "\n"));
+          /*
+           * The tool loop, after the grounded answer rather than instead of it.
+           *
+           * The record answer leads because it is read from the platform and is
+           * therefore the more trustworthy half; the agent's work follows it, so a
+           * reader gets the facts first and the actions second. Tool events use the
+           * same NDJSON stream as everything else, which is what lets one widget
+           * render the conversation, the tool cards and the prediction cards without
+           * knowing which engine produced any of them.
+           */
+          let agentText = "";
+          if (agentWillRun) {
+            for await (const event of streamAgentEvents({
+              actor: { actorId: userId, role: userRole },
+              turns: [{ role: "user", content: asked }],
+            })) {
+              // The agent's prose is re-labelled as `chunk`, the event the console
+              // already appends to a streaming bubble. One event vocabulary at the
+              // boundary beats teaching every client two.
+              if (event.type === "text") {
+                const delta = String(event.delta ?? "");
+                agentText += delta;
+                controller.enqueue(encoder.encode(JSON.stringify({ type: "chunk", content: delta }) + "\n"));
+                continue;
+              }
+              controller.enqueue(encoder.encode(`${JSON.stringify(redactAgentEvent(event))}\n`));
+            }
+
+            // The stored turn has to contain what the operator actually read, or the
+            // next turn's history is missing the agent's half and the console will
+            // contradict itself when the thread is reopened.
+            if (agentText.trim()) {
+              await prisma.neuralMessage
+                .update({
+                  where: { id: assistantMessage.id },
+                  data: { content: `${text}\n\n${agentText.trim()}` },
+                })
+                .catch(() => {});
+            }
+          }
+
+          controller.enqueue(encoder.encode(JSON.stringify({ type: "done", fullText: text + (agentText ? `\n\n${agentText}` : "") }) + "\n"));
           controller.close();
         } catch {
           controller.enqueue(encoder.encode(JSON.stringify({ type: "error", message: "Neural processing failed" }) + "\n"));

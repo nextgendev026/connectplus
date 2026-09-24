@@ -127,6 +127,95 @@ export function previewOf(content: string | null | undefined, max = PREVIEW_CHAR
   return (content ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 }
 
+/* ── The evidence a saved turn was grounded in ───────────────────────────── */
+
+export type ReadingState = "ok" | "warn" | "critical" | "unknown";
+
+export interface StoredReading {
+  id: string;
+  area: string;
+  label: string;
+  value: string;
+  state: ReadingState;
+  detail?: string;
+}
+
+/** What the console renders under a saved answer. */
+export interface ReadingsSummary {
+  taken: number;
+  missing: number;
+  state: ReadingState;
+  items: StoredReading[];
+}
+
+function readingState(value: unknown): ReadingState {
+  return value === "ok" || value === "warn" || value === "critical" || value === "unknown" ? value : "unknown";
+}
+
+function isNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function toStoredReading(value: unknown): StoredReading | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const label = typeof raw.label === "string" ? raw.label : "";
+  const id = typeof raw.id === "string" ? raw.id : label;
+  // An entry with neither an id nor a label has nothing to render, and keeping
+  // it would put an empty row in the evidence list.
+  if (!id && !label) return null;
+  return {
+    id,
+    area: typeof raw.area === "string" ? raw.area : "",
+    label,
+    value: typeof raw.value === "string" ? raw.value : String(raw.value ?? ""),
+    state: readingState(raw.state),
+    ...(typeof raw.detail === "string" ? { detail: raw.detail } : {}),
+  };
+}
+
+/**
+ * Read the readings a turn was grounded in, from whatever shape was stored.
+ *
+ * This exists because of a crash, and the crash is worth describing, because the
+ * shape of it is the shape of every bug in this file.
+ *
+ * The chat route streamed a turn to the console with its readings *including*
+ * the individual items, and persisted the same turn to the database with only
+ * the counts. The live answer therefore rendered perfectly while the stored copy
+ * was a different object — and reopening a conversation from history fed the
+ * thinner one to a panel that read `readings.items.length`, which is a
+ * `TypeError` on `undefined`. Coming from React, that surfaced as the whole
+ * admin page falling into its error boundary: clicking a saved chat appeared to
+ * lead nowhere, and the transcript that caused it was fine all along.
+ *
+ * So this is deliberately total over its input and never throws. An absent
+ * `items` becomes an empty list (the panel already has honest copy for "the
+ * individual readings were not kept with this turn"), counts fall back to what
+ * the items can prove, and anything unrecognisable yields `null` so the panel is
+ * omitted rather than rendered wrong.
+ */
+export function toReadingsSummary(value: unknown): ReadingsSummary | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+
+  const hasItems = Array.isArray(raw.items);
+  if (!hasItems && !("taken" in raw) && !("missing" in raw)) return null;
+
+  const items = hasItems
+    ? (raw.items as unknown[]).map(toStoredReading).filter((r): r is StoredReading => r !== null)
+    : [];
+
+  return {
+    // Counts are stored, but when they are absent the items are better evidence
+    // than a zero would be — and a zero here reads as "grounded in nothing".
+    taken: isNumber(raw.taken) ? raw.taken : items.length,
+    missing: isNumber(raw.missing) ? raw.missing : 0,
+    state: readingState(raw.state),
+    items,
+  };
+}
+
 /**
  * Turn a row of the history query into what the console renders.
  *

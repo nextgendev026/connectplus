@@ -18,14 +18,18 @@ import {
   Search,
   Send,
   Share2,
+  ShieldAlert,
+  ShieldCheck,
   Sparkles,
   Stamp,
   Target,
   Trash2,
+  Wrench,
   X,
   Zap,
 } from "lucide-react";
 import { cn, timeAgo } from "@/lib/utils";
+import { toReadingsSummary, type ReadingsSummary, type StoredReading } from "@/lib/chat-history";
 
 /* ── Wire types ──────────────────────────────────────────────────────────── */
 
@@ -36,22 +40,6 @@ interface HiveData {
   categoryBreakdown: Record<string, number>;
   topTopics: { topic: string; count: number }[];
   recentLearnings: { source: string; category: string; content: string; confidence: number }[];
-}
-
-interface ReadingItem {
-  id: string;
-  area: string;
-  label: string;
-  value: string;
-  state: "ok" | "warn" | "critical" | "unknown";
-  detail?: string;
-}
-
-interface ReadingsSummary {
-  taken: number;
-  missing: number;
-  state: ReadingItem["state"];
-  items: ReadingItem[];
 }
 
 interface ProposalCard {
@@ -73,9 +61,304 @@ interface ChatMessage {
   understanding?: string;
   readings?: ReadingsSummary | null;
   proposals?: ProposalCard[];
+  /** Agent tool calls and their outcomes, in the order they ran. */
+  tools?: AgentToolCard[];
+  /** Match-model output, rendered as a card rather than as prose. */
+  predictions?: PredictionCard[];
+  /** High-risk calls waiting on this operator, and what they decided. */
+  approvals?: ApprovalCard[];
   createdAt?: string;
   /** True while tokens are still arriving, so the caret renders and evidence does not. */
   streaming?: boolean;
+}
+
+/**
+ * One agent tool call, as the console shows it.
+ *
+ * The risk tier is displayed next to the name because it changes what the operator
+ * should do with the result: a `high` tool that ran unattended is a bug, while a
+ * `medium` patch that reported `rolled_back` is the model working correctly.
+ */
+interface AgentToolCard {
+  toolCallId: string;
+  toolName: string;
+  risk: string;
+  status: "executing" | "success" | "failed" | "rolled_back" | "awaiting_approval";
+  input?: unknown;
+  output?: unknown;
+  error?: string;
+}
+
+interface PredictionCard {
+  fixture: string;
+  league: string;
+  expectedGoals: { home: number; away: number; total: number };
+  markets: {
+    oneX2: { home: number; draw: number; away: number };
+    btts: { yes: number; no: number };
+    overUnder: { over15: number; over25: number; over35: number };
+  };
+  topScorelines?: Array<{ score: string; probability: number }>;
+  confidence: { score: number; band: string; separation?: number; explanation?: string };
+  headlineCall?: { market: string; selection: string; confidence: number; decisive: boolean; reasons: string[] };
+  dataQuality?: {
+    homeFormMatches: number;
+    awayFormMatches: number;
+    leagueSettledMatches: number;
+    leagueAccuracy: number | null;
+  };
+  parameters?: { rho: number; recencyWeight: number; goalExpectationFactor: number };
+}
+
+/** A labelled probability bar. Width is the probability, so the shape *is* the data. */
+function ProbBar({ label, value, tone }: { label: string; value: number; tone: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-[86px] shrink-0 truncate text-[10px] text-surface-400">{label}</span>
+      <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-800">
+        <span className={cn("block h-full rounded-full", tone)} style={{ width: `${Math.max(1, Math.min(100, value))}%` }} />
+      </span>
+      <span className="w-11 shrink-0 text-right font-mono text-[10px] text-surface-200">{value.toFixed(1)}%</span>
+    </div>
+  );
+}
+
+function PredictionCards({ predictions }: { predictions: PredictionCard[] }) {
+  return (
+    <div className="mt-2 space-y-2">
+      {predictions.map((p, i) => (
+        <div key={`${p.fixture}-${i}`} className="rounded-xl border border-brand-500/30 bg-brand-500/5 p-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="truncate text-[12px] font-semibold text-surface-50">{p.fixture}</p>
+              <p className="text-[10px] text-surface-400">
+                {p.league} · Dixon–Coles · xG {p.expectedGoals.home}–{p.expectedGoals.away} ({p.expectedGoals.total} total)
+              </p>
+            </div>
+            <div className="shrink-0 text-right">
+              <p className="font-mono text-[15px] font-bold leading-none text-accent-strong">{p.confidence.score}</p>
+              <p className="text-[9px] uppercase tracking-wide text-surface-500">{p.confidence.band} confidence</p>
+            </div>
+          </div>
+
+          <div className="mt-2.5 space-y-1">
+            <ProbBar label="Home" value={p.markets.oneX2.home} tone="bg-emerald-500/70" />
+            <ProbBar label="Draw" value={p.markets.oneX2.draw} tone="bg-surface-500" />
+            <ProbBar label="Away" value={p.markets.oneX2.away} tone="bg-sky-500/70" />
+          </div>
+
+          <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 border-t border-surface-700/60 pt-2 text-[10px] text-surface-300">
+            <span>BTTS yes <strong className="font-mono">{p.markets.btts.yes}%</strong></span>
+            <span>Over 2.5 <strong className="font-mono">{p.markets.overUnder.over25}%</strong></span>
+            <span>Over 1.5 <strong className="font-mono">{p.markets.overUnder.over15}%</strong></span>
+            <span>Over 3.5 <strong className="font-mono">{p.markets.overUnder.over35}%</strong></span>
+          </div>
+
+          {p.topScorelines && p.topScorelines.length > 0 ? (
+            <p className="mt-2 text-[10px] text-surface-400">
+              Likely scores{" "}
+              {p.topScorelines.slice(0, 3).map((s) => `${s.score} (${s.probability}%)`).join(" · ")}
+            </p>
+          ) : null}
+
+          {p.headlineCall ? (
+            <p className="mt-1.5 text-[10px] font-medium text-surface-200">
+              Call: {p.headlineCall.selection} · {p.headlineCall.confidence}% ·{" "}
+              {p.headlineCall.decisive ? "decisive" : "not decisive"}
+            </p>
+          ) : null}
+
+          {p.dataQuality ? (
+            <p className="mt-1 text-[9px] text-surface-500">
+              Form sample {p.dataQuality.homeFormMatches}/{p.dataQuality.awayFormMatches} matches · league sample{" "}
+              {p.dataQuality.leagueSettledMatches} settled
+              {p.dataQuality.leagueAccuracy != null ? ` · ${p.dataQuality.leagueAccuracy}% graded accuracy` : ""}
+            </p>
+          ) : null}
+
+          {p.parameters ? (
+            <p className="mt-0.5 text-[9px] text-surface-500">
+              rho {p.parameters.rho} · recency {p.parameters.recencyWeight} · goals ×{p.parameters.goalExpectationFactor}
+            </p>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A high-risk tool call, gated behind a human decision.
+ *
+ * The token is the only thing that proves this approval, and it is bound to the
+ * exact arguments shown here — so the button is a consent to *this* operation, not a
+ * general yes. That is why the arguments are rendered rather than summarised: an
+ * operator approving a migration they were not shown is not consenting to it.
+ */
+interface ApprovalCard {
+  id: string;
+  tool: string;
+  args: Record<string, unknown>;
+  token: string;
+  summary: string;
+  danger: string;
+  blastRadius?: string;
+  expiresAt: string;
+  state: "pending" | "running" | "approved" | "failed";
+  message?: string;
+}
+
+function ApprovalCards({ approvals }: { approvals: ApprovalCard[] }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  /*
+   * Decisions are held here rather than pushed back into the message.
+   *
+   * The message is the record of what the agent did; an approval is the operator's
+   * action on it, and routing it through the same `onDecided` callback the
+   * proposals use would have looked like it worked while doing nothing — the ids
+   * never match, so the card would have sat on "pending" forever after a real
+   * approval. Local state keeps the button's lifecycle with the button.
+   */
+  const [decisions, setDecisions] = useState<Record<string, { state: ApprovalCard["state"]; message?: string }>>({});
+
+  const approve = async (card: ApprovalCard) => {
+    setBusy(card.id);
+    setDecisions((prev) => ({ ...prev, [card.id]: { state: "running" } }));
+    try {
+      const res = await fetch("/api/neural-chat/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ tool: card.tool, args: card.args, token: card.token }),
+      });
+      const payload = (await res.json().catch(() => null)) as
+        | { ok?: boolean; reason?: string; message?: string; error?: string; result?: unknown }
+        | null;
+
+      if (!res.ok || !payload?.ok) {
+        setDecisions((prev) => ({
+          ...prev,
+          [card.id]: {
+            state: "failed",
+            message: payload?.reason ?? payload?.message ?? payload?.error ?? `Refused (HTTP ${res.status}).`,
+          },
+        }));
+      } else {
+        setDecisions((prev) => ({ ...prev, [card.id]: { state: "approved" } }));
+      }
+    } catch (error) {
+      setDecisions((prev) => ({
+        ...prev,
+        [card.id]: { state: "failed", message: error instanceof Error ? error.message : "The request failed." },
+      }));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="mt-2 space-y-2">
+      {approvals.map((card) => {
+        const decided = decisions[card.id];
+        const state = decided?.state ?? card.state;
+        const message = decided?.message ?? card.message;
+        return (
+        <div key={card.id} className="rounded-xl border border-violet-500/40 bg-violet-500/5 p-2.5">
+          <div className="flex items-start gap-2">
+            <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-violet-300" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[12px] font-semibold text-violet-100">Approval required</p>
+              <p className="mt-0.5 text-[11px] text-surface-200">{card.summary}</p>
+              {card.danger ? <p className="mt-1 text-[10px] text-surface-400">{card.danger}</p> : null}
+              {card.blastRadius ? (
+                <p className="mt-0.5 text-[10px] italic text-surface-500">{card.blastRadius}</p>
+              ) : null}
+            </div>
+            {state === "approved" ? (
+              <span className="shrink-0 text-[10px] font-medium text-positive-strong">Executed</span>
+            ) : null}
+          </div>
+
+          <pre className="mt-2 max-h-32 overflow-auto rounded-lg border border-violet-500/20 bg-black/30 p-2 font-mono text-[10px] text-surface-300">
+            {JSON.stringify({ tool: card.tool, ...card.args }, null, 2)}
+          </pre>
+
+          {message ? (
+            <p className={cn("mt-1.5 text-[10px]", state === "failed" ? "text-danger-strong" : "text-surface-300")}>
+              {message}
+            </p>
+          ) : null}
+
+          {state === "pending" || state === "running" ? (
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void approve(card)}
+                disabled={busy === card.id}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-positive-strong/50 bg-positive-strong/15 px-2.5 py-1 text-[11px] font-semibold text-positive-strong transition hover:bg-positive-strong/25 disabled:opacity-50"
+              >
+                {busy === card.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <ShieldCheck className="h-3 w-3" />}
+                Approve &amp; Execute
+              </button>
+              {card.expiresAt ? (
+                <span className="text-[10px] text-surface-500">
+                  Expires {new Date(card.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AgentToolCards({ tools }: { tools: AgentToolCard[] }) {
+  const tones: Record<AgentToolCard["status"], string> = {
+    executing: "border-sky-500/40 bg-sky-500/10 text-sky-300",
+    success: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
+    failed: "border-red-500/40 bg-red-500/10 text-danger-strong",
+    rolled_back: "border-amber-500/40 bg-amber-500/10 text-amber-300",
+    awaiting_approval: "border-violet-500/40 bg-violet-500/10 text-violet-300",
+  };
+  const labels: Record<AgentToolCard["status"], string> = {
+    executing: "Executing",
+    success: "Success",
+    failed: "Failed",
+    rolled_back: "Rolled back",
+    awaiting_approval: "Awaiting approval",
+  };
+
+  return (
+    <div className="mt-2 space-y-1.5">
+      {tools.map((tool) => (
+        <div key={tool.toolCallId} className="rounded-xl border border-surface-700 bg-surface-900/60 p-2.5">
+          <div className="flex items-center gap-2">
+            <Wrench className="h-3 w-3 shrink-0 text-surface-400" />
+            <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-surface-200">{tool.toolName}</code>
+            <span className="shrink-0 rounded-full border border-surface-700 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-surface-400">
+              {tool.risk}
+            </span>
+            <span className={cn("shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-medium", tones[tool.status])}>
+              {tool.status === "executing" ? <Loader2 className="mr-1 inline h-2.5 w-2.5 animate-spin" /> : null}
+              {labels[tool.status]}
+            </span>
+          </div>
+          {tool.error ? (
+            <p className="mt-1.5 whitespace-pre-wrap break-words rounded-lg border border-red-500/30 bg-red-500/5 p-2 font-mono text-[10px] text-danger-strong">
+              {tool.error}
+            </p>
+          ) : null}
+          {tool.status === "rolled_back" ? (
+            <p className="mt-1 text-[10px] text-amber-300">
+              Validation failed and the patch was reverted. Nothing was committed.
+            </p>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 interface ConversationRow {
@@ -166,7 +449,7 @@ function EngineBadges({ intent, enginesUsed: engines, hive }: { intent?: string;
 }
 
 function ReadingEvidence({ readings }: { readings: ReadingsSummary }) {
-  const tone: Record<ReadingItem["state"], string> = {
+  const tone: Record<StoredReading["state"], string> = {
     ok: "text-surface-300",
     warn: "text-warning-strong",
     critical: "text-danger-strong",
@@ -521,7 +804,11 @@ export default function BrainChatWidget() {
       setShareToken(conversation.shareToken ?? null);
       setMessages(
         conversation.messages.map((m) => {
-          const readings = (m.meta?.readings ?? null) as ReadingsSummary | null;
+          // Not a cast. A saved turn's readings are whatever shape was written
+          // when it was answered, and trusting that shape is what crashed the
+          // page when the stored copy turned out to be thinner than the streamed
+          // one (see `toReadingsSummary`).
+          const readings = toReadingsSummary(m.meta?.readings);
           return {
             id: m.id,
             role: m.role === "user" ? "user" : "assistant",
@@ -616,7 +903,7 @@ export default function BrainChatWidget() {
                 intent: typeof event.intent === "string" ? event.intent : undefined,
                 enginesUsed: Array.isArray(event.enginesUsed) ? (event.enginesUsed as string[]) : undefined,
                 understanding: typeof event.understanding === "string" ? event.understanding : undefined,
-                readings: (event.readings ?? null) as ReadingsSummary | null,
+                readings: toReadingsSummary(event.readings),
               };
             } else if (event.type === "chunk" && typeof event.content === "string") {
               // Held in its own state rather than appended to the message array:
@@ -630,6 +917,89 @@ export default function BrainChatWidget() {
               const status = event.status as HiveData;
               meta = { ...meta, hive: status };
               setHive(status);
+            } else if (event.type === "tool_call") {
+              meta = {
+                ...meta,
+                tools: [
+                  ...(meta.tools ?? []),
+                  {
+                    toolCallId: String(event.toolCallId ?? ""),
+                    toolName: String(event.toolName ?? "tool"),
+                    risk: String(event.risk ?? "unknown"),
+                    status: "executing",
+                    input: event.input,
+                  },
+                ],
+              };
+            } else if (event.type === "tool_result") {
+              const output = event.output as Record<string, unknown> | undefined;
+              // The status is read off the result rather than assumed from a 200:
+              // a patch that rolled back, and a model that refused a plan, both
+              // arrive as successful calls that achieved nothing.
+              const status: AgentToolCard["status"] =
+                output?.needsApproval === true
+                  ? "awaiting_approval"
+                  : output?.status === "rolled_back"
+                    ? "rolled_back"
+                    : output?.ok === false || output?.error
+                      ? "failed"
+                      : "success";
+
+              meta = {
+                ...meta,
+                tools: (meta.tools ?? []).map((t) =>
+                  t.toolCallId === String(event.toolCallId ?? "")
+                    ? { ...t, status, output: event.output, risk: String(event.risk ?? t.risk) }
+                    : t,
+                ),
+              };
+
+              // A simulation is promoted out of the tool payload into its own card,
+              // because the numbers are the answer and a reader should not have to
+              // expand a JSON blob to see a probability.
+              if (String(event.toolName) === "simulateMatchFixture" && output && "markets" in output) {
+                meta = { ...meta, predictions: [...(meta.predictions ?? []), output as unknown as PredictionCard] };
+              }
+            } else if (event.type === "tool_error") {
+              meta = {
+                ...meta,
+                tools: (meta.tools ?? []).map((t) =>
+                  t.toolCallId === String(event.toolCallId ?? "")
+                    ? { ...t, status: "failed" as const, error: String(event.message ?? "Tool failed") }
+                    : t,
+                ),
+              };
+            } else if (event.type === "prediction" && event.prediction) {
+              // The loop promotes a simulation to a typed event, so the card does not
+              // depend on the shape of a tool's return value.
+              meta = {
+                ...meta,
+                predictions: [...(meta.predictions ?? []), event.prediction as PredictionCard],
+              };
+            } else if (event.type === "approval_request") {
+              meta = {
+                ...meta,
+                approvals: [
+                  ...(meta.approvals ?? []),
+                  {
+                    id: String(event.argsHash ?? `ap-${Date.now()}`),
+                    tool: String(event.tool ?? ""),
+                    args: (event.args as Record<string, unknown>) ?? {},
+                    token: String(event.token ?? ""),
+                    summary: String(event.summary ?? "Approve this operation"),
+                    danger: String(event.danger ?? ""),
+                    blastRadius: typeof event.blastRadius === "string" ? event.blastRadius : undefined,
+                    expiresAt: String(event.expiresAt ?? ""),
+                    state: "pending" as const,
+                  },
+                ],
+              };
+            } else if (event.type === "approval_unavailable") {
+              setError(
+                typeof event.message === "string"
+                  ? `A high-risk operation needed approval, but one could not be issued: ${event.message}`
+                  : "A high-risk operation needed approval, but one could not be issued."
+              );
             } else if (event.type === "directive") {
               meta = { ...meta, enginesUsed: ["directive"] };
               void loadDirectives();
@@ -1508,6 +1878,16 @@ export default function BrainChatWidget() {
 
           {message.proposals && message.proposals.length > 0 ? (
             <ProposalDecisions proposals={message.proposals} onDecided={onDecided} />
+          ) : null}
+
+          {message.approvals && message.approvals.length > 0 ? (
+            <ApprovalCards approvals={message.approvals} />
+          ) : null}
+
+          {message.tools && message.tools.length > 0 ? <AgentToolCards tools={message.tools} /> : null}
+
+          {message.predictions && message.predictions.length > 0 ? (
+            <PredictionCards predictions={message.predictions} />
           ) : null}
 
           {!isUser ? <EngineBadges intent={message.intent} enginesUsed={message.enginesUsed} hive={message.hive} /> : null}
