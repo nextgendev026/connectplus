@@ -68,7 +68,7 @@
     "@types/react-dom": "^19.0.0",
     "@types/web-push": "^3.6.4",
     "dotenv": "^16.6.1",
-    "eslint": "^9.39.5",
+    "eslint": "^10.11.0",
     "eslint-config-next": "^16.3.4",
     "postcss": "^8",
     "prisma": "^6.6.0",
