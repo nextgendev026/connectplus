@@ -38,6 +38,51 @@ export interface IntentPattern {
   boostKeywords: string[];
 }
 
+/**
+ * Intents answered by *reading the platform*, not by writing about it.
+ *
+ * Each one has a real query behind it — a report, a scan, a recall — so its
+ * answer is a rendering of live records rather than something a model should
+ * compose. Two consumers depend on the distinction, which is why it lives here
+ * beside the vocabulary rather than in either of them:
+ *
+ *   • `appBrain.chat` must not hand these to the LLM. It did, and "give me the
+ *     hive mind report" came back as "the hive mind report is not available" —
+ *     the model was asked to write a report whose data it had never been given.
+ *   • `neuralMind.learnFromInteraction` must not file these answers as durable
+ *     knowledge. A reading taken at 14:03 is not a lesson about the world, and
+ *     storing it made the refusal above recallable as though it were a fact.
+ *
+ * Membership is explicit rather than inferred from "not a content intent", so a
+ * newly added intent is treated as a record until someone decides otherwise,
+ * which is the safe direction for the guess to fall.
+ */
+export const RECORD_INTENTS: readonly Intent[] = [
+  "system_health",
+  "content_analysis",
+  "user_analysis",
+  "moderation_report",
+  "threat_scan",
+  "growth_report",
+  "regional_analysis",
+  "trend_query",
+  "hive_report",
+  "recommendation",
+  "external_learn",
+  "knowledge_search",
+  "memory_manage",
+  "run_sweep",
+  "creator_intelligence",
+  "monetization_report",
+  "traffic_depth",
+  "external_signals",
+];
+
+/** True when an intent's answer is a rendering of live records. */
+export function isRecordIntent(intent: Intent): boolean {
+  return RECORD_INTENTS.includes(intent);
+}
+
 // The classifier below is the fixed "logic wiring" of the Neural Mind. Every
 // phrase an admin has used before is ALSO persisted into the Hive Brain as an
 // intent-map memory (see learnFromInteraction) and re-injected here via

@@ -4,7 +4,7 @@ import { hiveBrain } from "@/lib/hive-brain";
 import { neuralMind, type NeuralResponse } from "@/lib/neural-mind";
 import { platformIntelligence } from "@/lib/platform-intelligence";
 import { generateText, getAiConfig, isContentIntent, tryLlmForChat } from "@/lib/ai-provider";
-import { classifyIntent } from "@/lib/neural-intent";
+import { classifyIntent, isRecordIntent } from "@/lib/neural-intent";
 import { gatherReadings, type BrainReading, type BrainReadings, type ReadingState } from "@/lib/brain-readings";
 import { activeCacheBackend, cacheBackendDetail } from "@/lib/redis";
 import { getCronStatus } from "@/lib/cron-schedule";
@@ -68,6 +68,8 @@ import {
 /* ── The composition ──────────────────────────────────────────────────────── */
 
 export type BrainMind = "hive" | "neural" | "platform";
+
+
 
 export interface BrainSubsystem {
   id: string;
@@ -260,6 +262,34 @@ class AppBrain {
       }
       const fallback = await neuralMind.processQuery(input, history, { actorId: opts.actorId });
       return { ...fallback, minds: ["neural", "platform"], understanding, readings: readingsMeta(readings) };
+    }
+
+    /*
+     * Reports are read out of the platform's own records, never improvised.
+     *
+     * This is the bug that made "give me the hive mind report" answer "the hive
+     * mind report is not available". The intent classified correctly as
+     * `hive_report`, and then fell through to `groundedAnswer` — which asks a
+     * model to write the answer from the readings and a handful of recalled
+     * memories. A hive report is not in either of those: it is
+     * `hiveBrain.status()` — 13k memories, the source and category breakdown,
+     * the top topics, the recent learnings. The model could not see any of it,
+     * so it did the honest thing and refused, and the console showed an apology
+     * where the report should be.
+     *
+     * The neural mind renders every one of these intents from real queries. The
+     * model is for conversation and for writing, where it adds something the
+     * database cannot; a structured report is the opposite case, and routing it
+     * through a model can only add latency and the risk of invention.
+     */
+    if (isRecordIntent(classified.intent)) {
+      const response = await neuralMind.processQuery(input, history, { actorId: opts.actorId });
+      return {
+        ...response,
+        minds: ["hive", "neural", "platform"],
+        understanding,
+        readings: readingsMeta(readings),
+      };
     }
 
     const grounded = await this.groundedAnswer(input, history, readings).catch((error) => {
