@@ -59,6 +59,26 @@ npx prisma generate
 
 **Important:** Never run `prisma migrate dev` against the production database. Only `prisma migrate deploy` is safe for production.
 
+### Prisma stays on 6.x until the schema is ported
+
+`prisma` and `@prisma/client` are held on the 6.x line. This is a deliberate ceiling, not
+staleness — a Prisma major is a migration, not a version bump.
+
+Prisma 7 removed the `url` and `directUrl` properties from the `datasource` block. Move the CLI
+to 7 while the schema still declares them and `prisma generate` fails with `P1012`, which fails
+`postinstall`, which fails the build before a single line of app code is compiled. That is what
+a red Cloudflare deploy preview on a Dependabot branch looks like.
+
+Porting to 7 is three coupled changes, and they land together or not at all:
+
+1. Move the connection URLs out of `prisma/schema.prisma` and into a new `prisma.config.ts`.
+2. Provide a driver adapter (for example `@prisma/adapter-pg`) to the `PrismaClient`
+   constructor — Prisma 7 no longer reads a URL out of the schema at runtime.
+3. Move `prisma` and `@prisma/client` to 7.x in the same commit.
+
+`.github/dependabot.yml` ignores Prisma majors so the half-migration is not proposed again. Test
+the whole thing on a branch against a copy of the database before lifting that ignore.
+
 ---
 
 ## What Gets Deployed
@@ -130,6 +150,38 @@ curl -s -o /dev/null -w "%{http_code}" https://connectplusapp.vercel.app/feed.xm
 - **Vercel function logs** — timeout errors or cold starts indicate a build issue
 - **Database connections** — Prisma connection pool exhaustion shows up as `Timeout attempting to open a database connection`
 
+### Verifying the intelligence pipeline after a deploy
+
+```bash
+# 6. The agent's tool loop is off unless a gateway key resolves. This endpoint is
+#    Super Admin only, so an anonymous 401 is the expected answer and it confirms
+#    the route exists rather than 404ing.
+curl -s -o /dev/null -w "%{http_code}" https://connectplusapp.vercel.app/api/neural-chat
+# Expected: 401
+```
+
+Then, signed in as a Super Admin, open **Admin → Neural Mind** and read the four stat cards.
+They are the deploy's own health report, and each one maps to a specific failure:
+
+| Card | Reads | If it is wrong |
+|------|-------|----------------|
+| Memories | `hiveBrain.status().total` | `0` means the hive could not be read — not that the platform has learned nothing |
+| Awaiting approval | pending `BrainActionProposal` rows | A number that stays high after a deploy means nobody is working the queue |
+| Open issues | the self-filed issue register | Findings persist across runs by design; they close only when the finding stops reproducing |
+| **Engines degraded** | `collaboration.degraded` | Read the sub-label. `N unmeasured` is *not* a fault on the same card — an unmeasured engine has not been observed, and the Pipeline tab names which probe was blind |
+
+Two readings are worth knowing how to interpret before you see them in production:
+
+- **`No run recorded by any of the 17 jobs`** on the Pipeline tab means the heartbeat ledger has
+the correct answer of "nothing yet" — the ordinary state of a fresh instance. If it persists on a
+long-running production deployment, check that Inngest and the Cloudflare edge cron are actually
+delivering; a scheduler that has never run is indistinguishable from one that is broken, so the
+console reports the measurement it has rather than inventing a cause.
+- **`Models: no gateway key configured`** means `aiProvider` is `builtin` and no key resolved, so the
+deterministic engines answer and the agent's tool loop stays off. That is a supported configuration
+and is reported as a configuration gap, not as a broken engine. Set a free OpenRouter or OpenCode
+key under **Admin → AI** (or `OPENROUTER_API_KEY` in the environment) to turn both on.
+
 ---
 
 ## Running Database Migrations
@@ -148,6 +200,30 @@ npx prisma migrate deploy
 # 3. Verify the schema matches
 npx prisma generate
 ```
+
+### Migrations run automatically on deploy
+
+You do not normally need to run `prisma migrate deploy` by hand. The Vercel build command is
+`npm run vercel-build`, which is:
+
+```
+db:guard  →  prisma migrate deploy  →  prisma generate  →  db:ensure  →  next build
+```
+
+So a push to `main` applies pending migrations **before** the new code goes live, and the
+`db:guard` step in front of it refuses to touch a database that is not the intended target. That
+ordering matters: the guard runs first, so a misconfigured `DATABASE_URL` fails the build instead of
+migrating the wrong project.
+
+To confirm there is nothing pending, anywhere:
+
+```bash
+npx prisma migrate status
+# → "Database schema is up to date!"  (with the migration count)
+```
+
+If this reports pending migrations after a deploy, the build did not reach the migration step —
+look at the build log for a `db:guard` refusal, which is the guard doing its job.
 
 ### When a migration fails
 
@@ -205,8 +281,8 @@ Environment variables are set in the Vercel dashboard under Settings → Environ
 | Variable | Feature it enables |
 |----------|-------------------|
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Browser push notifications |
-| `OPENROUTER_API_KEY` | AI content generation and copilot (the routed provider) |
-| `OPENCODE_API_KEY` | AI content generation and copilot (the other routed provider) |
+| `OPENROUTER_API_KEY` | AI content generation, copilot, and the agent's tool loop (the routed provider) |
+| `OPENCODE_API_KEY` | The same, on the other routed provider |
 | `SENTRY_DSN` | Error tracking in production |
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Distributed rate limiting |
 | `NEXT_PUBLIC_CONVEX_URL` | View count offloading |

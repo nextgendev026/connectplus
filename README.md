@@ -191,6 +191,7 @@ always see that a human, not the model, moved a pick.
   answered from memory instead of fetched again. Tick **Tag as sports** to make
   it citable by the prediction engine.
 - **AI Pipelines** — semantic index coverage, moderation queue, learning loop, A/B experiments, agent control panel.
+- **Autonomous agent** — ask the mind to *do* something and it runs a bounded tool loop instead of describing it: inspect the repo, write a patch, run lint and `tsc`, query the fixture database, simulate a match, or recalibrate the prediction weights. Every tool declares a risk tier; high-risk operations (migrations, auth, deploy config) stop and wait for an approval token that is minted by the route, never by the model, and is bound to the exact arguments approved. Edits land on a disposable branch that is deleted on failure, so nothing reaches `main` unsupervised. The whole runtime shares the platform's existing AI gateway rather than a second provider — see [docs/agent.md](./docs/agent.md).
 - **Moderation** — post moderation queue with approve/reject/flag.
 - **Content Console** — manage posts, toggle featured, categorize RSS imports.
 - **Monetization** — first-party ad manager, third-party ad slot configurator.
@@ -332,6 +333,7 @@ Open [http://localhost:3000](http://localhost:3000).
 - `npm run db:feed-mind` — seed the Neural Mind knowledge base
 - `npm run cronjob:sync` — legacy: push `/api/cron` schedules to cron-job.org (`scripts/cronjob-sync.mjs`). Inngest owns the cadence now; keep this only if you still want an external scheduler calling the manual endpoints
 - `npm run supabase:cron:install` — apply the DB-only maintenance jobs (`supabase/cron-maintenance.sql`) to Supabase pg_cron, so pruning runs inside Postgres instead of on Vercel
+- `npm run radio:logos` — re-source the radio dial's station logos: discovers a candidate from each station's own site, verifies **provenance** (the page must name the station) and **bytes** (a real image by magic number and decoded dimensions), then vendors it into `public/radio-logos/`. Dry run by default; `npm run radio:logos:apply` rewrites the roster. A wrong mark is worse than no mark, so anything that fails a check keeps its branded tile
 
 ## Database Seeding
 

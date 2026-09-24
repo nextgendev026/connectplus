@@ -50,12 +50,25 @@ src/
 │   ├── studio/                 # Composer, copilot, pilot review
 │   └── ui/                     # Reusable (OptimizedImage, ViewCount, etc.)
 ├── lib/                        # Core business logic
+│   ├── ai/                     # The acting half of the intelligence pipeline (see docs/agent.md)
+│   │   ├── agent-loop.ts       # Bounded tool loop, streamed as tool_call / tool_result / prediction
+│   │   ├── agent-trigger.ts    # Decides agent vs. grounded record answer, and reports why
+│   │   ├── approval.ts         # Stateless HMAC approval tokens, bound to exact arguments
+│   │   ├── guardrails.ts       # Risk tiering, path policing, redaction, sandboxed runner
+│   │   ├── git-staging.ts      # Disposable-branch staging with real rollback
+│   │   ├── tools.ts            # Repository and diagnostics tools
+│   │   └── sports-tools.ts     # Prediction tools, wrapping `sports-forecast.ts`
 │   ├── app-brain.ts            # Unified brain facade (hive + neural + platform)
 │   ├── brain-approvals.ts      # Write-request queue (propose → approve → execute)
 │   ├── brain-issues.ts         # Self-filed issue register
 │   ├── brain-pilot.ts          # Editor pilot (ops, reply parser)
 │   ├── brain-readings.ts       # Live platform readings (read access)
+│   ├── brain-awareness.ts      # Per-domain calibration (ok / warn / unproven)
 │   ├── brain-repair.ts         # Self-healing envelope
+│   ├── chat-history.ts         # Saved-chat read path: prompt turns, list rows, turn evidence
+│   ├── pipeline-health.ts      # Age of evidence per pipeline (blindness ≠ quiet)
+│   ├── job-heartbeat.ts        # Cron heartbeat ledger (Redis → Postgres), with tier state
+│   ├── query-budget.ts         # Named query ceilings, fail-fast instead of hang
 │   ├── hive-brain.ts           # Long-term memory (learned lessons)
 │   ├── neural-mind.ts          # Reasoning engine (intent, analysis, actions)
 │   ├── platform-intelligence.ts # Senses (creators, traffic, economy, region)
@@ -113,6 +126,26 @@ Admin → POST /api/admin/neural/chat → appBrain.chat()
                                     → stream response + readings + proposals
 ```
 
+### Agent path (action requests)
+
+Only requests that *ask for work* take this path — see `agent-trigger.ts`. Record questions stay on
+the grounded answer, because reading a number out of the database beats asking a model to recall it.
+
+```
+Admin → POST /api/neural-chat (Super Admin)
+        → resolveToolCallingTarget()      same gateway as the rest of the platform
+        → streamAgentEvents()
+             ├── tool_call        args validated (zod) → risk tier → run()
+             ├── tool_result      wrapped in <observation> tags and redacted
+             ├── prediction       match-model output, rendered as a card
+             └── approval         high-risk: stops here, route mints an HMAC token
+        → POST /api/neural-chat/approve   consumes the token, runs exactly that operation
+```
+
+The approval token never reaches the model: a high-risk tool returns `needsApproval` and stops,
+and the route emits the token on a UI-only event. If the tool returned it, the token would enter
+the message history on the next step and the model could approve itself.
+
 ### Push notification path
 
 ```
@@ -142,7 +175,36 @@ Each notification type has its own synthesised motif, vibration pattern, and tag
 
 Every image — covers, avatars, RSS imports, uploaded photos — goes through `/api/optimize`, which negotiates format (AVIF → WebP → JPEG) and resizes by preset (`cover`, `thumbnail`, `avatar`, `og`). Legacy images are backfill-optimized. The optimizer URL is the single source of truth; `OptimizedImage` is the single component.
 
-### 5. Cron parity
+### 5. One gateway, two models
+
+`ai-provider.ts` resolves every model call, including the agent's. There is no second provider
+configuration, so a deployment with OpenRouter or OpenCode already configured gets a working agent
+without another key — and `resolveToolCallingTarget()` returns `null` when the resolved provider is
+`builtin`, which callers must treat as "tools unavailable" rather than "no such feature".
+
+The **writing** model and the **tool-calling** model are chosen separately on purpose. Prose models
+are picked for tone and cost; a small one will accept a tool schema and then answer in prose without
+calling anything, which reads as the agent being lazy rather than the model being unable. Tool use
+needs a model that reliably emits structured calls.
+
+### 6. Unmeasured is not degraded
+
+A subsystem that could not be measured and a subsystem that measured badly are different facts, and
+this codebase keeps them apart at every layer that reports health:
+
+- `pipeline-health.ts` yields `unknown`, never `ok`, when evidence is absent — "blindness is reported
+  as blindness".
+- `brain-awareness.ts` mirrors the severity of the checks under it, so an unmeasurable pipeline
+  becomes `unproven` rather than `warn`.
+- `admin-intelligence.ts` counts `unproven` **separately from** `degraded`, because an engine nobody
+  has observed is a gap in observation. The prompt in that module already said it: *an unproven
+  model is not a failing one.*
+
+This is not cosmetic. Before it, a fresh instance with no recorded cron run reported "17 of 17 jobs
+behind", and the console's "engines not green" count mixed faults with things nobody had looked at
+— which is how a health board trains its operator to ignore it.
+
+### 7. Cron parity
 
 **Four** schedulers can run a job, and all of them read the same `CRON_JOBS` registry:
 
