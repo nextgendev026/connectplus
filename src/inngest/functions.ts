@@ -6,6 +6,7 @@ import { createPublishNotifications } from "@/lib/notifications";
 import { createLogger } from "@/lib/logger";
 import { redisIncr } from "@/lib/redis";
 import { recordHeartbeat } from "@/lib/job-heartbeat";
+import { chatEmbed } from "@/inngest/chat-embed";
 
 const log = createLogger("inngest");
 
@@ -796,4 +797,5 @@ export const functions = [
   marketingSweep,
   feedHealth,
   brainDiagnose,
+  chatEmbed,
 ];

@@ -38,6 +38,7 @@ model User {
   sentNotifications Notification[] @relation("NotifActor")
   pushSubscriptions PushSubscription[]
   preference  UserPreference?
+  chatProfile UserProfile?
   feedback    ModelFeedback[]
   subscriptions UserSubscription[]
   tipsSent      Tip[] @relation("TipsSent")
@@ -454,6 +455,10 @@ model NeuralMessage {
   id             String              @id @default(cuid())
   conversationId String
   conversation   NeuralConversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  /// Denormalised owner for per-user memory recall, so a recall query does not
+  /// need to join through the conversation. The conversation's own userId
+  /// remains the ownership boundary; this column is written from it.
+  userId         String?
   role           String
   content        String
   intent         String?
@@ -461,7 +466,16 @@ model NeuralMessage {
   metadata       String?
   createdAt      DateTime            @default(now())
 
+  /// JSON mirror of the message embedding (portable; source of truth when the
+  /// pgvector extension is unavailable on a host).
+  embeddingVec   String?             @db.Text
+  /// pgvector mirror of embeddingVec for indexed cosine recall over past chat
+  /// turns. Same pattern as PostEmbedding.vector / PostEmbedding.pgVec.
+  embedding      Unsupported("vector(384)")?
+
   @@index([conversationId])
+  @@index([conversationId, createdAt])
+  @@index([userId])
 }
 
 /// One push endpoint per browser/device.
@@ -525,6 +539,28 @@ model PostEmbedding {
   updatedAt DateTime @updatedAt
 
   @@index([postId])
+}
+
+/// The general-purpose agent's memory of ONE user, across conversations.
+///
+/// NeuralMemory is the platform's memory; this is the person's. Kept separate
+/// on purpose: a rolling summary and an inferred language mix are claims about
+/// an individual, so they must never be surfaced to anyone but that user (the
+/// `getMyAccount` tool and the chat prompt are scoped by session userId).
+model UserProfile {
+  userId       String   @id
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String?
+  /// Inferred language mix (e.g. "English + Kiswahili"), learned from marker
+  /// words, so replies mirror how the user actually writes.
+  languageMix  String?
+  /// Free-form stable preferences (JSON), updated by the agent as it learns.
+  preferences  Json?
+  /// Rolling conversation summary, refreshed every 10 messages by the
+  /// chat/embed Inngest job — the context a new conversation starts with.
+  summary      String?
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
 }
 
 /// Aggregated per-user preferences learned from interaction feedback.

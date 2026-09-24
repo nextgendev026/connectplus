@@ -88,7 +88,10 @@ export function isRecordIntent(intent: Intent): boolean {
 // intent-map memory (see learnFromInteraction) and re-injected here via
 // `applyLearnedAliases`, so the brains literally grow their grasp of how the
 // admin asks over time.
-const INTENT_PATTERNS: IntentPattern[] = [
+//
+// Exported read-only for `agent-router.ts`, which fuzzy-matches the same
+// vocabulary for chat input the console classifies exactly.
+export const INTENT_PATTERNS: IntentPattern[] = [
   {
     intent: "system_health",
     keywords: ["health", "status", "system", "uptime", "diagnostics", "operational", "running", "working", "healthy", "performance", "swahili", "hali"],

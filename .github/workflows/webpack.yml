@@ -41,6 +41,9 @@ jobs:
     - name: Unit tests
       run: npm test
 
+    - name: Intent tests
+      run: npm run test:intent
+
     - name: Build
       run: npm run build -- --webpack
 
