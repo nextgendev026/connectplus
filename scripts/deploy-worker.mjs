@@ -32,9 +32,15 @@ const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID;
 const NAME = process.env.WORKER_NAME ?? "connectplus-edge";
 const ORIGIN = process.env.ORIGIN ?? "https://connectplusapp.vercel.app";
 const CRON_SECRET = (process.env.CRON_SECRET ?? "").trim();
-// Where the worker's high-frequency durable records go, when the KV write
-// allowance is not the right budget for them. Unset ⇒ every record stays in KV.
-const REMOTE_KV_URL = (process.env.REMOTE_KV_URL ?? "").trim().replace(/\/+$/, "");
+// Where the worker's high-frequency durable records go, because the KV write
+// allowance is not the right budget for them. Derived from ORIGIN by default:
+// forgetting the variable on a redeploy would silently put the tick ledger
+// (~1,150 writes/day) back over Cloudflare's 1,000/day ceiling, and a wrong
+// URL is harmless anyway — every write falls back to KV when the remote tier
+// refuses, which is exactly the behaviour of an unset variable. Set
+// REMOTE_KV_URL=off to pin a deployment to KV only.
+const RAW_REMOTE_KV = (process.env.REMOTE_KV_URL ?? "").trim().replace(/\/+$/, "");
+const REMOTE_KV_URL = RAW_REMOTE_KV === "off" ? "" : RAW_REMOTE_KV || `${ORIGIN}/api/edge/kv`;
 const REGISTER_CRONS = process.env.CRON_TRIGGERS !== "off";
 
 /**
@@ -163,7 +169,7 @@ const metadata = {
 
 if (!REMOTE_KV_URL) {
   console.log(
-    "note: REMOTE_KV_URL not set — the tick ledger and livescore snapshot will keep consuming Cloudflare KV writes (~1.15k/day against a 1k/day allowance). Pass REMOTE_KV_URL=https://<app>/api/edge/kv to shard them onto the app's cache tier."
+    "note: REMOTE_KV_URL is off — the tick ledger and livescore snapshot will keep consuming Cloudflare KV writes (~1.15k/day against a 1k/day allowance). Set REMOTE_KV_URL=https://<app>/api/edge/kv to shard them onto the app's cache tier."
   );
 }
 

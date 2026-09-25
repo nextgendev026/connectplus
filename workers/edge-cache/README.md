@@ -320,7 +320,9 @@ one:
    `CACHE_VERSION` bump can never silently move a record to a store it was not
    chosen for.
 
-Leave `REMOTE_KV_URL` empty and every path behaves exactly as before: KV only.
+Set `REMOTE_KV_URL=off` and every path behaves exactly as before: KV only.
+Both deploy paths default it to `<origin>/api/edge/kv`, so a redeploy cannot
+drop the shard by forgetting the variable.
 `/__edge` reports which store each class is using, so the budget question is
 answerable from outside the Cloudflare dashboard:
 
