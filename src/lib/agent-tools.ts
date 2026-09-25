@@ -2,7 +2,8 @@ import { tool } from "ai";
 import { z } from "zod";
 import { createContext, runInContext } from "node:vm";
 import { platformIntelligence } from "@/lib/platform-intelligence";
-import { searchWeb } from "@/lib/web-research";
+import { fetchPageText, searchWeb } from "@/lib/web-research";
+import { proposeAction } from "@/lib/brain-approvals";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -14,16 +15,26 @@ import { prisma } from "@/lib/prisma";
  * it wraps it, so the agent and the dashboards can never disagree about what
  * the platform's numbers are.
  *
- * Two new capabilities sit beside them:
+ * Four capabilities sit beside them:
  *
  *   • **webSearch** — the open web. The keyless DuckDuckGo/Wikipedia research
  *     stack already in this repo is the default; Tavily is used only when
  *     `TAVILY_API_KEY` is set, and both degrade to `[]` rather than failing
  *     the turn.
+ *   • **readUrl** — open one source and read it, through the repo's
+ *     `safeFetch` (http(s) only, private address ranges refused, bounded body
+ *     and timeout). Snippets are how an answer becomes a guess; a page is how
+ *     it becomes research.
  *   • **codeRunner** — arithmetic and algorithms. Model-written code runs in a
  *     `node:vm` context with no `require`, no `process`, no network, a 3s
  *     wall-clock timeout and a hard output cap. It cannot read files or make
  *     requests; when it fails, the failure text is the output.
+ *   • **proposeAction** — the approval seam. Research and reading are
+ *     autonomous; a write files a `BrainActionProposal` and answers
+ *     "requested", because nothing a chat user types may change the platform
+ *     until an admin in the approval queue decides it. Ownership is checked
+ *     here — only the caller's own story — because the approver sees a summary,
+ *     not the requester's session.
  *
  * `getMyAccount` is scoped by construction: it takes no argument the model
  * could fill in, and the route injects the session's userId when it builds
@@ -185,6 +196,78 @@ export function generalAgentTools(principal: { userId: string }) {
       execute: async ({ code }) => runJsSandboxed(code),
     }),
 
+    readUrl: tool({
+      description:
+        "Open one web page and return its readable text (up to ~4,000 chars, ~9s). Use after webSearch " +
+        "when a snippet is too thin to answer from. http(s) only; answers {error} for blocked or empty pages.",
+      inputSchema: z.object({
+        url: z.string().min(8).describe("Absolute http(s) URL to read."),
+      }),
+      execute: async ({ url }) => {
+        const target = url.trim();
+        // safeFetch already refuses private and reserved address ranges; this
+        // only keeps non-http schemes out of the fetch layer entirely.
+        if (!/^https?:\/\//i.test(target)) return { error: "Only http(s) URLs can be read." };
+        const text = await fetchPageText(target, 4_000);
+        return text
+          ? { url: target, text }
+          : { url: target, error: "No readable text — blocked, paywalled, or empty." };
+      },
+    }),
+
+    proposeAction: tool({
+      description:
+        "Request admin approval for a platform WRITE on the caller's own story: publish_post or " +
+        "schedule_post. Reading, research and learning need no approval — this is only for changes. " +
+        "Files the request into the admin approval queue; nothing runs until an admin approves it.",
+      inputSchema: z.object({
+        action: z
+          .enum(["publish_post", "schedule_post"])
+          .describe("The write to request approval for."),
+        postId: z.string().min(1).describe("The caller's own post id."),
+        when: z.string().optional().describe("ISO time — required for schedule_post."),
+        rationale: z
+          .string()
+          .max(500)
+          .describe("Why this should happen, in one sentence. Shown to the approver."),
+      }),
+      execute: async ({ action, postId, when, rationale }) => {
+        const post = await prisma.post.findUnique({
+          where: { id: postId },
+          select: { authorId: true },
+        });
+        if (!post) return { ok: false, message: "That story does not exist." };
+        // The approver sees a derived summary, not this session: a stranger's
+        // post id in that summary is a request this chat is not entitled to
+        // make on the requester's behalf.
+        if (post.authorId !== principal.userId) {
+          return { ok: false, message: "You can only request approval for your own stories." };
+        }
+        const pending = await prisma.brainActionProposal.count({
+          where: { requestedBy: principal.userId, status: "PENDING" },
+        });
+        if (pending >= 3) {
+          return {
+            ok: false,
+            message:
+              "Three of your requests are already waiting for an admin. Let those settle before filing another.",
+          };
+        }
+        const filed = await proposeAction({
+          tool: action,
+          args: { postId, ...(when ? { when } : {}) },
+          rationale: rationale?.trim() || `Requested from the assistant chat.`,
+          requestedBy: principal.userId,
+          source: "chat",
+        });
+        return {
+          ok: filed.ok,
+          message: filed.message,
+          ...(filed.proposal ? { proposalId: filed.proposal.id, status: filed.proposal.status } : {}),
+        };
+      },
+    }),
+
     getCreatorStats: tool({
       description:
         "Live stats for ONE creator from the ConnectPlus platform: followers, posts, views, engagement rate, " +
@@ -265,6 +348,8 @@ export function generalAgentTools(principal: { userId: string }) {
 export const GENERAL_AGENT_TOOL_NAMES = [
   "webSearch",
   "codeRunner",
+  "readUrl",
+  "proposeAction",
   "getCreatorStats",
   "getRegionalTrends",
   "getMyAccount",
@@ -275,6 +360,7 @@ export const GENERAL_AGENT_TOOL_NAMES = [
  * knows what exists without the schema noise.
  */
 export const GENERAL_AGENT_TOOL_NOTES =
-  "Available tools: webSearch (live web facts), codeRunner (sandboxed JS for math/logic), " +
-  "getCreatorStats (one creator's real stats), getRegionalTrends (city-level platform trends), " +
-  "getMyAccount (the user's own account data)."
+  "Available tools: webSearch (live web search), readUrl (open one source and read it), " +
+  "codeRunner (sandboxed JS for math/logic), proposeAction (request admin approval before any " +
+  "platform write — research needs none), getCreatorStats (one creator's real stats), " +
+  "getRegionalTrends (city-level platform trends), getMyAccount (the user's own account data)."

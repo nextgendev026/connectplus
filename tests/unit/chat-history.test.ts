@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   chronologicalHistory,
+  composePromptHistory,
   deriveConversationTitle,
   historyFetchSize,
   previewOf,
@@ -31,6 +32,61 @@ const newestFirst = [
   { role: "user", content: "second" },
   { role: "assistant", content: "first" },
 ];
+
+describe("composePromptHistory", () => {
+  // The defect this pins: the general chat route concatenated stored turns
+  // with the client's re-sent window and appended the question again, so the
+  // model read every recent turn twice and the question up to three times. A
+  // conversation that repeats itself at the model answers oddly, and nothing
+  // fails while it happens.
+  const stored = [
+    { role: "user" as const, content: "hello" },
+    { role: "assistant" as const, content: "Hi! What's up?" },
+  ];
+  const client = [
+    { role: "user" as const, content: "hello" },
+    { role: "assistant" as const, content: "Hi! What's up?" },
+    { role: "user" as const, content: "what is 2+2" },
+  ];
+
+  it("sends the current question exactly once, as the last thing said", () => {
+    const history = composePromptHistory(stored, client, "what is 2+2");
+    expect(history.filter((t) => t.content === "what is 2+2")).toHaveLength(1);
+    expect(history.at(-1)).toEqual({ role: "user", content: "what is 2+2" });
+  });
+
+  it("does not send the client's re-sent turns a second time", () => {
+    const history = composePromptHistory(stored, client, "what is 2+2");
+    expect(history).toHaveLength(3);
+    expect(history.filter((t) => t.content === "hello")).toHaveLength(1);
+  });
+
+  it("keeps a client turn the store never persisted", () => {
+    // A reply whose persist failed after the tab closed exists only on the
+    // client; dropping it would cut the thread mid-exchange.
+    const history = composePromptHistory(
+      [{ role: "user", content: "q" }],
+      [
+        { role: "user", content: "q" },
+        { role: "assistant", content: "a2 the store never got" },
+      ],
+      "next question"
+    );
+    expect(history.map((t) => t.content)).toEqual(["q", "a2 the store never got", "next question"]);
+  });
+
+  it("uses the client window alone on a first turn", () => {
+    const history = composePromptHistory(
+      [],
+      [
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "hey" },
+      ],
+      "bye"
+    );
+    expect(history.map((t) => t.content)).toEqual(["hi", "hey", "bye"]);
+  });
+});
 
 describe("chronologicalHistory", () => {
   it("reverses a newest-first page into the order it was said", () => {

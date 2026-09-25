@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { createOpenAI } from "@ai-sdk/openai";
-import { convertToModelMessages, streamText, stepCountIs, type UIMessage } from "ai";
+import { streamText, stepCountIs, type UIMessage } from "ai";
 import { auth } from "@/lib/auth";
 import { principalFromSession } from "@/lib/policies";
 import { prisma } from "@/lib/prisma";
@@ -8,11 +8,11 @@ import { inngest } from "@/lib/inngest";
 import { createLogger } from "@/lib/logger";
 import { normalizeInput, routeChatInput } from "@/lib/agent-router";
 import { loadUserProfile, recallUserMemory } from "@/lib/agent-memory";
-import { generalAgentTools } from "@/lib/agent-tools";
+import { generalAgentTools, GENERAL_AGENT_TOOL_NOTES } from "@/lib/agent-tools";
 import { buildGeneralAgentPrompt } from "@/lib/agent-prompt";
 import { platformIntelligence } from "@/lib/platform-intelligence";
 import { resolveToolCallingTarget } from "@/lib/ai-provider";
-import { deriveConversationTitle } from "@/lib/chat-history";
+import { composePromptHistory, deriveConversationTitle } from "@/lib/chat-history";
 
 /**
  * The general-purpose chat endpoint.
@@ -141,18 +141,24 @@ export async function POST(request: NextRequest) {
     .reverse()
     .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
-  const clientHistory = await convertToModelMessages(
-    rawMessages
-      .filter((m) => m && (m.role === "user" || m.role === "assistant"))
-      .slice(-6)
-  );
+  // The client re-sends its own copy of the recent turns. The store is
+  // authoritative for what it holds, the client for what the store missed (a
+  // reply whose persist failed after the tab closed), and the current question
+  // lands exactly once at the end — concatenating the two halves used to send
+  // every recent turn twice and the question three times over.
+  const clientTurns = rawMessages
+    .filter((m) => m && (m.role === "user" || m.role === "assistant"))
+    .slice(-6)
+    .map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: (m.parts ?? [])
+        .map((part) => (part?.type === "text" && typeof part.text === "string" ? part.text : ""))
+        .join(" ")
+        .trim(),
+    }))
+    .filter((turn) => turn.content.length > 0);
 
-  const history = [...priorTurns, ...clientHistory].filter((m, i, arr) => {
-    // Stored turns and client turns can overlap on resume; consecutive exact
-    // repeats are dropped rather than sent to the model twice.
-    const previous = i > 0 ? arr[i - 1] : undefined;
-    return !previous || m.role !== previous.role || m.content !== previous.content;
-  });
+  const history = composePromptHistory(priorTurns, clientTurns, asked);
 
   /* ── Stream ───────────────────────────────────────────────────────────── */
   const client = createOpenAI({ apiKey: target.apiKey, baseURL: target.baseUrl, headers: target.extraHeaders });
@@ -164,8 +170,9 @@ export async function POST(request: NextRequest) {
       summary: profile.summary,
       recall,
       platformBrief: brief ? JSON.stringify(brief).slice(0, 2_000) : null,
+      toolNotes: GENERAL_AGENT_TOOL_NOTES,
     }),
-    messages: [...history, { role: "user" as const, content: asked }],
+    messages: history,
     tools: generalAgentTools({ userId }),
     // Read → (search | compute | read platform) → answer fits inside five
     // steps; a bound this tight is also the agent's blast radius.

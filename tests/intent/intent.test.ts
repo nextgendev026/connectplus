@@ -151,7 +151,9 @@ describe("system prompt contract", () => {
     for (const marker of [
       "NOT limited to ConnectPlus",
       "webSearch",
+      "readUrl",
       "codeRunner",
+      "proposeAction",
       "code-switching",
       "ONE clarifying question",
       "Never fabricate",
@@ -169,10 +171,13 @@ describe("system prompt contract", () => {
       summary: "2026-09-24: asked about payouts",
       recall: [{ content: "how do payouts work", createdAt: "2026-09-20T10:00:00Z", score: 0.8 }],
       platformBrief: '{"creators":{"total":12}}',
+      toolNotes: "Available tools: probe.",
     });
     expect(bare).not.toContain("remember about this user");
     expect(full).toContain("English + Kiswahili");
     expect(full).toContain("how do payouts work");
+    expect(full).toContain("Available tools: probe.");
+    expect(bare).not.toContain("Available tools");
     expect(full.length).toBeGreaterThan(bare.length);
   });
 });

@@ -83,6 +83,53 @@ export function deriveConversationTitle(message: string, max = 60): string {
   return `${(lastSpace > max * 0.5 ? clipped.slice(0, lastSpace) : clipped).trimEnd()}…`;
 }
 
+/**
+ * Compose the model's history from the store and the client's re-sent window,
+ * with the current question ending up exactly once.
+ *
+ * The general chat route used to concatenate the two halves and rely on a
+ * consecutive-repeat filter, which dropped nothing: the client re-sends the
+ * last few turns the database already holds, so the model read every recent
+ * turn twice, and the current question arrived twice more (once from the
+ * client's window, once from the route's own append). A conversation that
+ * repeats itself at the model is a conversation that answers oddly.
+ *
+ * Rules, in order:
+ *   • stored turns are authoritative and keep their position;
+ *   • a client turn the store already has (same role and text) is a duplicate
+ *     of context, not new context — dropped;
+ *   • a client turn the store is missing (a reply whose persist failed after
+ *     the tab closed) survives, in its client order;
+ *   • the current question is appended once, at the end, only when it is not
+ *     already the last thing said.
+ */
+export function composePromptHistory(
+  stored: ChatTurn[],
+  client: ChatTurn[],
+  asked: string
+): ChatTurn[] {
+  const merged: ChatTurn[] = [...stored];
+  const have = (turn: ChatTurn) =>
+    merged.some((m) => m.role === turn.role && m.content === turn.content);
+
+  for (const turn of client) {
+    // The current question is placed at the end, never mid-history — even when
+    // the same words were said earlier in the thread.
+    if (turn.role === "user" && turn.content === asked) continue;
+    if (!have(turn)) merged.push(turn);
+  }
+
+  const last = merged[merged.length - 1];
+  if (!last || last.role !== "user" || last.content !== asked) {
+    merged.push({ role: "user", content: asked });
+  }
+
+  return merged.filter((turn, i, arr) => {
+    const previous = i > 0 ? arr[i - 1] : undefined;
+    return !previous || turn.role !== previous.role || turn.content !== previous.content;
+  });
+}
+
 /** How much of the last thing said the history list shows. */
 export const PREVIEW_CHARS = 140;
 
