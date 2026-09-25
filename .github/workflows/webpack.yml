@@ -82,7 +82,14 @@ jobs:
   migrate:
     needs: check
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && env.DATABASE_URL != '' && env.DATABASE_URL != null
+    # The database guard used to live on this job's `if` beside the ref check —
+    # but `env` is not a legal context in a job-level `if`, and an expression
+    # the planner cannot parse makes the ENTIRE workflow invalid: every run was
+    # created and failed in the same second with zero jobs scheduled, so the
+    # check job never ran either. Step-level `if` does have `env`, so the
+    # no-database case is a skip where it is legal instead of a run that never
+    # starts.
+    if: github.ref == 'refs/heads/main'
     steps:
     - uses: actions/checkout@v4
 
@@ -93,7 +100,12 @@ jobs:
         cache: npm
 
     - name: Install dependencies
+      if: env.DATABASE_URL != '' && env.DATABASE_URL != null
       run: npm ci
 
     - name: Apply production migrations
-      run: npx prisma migrate deploy
+      if: env.DATABASE_URL != '' && env.DATABASE_URL != null
+      # The repo's guarded path (assert-db-target), not a raw deploy: a
+      # DATABASE_URL pointing at the legacy project must fail closed here too,
+      # exactly as it does when Vercel runs the same script on every build.
+      run: npm run db:migrate:prod
