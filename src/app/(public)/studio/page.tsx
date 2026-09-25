@@ -7,6 +7,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { apiErrorMessage } from "@/lib/errors/message";
 import { ArrowLeft, Eye, EyeOff, Upload, Loader2, X, PenLine, AlertCircle, Clock, AlignLeft, Wand2 } from "lucide-react";
 import { StudioToolbar } from "@/components/studio/StudioToolbar";
 import { StudioPreview } from "@/components/studio/StudioPreview";
@@ -320,14 +321,14 @@ export default function StudioPage() {
       if (!postId) {
         const res = await fetch("/api/posts", { method: "POST", headers, body: JSON.stringify(payload) });
         if (res.status === 401) { router.push("/auth/signin"); return null; }
-        if (!res.ok) { const err = await res.json().catch(() => ({ error: "Save failed" })); throw new Error(err.error || "Failed to save"); }
+        if (!res.ok) { const err = await res.json().catch(() => ({ error: "Save failed" })); throw new Error(apiErrorMessage(err, "Failed to save")); }
         const data = await res.json();
         postId = data?.post?.id;
         if (postId) setEditingId(postId);
       } else {
         const res = await fetch("/api/posts/" + postId, { method: "PUT", headers, body: JSON.stringify(payload) });
         if (res.status === 401) { router.push("/auth/signin"); return null; }
-        if (!res.ok) { const err = await res.json().catch(() => ({ error: "Save failed" })); throw new Error(err.error || "Failed to save"); }
+        if (!res.ok) { const err = await res.json().catch(() => ({ error: "Save failed" })); throw new Error(apiErrorMessage(err, "Failed to save")); }
       }
 
       // The revision advances only on success, so a retry of a failed save keeps
@@ -845,7 +846,7 @@ export default function StudioPage() {
     if (!coverFile) return coverImage;
     const formData = new FormData(); formData.append("file", coverFile); formData.append("kind", "post");
     const res = await fetch("/api/upload", { method: "POST", body: formData });
-    if (!res.ok) { const err = await res.json().catch(() => ({ error: "Upload failed" })); throw new Error(err.error || "Failed to upload"); }
+    if (!res.ok) { const err = await res.json().catch(() => ({ error: "Upload failed" })); throw new Error(apiErrorMessage(err, "Failed to upload")); }
     return (await res.json()).url;
   }
 
@@ -878,7 +879,7 @@ export default function StudioPage() {
       const payload = { title: title.trim(), content: content.trim(), excerpt: finalExcerpt.trim() || null, coverImage: uploadedCoverUrl, categoryId: matchedCategory?.id ?? null, tags: finalTags, status: finalStatus, scheduledAt: isScheduled ? scheduleDate!.toISOString() : null };
       const res = editingId ? await fetch("/api/posts/" + editingId, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }) : await fetch("/api/posts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (res.status === 401) { router.push("/auth/signin"); return; }
-      if (!res.ok) { const err = await res.json().catch(() => ({ error: "Publish failed" })); if (err.code === "EMAIL_NOT_VERIFIED") { setError("Your email isn't verified."); router.push("/auth/verify-email?sent=0"); return; } throw new Error(err.error || "Failed to publish"); }
+      if (!res.ok) { const err = await res.json().catch(() => ({ error: "Publish failed" })); const code = err?.code ?? err?.error?.code; if (code === "EMAIL_NOT_VERIFIED") { setError("Your email isn't verified."); router.push("/auth/verify-email?sent=0"); return; } throw new Error(apiErrorMessage(err, "Failed to publish")); }
       const data = await res.json();
       if (editingId) setEditStatus(finalStatus);
       try { localStorage.removeItem(BACKUP_KEY); } catch {}
@@ -891,7 +892,7 @@ export default function StudioPage() {
 
   async function deletePost(id: string) {
     if (!window.confirm("Delete this story permanently?")) return;
-    try { const res = await fetch("/api/posts/" + id, { method: "DELETE" }); if (res.status === 401) { router.push("/auth/signin"); return; } if (!res.ok) { const err = await res.json().catch(() => ({ error: "Delete failed" })); throw new Error(err.error || "Failed to delete"); } setMyStories((prev) => prev.filter((p) => p.id !== id)); if (editingId === id) { setEditingId(null); setEditStatus(null); setScheduledFor(""); setTitle(""); setContent(""); setExcerpt(""); setTags([]); setCategoryId(null); setCategoryName(""); setCoverImage(null); setCoverFile(null); } } catch (err) { setError(err instanceof Error ? err.message : "Something went wrong"); }
+    try { const res = await fetch("/api/posts/" + id, { method: "DELETE" }); if (res.status === 401) { router.push("/auth/signin"); return; } if (!res.ok) { const err = await res.json().catch(() => ({ error: "Delete failed" })); throw new Error(apiErrorMessage(err, "Failed to delete")); } setMyStories((prev) => prev.filter((p) => p.id !== id)); if (editingId === id) { setEditingId(null); setEditStatus(null); setScheduledFor(""); setTitle(""); setContent(""); setExcerpt(""); setTags([]); setCategoryId(null); setCategoryName(""); setCoverImage(null); setCoverFile(null); } } catch (err) { setError(err instanceof Error ? err.message : "Something went wrong"); }
   }
 
   function openStory(id: string) {

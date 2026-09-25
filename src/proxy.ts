@@ -274,6 +274,18 @@ const CSRF_EXEMPT_PREFIXES = [
   "/api/payments/paypal/webhook",
 ] as const;
 
+/**
+ * Hosts the Cloudflare edge worker (workers/edge-cache) is served at.
+ *
+ * Pinned rather than globbed: a `*.workers.dev` wildcard would let ANY account's
+ * workers.dev site bless a mutation — the suffix is multi-tenant — while
+ * `connectplus-edge.connectplusapp` is this account's own subdomain and cannot
+ * be claimed by anyone else. An origin allowlist is exactly where that
+ * difference is fatal, so the one host is written down and env configuration
+ * (`NEXT_PUBLIC_EDGE_URL` / `EDGE_URL`) still wins when it is set.
+ */
+const EDGE_WORKER_HOSTS = ["connectplus-edge.connectplusapp.workers.dev"] as const;
+
 function requestHost(request: NextRequest): string | null {
   // The URL's own host first: it is always present and is what the request was
   // addressed to. A `host` header is set by the transport, not by `new Request`,
@@ -323,10 +335,31 @@ export function isCrossSiteMutation(request: NextRequest): boolean {
   const own = requestHost(request);
   if (own && host === own) return false;
 
+  // What a proxy declares the reader's host to be. The edge worker sets
+  // `X-Forwarded-Host` to the host the browser is actually on: a reader on the
+  // worker's domain sends `Origin: https://connectplus-edge…` while the request
+  // itself was addressed to the origin, so `own` alone refused every
+  // cookie-bearing mutation made through Cloudflare — the Studio's publish
+  // button died on a 403 through the edge. A browser cannot attach this header
+  // to a form post, and a cross-origin `fetch` that sets it dies on preflight
+  // (the app never answers OPTIONS with an allow-origin), so the only parties
+  // that can present it are our proxy and a same-origin script — which is
+  // precisely whose assertion this is.
+  const forwardedHosts = (request.headers.get("x-forwarded-host") ?? "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  if (forwardedHosts.includes(host)) return false;
+
   // A proxy (the Cloudflare worker) or a preview deployment can present the
-  // canonical origin instead of the internal host, so the configured app origin
-  // is accepted too.
-  for (const candidate of [process.env.NEXT_PUBLIC_APP_URL, process.env.APP_URL]) {
+  // canonical origin instead of the internal host, so the configured app and
+  // edge origins are accepted too.
+  for (const candidate of [
+    process.env.NEXT_PUBLIC_APP_URL,
+    process.env.APP_URL,
+    process.env.NEXT_PUBLIC_EDGE_URL,
+    process.env.EDGE_URL,
+  ]) {
     if (!candidate) continue;
     try {
       if (new URL(candidate).host.toLowerCase() === host) return false;
@@ -334,6 +367,12 @@ export function isCrossSiteMutation(request: NextRequest): boolean {
       // An unparseable configuration value must not open the door.
     }
   }
+
+  // …and the deployed worker's host as the floor, so publishes keep working
+  // through the edge even where no EDGE_URL has been set. Same safety argument
+  // as the allowlist above: only a browser actually sitting on that host sends
+  // it as an Origin, and nobody outside this account can host there.
+  if ((EDGE_WORKER_HOSTS as readonly string[]).includes(host)) return false;
   return true;
 }
 

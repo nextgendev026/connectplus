@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 import { isCrossSiteMutation, proxy, resolveRateIdentity } from "@/proxy";
@@ -198,6 +198,79 @@ describe("CSRF: cookie-authenticated mutations must come from us", () => {
       )
     ).toBe(false);
     delete process.env.NEXT_PUBLIC_APP_URL;
+  });
+});
+
+describe("mutations that arrive through the Cloudflare edge worker", () => {
+  const EDGE_ORIGIN = "https://connectplus-edge.connectplusapp.workers.dev";
+
+  afterEach(() => {
+    delete process.env.EDGE_URL;
+    delete process.env.NEXT_PUBLIC_EDGE_URL;
+  });
+
+  it("accepts the edge origin from either configured edge URL", () => {
+    // The production bug this pins: on the worker's domain the browser sends
+    // Origin: https://connectplus-edge… while the request itself is addressed
+    // to the origin, so every cookie-bearing mutation through Cloudflare
+    // answered 403 and the Studio's publish button died with "[object Object]".
+    for (const key of ["EDGE_URL", "NEXT_PUBLIC_EDGE_URL"] as const) {
+      process.env[key] = EDGE_ORIGIN;
+      expect(
+        isCrossSiteMutation(
+          req("http://origin-host/api/posts", {
+            method: "POST",
+            headers: { cookie: "session=abc", origin: EDGE_ORIGIN },
+          })
+        ),
+        `${key} should bless the edge origin`
+      ).toBe(false);
+      delete process.env[key];
+    }
+  });
+
+  it("accepts the deployed worker's host with no edge URL configured", () => {
+    // The floor that keeps publishes working on a deployment that never set
+    // EDGE_URL: the host is pinned in code, not globbed — any account can
+    // register *.workers.dev, but nobody outside this one can register ours.
+    expect(
+      isCrossSiteMutation(
+        req("http://origin-host/api/posts", {
+          method: "POST",
+          headers: { cookie: "session=abc", origin: EDGE_ORIGIN },
+        })
+      )
+    ).toBe(false);
+  });
+
+  it("trusts the forwarded host a proxy declares for the reader", () => {
+    expect(
+      isCrossSiteMutation(
+        req("http://origin-host/api/posts", {
+          method: "POST",
+          headers: {
+            cookie: "session=abc",
+            origin: EDGE_ORIGIN,
+            "x-forwarded-host": "connectplus-edge.connectplusapp.workers.dev",
+          },
+        })
+      )
+    ).toBe(false);
+  });
+
+  it("refuses a foreign origin whose forwarded host does not match it", () => {
+    expect(
+      isCrossSiteMutation(
+        req("http://origin-host/api/posts", {
+          method: "POST",
+          headers: {
+            cookie: "session=abc",
+            origin: "https://evil.example",
+            "x-forwarded-host": "connectplus-edge.connectplusapp.workers.dev",
+          },
+        })
+      )
+    ).toBe(true);
   });
 });
 

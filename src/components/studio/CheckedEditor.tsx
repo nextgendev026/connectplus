@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Check, ImagePlus, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { apiErrorMessage } from "@/lib/errors/message";
 import type { WritingSuggestion } from "@/lib/writing-checks";
 
 /**
@@ -260,7 +261,7 @@ export function CheckedEditor({
           const res = await fetch("/api/upload", { method: "POST", body: form });
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: "Upload failed" }));
-            throw new Error(err.error || "Upload failed");
+            throw new Error(apiErrorMessage(err, "Upload failed"));
           }
           const data = await res.json();
           const alt = file.name.replace(/\.[a-z0-9]+$/i, "").replace(/[-_]+/g, " ").trim() || "image";
