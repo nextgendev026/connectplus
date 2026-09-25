@@ -275,6 +275,19 @@ const nextConfig = {
       { source: "/api/sports/live", headers: [...securityHeaders, { key: "Cache-Control", value: "public, s-maxage=15, stale-while-revalidate=45" }] },
       { source: "/api/sports/calendar", headers: [...securityHeaders, { key: "Cache-Control", value: "public, s-maxage=900, stale-while-revalidate=1800" }] },
       { source: "/api/forex", headers: [...securityHeaders, { key: "Cache-Control", value: "public, s-maxage=300, stale-while-revalidate=600" }] },
+      // The viewer-independent reads: comment threads, related rails, public
+      // profiles, ad slot geometry and the public settings sheet. Each route
+      // never reads a session, so the payload is identical for every caller
+      // and the CDN can answer it instead of invoking a function per
+      // anonymous page load. Paired with vercel.json — a header in only one
+      // of the two files is a header missing on some responses. Single-line
+      // entries, because the test that pins the two files together reads
+      // `source:` and `s-maxage` from the same line.
+      { source: "/api/comments", headers: [...securityHeaders, { key: "Cache-Control", value: "public, s-maxage=60, stale-while-revalidate=120" }] },
+      { source: "/api/posts/related/:postId", headers: [...securityHeaders, { key: "Cache-Control", value: "public, s-maxage=120, stale-while-revalidate=600" }] },
+      { source: "/api/profile/:username", headers: [...securityHeaders, { key: "Cache-Control", value: "public, s-maxage=300, stale-while-revalidate=900" }] },
+      { source: "/api/ads/slots", headers: [...securityHeaders, { key: "Cache-Control", value: "public, s-maxage=600, stale-while-revalidate=1800" }] },
+      { source: "/api/settings/public", headers: [...securityHeaders, { key: "Cache-Control", value: "public, s-maxage=600, stale-while-revalidate=1800" }] },
       {
         source: "/api/posts",
         headers: [

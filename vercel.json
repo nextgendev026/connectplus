@@ -45,6 +45,36 @@
       ]
     },
     {
+      "source": "/api/comments",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, s-maxage=60, stale-while-revalidate=120" }
+      ]
+    },
+    {
+      "source": "/api/posts/related/:postId",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, s-maxage=120, stale-while-revalidate=600" }
+      ]
+    },
+    {
+      "source": "/api/profile/:username",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, s-maxage=300, stale-while-revalidate=900" }
+      ]
+    },
+    {
+      "source": "/api/ads/slots",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, s-maxage=600, stale-while-revalidate=1800" }
+      ]
+    },
+    {
+      "source": "/api/settings/public",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, s-maxage=600, stale-while-revalidate=1800" }
+      ]
+    },
+    {
       "source": "/api/thumb/:path*",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400" }

@@ -96,6 +96,20 @@ const TICK_TTL_SECONDS = 86_400;
 /** Anonymous HTML: short TTL so breaking news still lands fast. */
 const HTML_TTL = 60;
 
+/**
+ * Public JSON under `/api/` with no rule of its own.
+ *
+ * The default tier, so a new read-only endpoint is covered from the day it
+ * ships instead of silently invoking a function on every anonymous poll.
+ * Three gates already stand between a response and this store — GET only,
+ * no `Cookie`/`Authorization` on the request (so there is no viewer to
+ * personalise for), and a 200 with no `Set-Cookie` (so nothing was minted for
+ * one) — and `NEVER_CACHE` names what must never be stored regardless. Thirty
+ * seconds collapses a crawler or widget storm into one origin fetch per window
+ * while a fresh comment or updated figure still lands almost immediately.
+ */
+const JSON_TTL = 30;
+
 /** Next's image optimizer output per URL — aligned with its 30-day cache. */
 const IMAGE_OPT_TTL = 60 * 60 * 24 * 30;
 
@@ -143,6 +157,13 @@ const POLLABLE = [
   // minutes, so a 30s copy at the edge answers essentially all of it. `cors:
   // false` because the client reads it same-origin.
   { test: /^\/api\/radio\/stations/, ttl: 30, swr: 120, cors: false },
+  // The exchange-rate baseline the hero insights poll. One published figure,
+  // identical for every reader, upstream moves in minutes — and the origin
+  // already declares s-maxage=300 for it, so the edge matching that turns
+  // every anonymous poll of a direct visitor's page into a HIT rather than a
+  // MISS that still costs a function invocation upstream. `cors: false`
+  // because the client reads it same-origin, like the status payload.
+  { test: /^\/api\/forex/, ttl: 300, swr: 600, cors: false },
 ];
 
 /**
@@ -548,6 +569,23 @@ const API_ALLOWLIST = [
   // Which rails are live and what each charges — identical for every visitor
   // until an admin edits a plan, so a long TTL costs nothing.
   { test: /^\/api\/payments\/providers/, ttl: 300 },
+  // The public story list: what every home, tag and archive render asks for,
+  // identical for every anonymous caller. The origin declares s-maxage=60 for
+  // it too, so the two layers agree on how fresh a feed is.
+  { test: /^\/api\/posts$/, ttl: 60 },
+  // Related-story rails under an article — one document per article, and it
+  // runs three counts per call at the origin.
+  { test: /^\/api\/posts\/related\//, ttl: 120 },
+  // Comment threads. The GET never reads a session (like totals are global
+  // counts), so one copy answers every reader of that post until a new comment
+  // lands inside the window.
+  { test: /^\/api\/comments/, ttl: 60 },
+  // Public profiles and their tabs — no session anywhere in the route.
+  { test: /^\/api\/profile\//, ttl: 300 },
+  // Ad slot geometry and the public settings sheet: admin-managed config that
+  // changes when somebody edits it, not when somebody loads a page.
+  { test: /^\/api\/ads\/slots/, ttl: 600 },
+  { test: /^\/api\/settings\/public/, ttl: 600 },
 ];
 
 /**
@@ -622,6 +660,10 @@ const NEVER_CACHE = [
   /^\/api\/cron/,
   // Per-reader sports state: favourites and reminders are scoped to a session.
   /^\/api\/sports\/(follows|reminders|track)/,
+  // The worker's own KV bridge: guarded by a shared secret, and a cache in
+  // front of the cache it feeds would only ever answer with a stale copy of
+  // the bookkeeping the freshness checks are trying to read.
+  /^\/api\/edge\//,
 ];
 
 const SWR_SECONDS = 300;
@@ -718,9 +760,15 @@ function ttlFor(pathname, response) {
   for (const entry of API_ALLOWLIST) {
     if (entry.test.test(pathname)) return entry.ttl;
   }
-  // Everything else: only renderable HTML documents are edge-cached.
   const type = response.headers.get("Content-Type") ?? "";
   if (type.includes("text/html")) return HTML_TTL;
+  // Public JSON with no more specific rule still earns a short window. The
+  // `isNever` repeat is deliberate: those paths bypass before they reach here
+  // today, and a future refactor of that bypass must not quietly start
+  // caching auth, payments or cron from this direction.
+  if (pathname.startsWith("/api/") && type.includes("application/json") && !isNever(pathname)) {
+    return JSON_TTL;
+  }
   return 0;
 }
 

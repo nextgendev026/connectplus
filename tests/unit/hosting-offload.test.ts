@@ -33,6 +33,19 @@ const read = (p: string) => readFileSync(join(root, p), "utf8");
 /** Endpoints the browser polls on a timer. Each one must be CDN-cacheable. */
 const POLLED = ["/api/radio/stations", "/api/sports/live", "/api/sports/calendar", "/api/forex"];
 
+/**
+ * Read-only endpoints whose payload never depends on who is asking — each
+ * route reads no session, so caching one caller's copy for another is safe by
+ * construction. Both config files must agree on them, same as POLLED.
+ */
+const PUBLIC_READS = [
+  "/api/comments",
+  "/api/posts/related/:postId",
+  "/api/profile/:username",
+  "/api/ads/slots",
+  "/api/settings/public",
+];
+
 afterEach(() => {
   send.mockReset();
   delete process.env.INNGEST_EVENT_KEY;
@@ -108,7 +121,7 @@ describe("request paths do not run background work twice", () => {
 describe("read-only polls are cacheable at the edge", () => {
   it("gives every polled endpoint a shared cache TTL in next.config", () => {
     const config = read("next.config.mjs");
-    for (const path of POLLED) {
+    for (const path of [...POLLED, ...PUBLIC_READS]) {
       const block = new RegExp(`source: "${path.replace(/\//g, "\\/")}"[^\\n]*s-maxage=(\\d+)`);
       expect(block.test(config), `${path} has no s-maxage in next.config.mjs`).toBe(true);
     }
@@ -123,7 +136,7 @@ describe("read-only polls are cacheable at the edge", () => {
     };
     const bySource = new Map((vercel.headers ?? []).map((h) => [h.source, h.headers]));
 
-    for (const path of POLLED) {
+    for (const path of [...POLLED, ...PUBLIC_READS]) {
       const headers = bySource.get(path);
       expect(headers, `${path} is cached in next.config but not vercel.json`).toBeDefined();
       const cache = headers?.find((h) => h.key === "Cache-Control")?.value ?? "";
@@ -140,6 +153,23 @@ describe("the Cloudflare worker is shown the hottest request", () => {
     // Every listener's player refreshed this every 20 seconds and every one of
     // those landed on an origin function, because the worker had no rule for it.
     expect(worker()).toMatch(/test: \/\^\\\/api\\\/radio\\\/stations/);
+  });
+
+  it("covers the public JSON surface by default, with tuned TTLs on the hot reads", () => {
+    // The opt-out model: a new read-only /api/ GET earns a short edge window
+    // from the day it ships — gated by GET-only, credential-free requests and
+    // a 200 with no Set-Cookie — with NEVER_CACHE as the boundary that keeps
+    // the sensitive routes out, and named TTLs on top for the reads that
+    // deserve longer than the default.
+    const source = worker();
+    expect(source).toMatch(/const JSON_TTL = \d+/);
+    expect(source).toContain('pathname.startsWith("/api/")');
+    expect(source).toContain("test: /^\\/api\\/posts$/");
+    expect(source).toContain("test: /^\\/api\\/comments/");
+    expect(source).toContain("test: /^\\/api\\/profile\\//");
+    expect(source).toContain("test: /^\\/api\\/forex/");
+    // The KV bridge itself must never be cached in front of the store it feeds.
+    expect(source).toContain("\\/api\\/edge\\/");
   });
 
   it("keeps a snapshot so a cron tick serves it without hitting the origin", () => {
