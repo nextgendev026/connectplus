@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { optimizeImage, cacheHeaders, negotiatedFormat, PRESETS } from "@/lib/image-optimizer";
-import { allowedHostsFromEnv, isPrivateHost, resolveImageTarget } from "@/lib/image-proxy";
+import { allowedHostsFromEnv, resolveImageTarget } from "@/lib/image-proxy";
+import { openValidatedStream } from "@/lib/radio-stream-guard";
 import { createLogger } from "@/lib/logger";
 
 export const runtime = "nodejs";
@@ -25,13 +26,13 @@ const log = createLogger("optimize");
  *   - RSS-imported images were not optimised at upload time.
  *   - Covers uploaded before the engine was deployed are still at full size.
  *
- * Security: the `url` parameter is user-chosen, so every fetch passes the SSRF
- * guard in `lib/image-proxy` — http(s) only, no private/loopback/link-local
- * targets, sane ports, and the redirect target is re-checked (a public host
- * must not be able to bounce us to `169.254.169.254`). The response body is
- * capped so a hostile URL cannot exhaust memory. `IMAGE_PROXY_ALLOWED_HOSTS`
- * narrows the reachable set to an explicit allowlist where a deployment wants
- * it.
+ * Security: the `url` parameter is user-chosen, so the fetch goes through
+ * `openValidatedStream` — http(s) only, no private/loopback/link-local targets,
+ * sane ports, **every DNS answer** checked, and every redirect hop re-validated
+ * before it is followed (a public host must not be able to bounce us through
+ * `169.254.169.254` on the way somewhere else). The response body is capped so
+ * a hostile URL cannot exhaust memory. `IMAGE_PROXY_ALLOWED_HOSTS` narrows the
+ * reachable set to an explicit allowlist where a deployment wants it.
  */
 
 /** Hard ceiling on the bytes we will pull through the optimizer. */
@@ -121,25 +122,20 @@ export async function GET(request: NextRequest) {
   };
 
   try {
-    const res = await fetch(target.url, {
+    // Validated hop by hop (scheme, hostname, DNS answers, redirect targets)
+    // with the body left as an unread stream for readCapped below. The old
+    // plain fetch with `redirect: "follow"` re-checked only the *final* host by
+    // string — a redirect chain that passed through a private address, or a
+    // public name resolving to one, walked straight past it.
+    const opened = await openValidatedStream(target.url, {
       headers: { "User-Agent": "connectPlus-image-optimizer/1.0" },
-      signal: AbortSignal.timeout(10_000),
-      redirect: "follow",
+      timeoutMs: 10_000,
     });
-
-    // A public URL can redirect anywhere — including the cloud metadata
-    // endpoint. Re-check where we actually landed before trusting the body.
-    const finalHost = (() => {
-      try {
-        return new URL(res.url).hostname.toLowerCase();
-      } catch {
-        return target.host;
-      }
-    })();
-    if (finalHost !== target.host && isPrivateHost(finalHost)) {
-      log.warn("rejected image proxy redirect", { url, redirectedTo: finalHost });
+    if (!opened.ok) {
+      log.warn("image fetch refused", { url, reason: opened.reason, detail: opened.detail });
       return NextResponse.json({ error: "Refused to fetch image" }, { status: 400 });
     }
+    const res = opened.response;
 
     if (!res.ok) {
       log.warn("failed to fetch source image", { url, status: res.status });

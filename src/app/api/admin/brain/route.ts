@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { principalFromSession, reauthOr401 } from "@/lib/policies";
 import { appBrain } from "@/lib/app-brain";
 import { closeIssue, openIssues, resolvedIssues } from "@/lib/brain-issues";
 import { lastRepairRun, repairMode, repairCatalog, MAX_REPAIRS_PER_RUN, type RepairMode } from "@/lib/brain-repair";
@@ -83,6 +84,11 @@ export async function POST(request: NextRequest) {
       if (!["off", "observe", "enforce"].includes(requested)) {
         return NextResponse.json({ error: "Mode must be one of: off, observe, enforce" }, { status: 400 });
       }
+      // Moving the envelope to `enforce` grants the brain permission to mutate
+      // production — the audit's canonical Tier-3 action — so it demands a
+      // session issued in the last 15 minutes, not just a valid one.
+      const stale = await reauthOr401(request, principalFromSession(session));
+      if (stale) return stale;
       // Written through the settings path so the admin settings page and this
       // control can never disagree about the envelope.
       const { updateSettings } = await import("@/lib/settings");

@@ -63,6 +63,8 @@ export type SafeFetchResult =
       text: string;
       bytes: number;
       redirects: number;
+      /** Lower-cased response headers — `etag`/`last-modified` matter to conditional GETs. */
+      headers: Record<string, string>;
     }
   | {
       ok: false;
@@ -339,6 +341,44 @@ async function defaultResolve(hostname: string): Promise<string[]> {
   return answers.map((a) => a.address);
 }
 
+export type HostResolution =
+  | { ok: true; addresses: string[] }
+  | { ok: false; reason: "unreachable" | "address_blocked"; detail: string };
+
+/**
+ * Resolve a hostname and check **every** answer against the refusal set.
+ *
+ * Exported because this is the half of the guard that cannot be skipped by a
+ * caller walking redirects manually: a name that resolves to `169.254.169.254`
+ * passes every string check. `safeFetch` and the stream guard both ask this
+ * question per hop, so the answer lives in one place — a bypass fixed here is
+ * fixed for both.
+ */
+export async function resolveHostChecked(
+  hostname: string,
+  resolve: (hostname: string) => Promise<string[]> = defaultResolve
+): Promise<HostResolution> {
+  let addresses: string[];
+  try {
+    addresses = await resolve(hostname);
+  } catch {
+    return { ok: false, reason: "unreachable", detail: "The host could not be resolved" };
+  }
+  if (addresses.length === 0) {
+    return { ok: false, reason: "unreachable", detail: "The host resolved to no address" };
+  }
+  const blocked = addresses.find((address) => isBlockedAddress(address));
+  if (blocked) {
+    log.warn("refused after resolution", { hostname, address: blocked });
+    return {
+      ok: false,
+      reason: "address_blocked",
+      detail: `Host "${hostname}" resolves to a non-public address`,
+    };
+  }
+  return { ok: true, addresses };
+}
+
 function allowedType(contentType: string | null, accept: readonly string[]): boolean {
   if (!contentType) return true; // no declaration: the size cap still applies
   const type = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
@@ -431,20 +471,11 @@ export async function safeFetch(rawUrl: string, options: SafeFetchOptions = {}):
     }
     const url = assessed.url!;
 
-    let addresses: string[];
-    try {
-      addresses = await resolve(url.hostname);
-    } catch {
-      return refuse("unreachable", "The host could not be resolved", 502);
-    }
-    if (addresses.length === 0) return refuse("unreachable", "The host resolved to no address", 502);
-
     // Every answer, not the first: a name whose records include one private
     // address is a way in, and a resolver is not a trusted component.
-    const blocked = addresses.find((address) => isBlockedAddress(address));
-    if (blocked) {
-      log.warn("refused after resolution", { hostname: url.hostname, address: blocked });
-      return refuse("address_blocked", `Host "${url.hostname}" resolves to a non-public address`, 400);
+    const resolution = await resolveHostChecked(url.hostname, resolve);
+    if (!resolution.ok) {
+      return refuse(resolution.reason, resolution.detail, resolution.reason === "address_blocked" ? 400 : 502);
     }
 
     const remaining = deadline - Date.now();
@@ -464,6 +495,15 @@ export async function safeFetch(rawUrl: string, options: SafeFetchOptions = {}):
       return refuse(timedOut ? "timeout" : "unreachable", timedOut ? "The request took too long" : "The host could not be reached", 504);
     }
 
+    // A conditional GET's "not modified". 304 is a 3xx status but carries no
+    // Location, so without this it fell into the redirect branch below and was
+    // reported as "answered a redirect with no destination" — which made
+    // conditional caching (ETag/If-None-Match on feed polls) unusable through
+    // this guard and cost every poll the whole document.
+    if (response.status === 304) {
+      return refuse("not_ok", "The server answered 304", 304);
+    }
+
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
       if (!location) return refuse("redirect_without_location", "The server answered a redirect with no destination", 502);
@@ -477,7 +517,10 @@ export async function safeFetch(rawUrl: string, options: SafeFetchOptions = {}):
       continue; // loop validates the new destination from scratch
     }
 
-    if (!response.ok) return refuse("not_ok", `The server answered ${response.status}`, 502);
+    // The upstream's own status, not a generic 502: callers map 4xx (a broken
+    // feed that will not fix itself) away from 5xx (retry), and collapsing the
+    // two made every refusal look like an outage.
+    if (!response.ok) return refuse("not_ok", `The server answered ${response.status}`, response.status);
 
     const contentType = response.headers.get("content-type");
     if (!allowedType(contentType, accept)) {
@@ -489,6 +532,11 @@ export async function safeFetch(rawUrl: string, options: SafeFetchOptions = {}):
       return refuse("too_large", `The response exceeded ${maxBytes} bytes`, 413);
     }
 
+    const headers: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      headers[key.toLowerCase()] = value;
+    });
+
     return {
       ok: true,
       url: url.toString(),
@@ -497,6 +545,7 @@ export async function safeFetch(rawUrl: string, options: SafeFetchOptions = {}):
       text: body.text,
       bytes: body.bytes,
       redirects,
+      headers,
     };
   }
 }

@@ -1,4 +1,6 @@
 import { NextRequest } from "next/server";
+import { createOpenAI } from "@ai-sdk/openai";
+import { streamText, stepCountIs } from "ai";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { neuralMind } from "@/lib/neural-mind";
@@ -8,13 +10,16 @@ import { pendingProposals } from "@/lib/brain-approvals";
 import { parseDirective, saveDirective } from "@/lib/mind-directives";
 import {
   chronologicalHistory,
+  composePromptHistory,
   deriveConversationTitle,
   historyFetchSize,
   type ReadingState,
   type StoredReading,
 } from "@/lib/chat-history";
-import { agentModelConfigured, redactAgentEvent, streamAgentEvents } from "@/lib/ai/agent-loop";
-import { shouldRunAgent } from "@/lib/ai/agent-trigger";
+import { agentModelConfigured, agentTarget, redactAgentEvent, streamAgentEvents } from "@/lib/ai/agent-loop";
+import { shouldRunAgent, consoleAnswerRoute } from "@/lib/ai/agent-trigger";
+import { generalAgentTools, GENERAL_AGENT_TOOL_NOTES } from "@/lib/agent-tools";
+import { buildGeneralAgentPrompt } from "@/lib/agent-prompt";
 
 /**
  * The console's conversation endpoint.
@@ -92,13 +97,19 @@ export async function POST(request: NextRequest) {
     const asked = message.trim();
 
     /*
-     * Where does this turn go — the grounded record answer, or the tool loop?
-     *
-     * Decided up front so the console can be told *why*, and reported on the
-     * metadata event. An operator who cannot see the routing cannot tell a model
-     * that declined from a pipeline that never tried.
+     * Where does this turn go — the model, the grounded record answer, or the
+     * tool loop? Decided by `consoleAnswerRoute` (see agent-trigger.ts for the
+     * three destinations and why each exists), then resolved against reality:
+     * a model turn with no gateway behind it degrades to the grounded path,
+     * and the routing is reported on the metadata event. An operator who
+     * cannot see the routing cannot tell a model that declined from a
+     * pipeline that never tried.
      */
     const agentPlan = shouldRunAgent(asked, (body as { agent?: unknown }).agent);
+    const explicitFlag = (body as { agent?: unknown }).agent;
+    const answerRoute = consoleAnswerRoute(agentPlan, explicitFlag);
+    const modelTarget = answerRoute === "model" ? await agentTarget().catch(() => null) : null;
+    const useModelTurn = answerRoute === "model" && modelTarget !== null;
     const agentBlocked = agentPlan.run && userRole !== "SUPER_ADMIN";
     const agentReady = agentPlan.run && !agentBlocked ? await agentModelConfigured() : false;
     const agentWillRun = agentPlan.run && !agentBlocked && agentReady;
@@ -108,7 +119,9 @@ export async function POST(request: NextRequest) {
         ? "This needs the agent, which is Super Admin only."
         : agentPlan.run && !agentReady
           ? "This needs the agent, but no model gateway is configured."
-          : agentPlan.reason,
+          : useModelTurn
+            ? "Answered by the model with conversation and web-research tools; platform records keep their grounded path."
+            : agentPlan.reason,
       intent: agentPlan.intent,
     };
 
@@ -172,7 +185,7 @@ export async function POST(request: NextRequest) {
       : null;
 
     /*
-     * One front door.
+     * One front door — for the grounded destinations.
      *
      * The route used to assemble an answer itself — try a model, else ask the
      * neural mind — which is how a question about revenue could come back without
@@ -180,26 +193,37 @@ export async function POST(request: NextRequest) {
      * reads every subsystem first and grounds the answer in what it found,
      * routes action requests into the approval queue, and falls back to the
      * deterministic engines when no provider is configured.
+     *
+     * A model-first conversational turn skips this entirely: readings are for
+     * answers about the platform, and fetching them for "good morning" was cost
+     * without content. The grounded path still runs for records, content work
+     * and actions, and as the fallback when no gateway answers.
      */
-    const base = await appBrain.chat(asked, history, { actorId: userId });
+    const base = useModelTurn
+      ? null
+      : await appBrain.chat(asked, history, { actorId: userId });
 
     // The confirmation leads the reply so the operator sees immediately that the
     // instruction was understood and is now live, rather than hoping it was.
-    const response = saved
-      ? {
-          ...base,
-          text: [
-            `📌 Directive saved and active.\n${saved.note}`,
-            "It applies to every prediction from the next model pass onward. Revoke it any time from the Directives tab.",
-            base.text,
-          ]
-            .filter(Boolean)
-            .join("\n\n"),
-          enginesUsed: [...base.enginesUsed, "directive"],
-        }
-      : base;
+    const response = !base
+      ? null
+      : saved
+        ? {
+            ...base,
+            text: [
+              `📌 Directive saved and active.\n${saved.note}`,
+              "It applies to every prediction from the next model pass onward. Revoke it any time from the Directives tab.",
+              base.text,
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
+            enginesUsed: [...base.enginesUsed, "directive"],
+          }
+        : base;
 
-    void neuralMind.learnFromInteraction(asked, response.intent, response.text).catch(() => {});
+    if (response) {
+      void neuralMind.learnFromInteraction(asked, response.intent, response.text).catch(() => {});
+    }
 
     /* Anything this turn proposed was created after this timestamp, which is how
      * the stream tells "the brain filed a request" from "requests already open". */
@@ -207,21 +231,27 @@ export async function POST(request: NextRequest) {
 
     const hiveStatus = await hiveBrain.status();
 
-    const assistantMessage = await prisma.neuralMessage.create({
-      data: {
-        conversationId: conversation.id,
-        role: "assistant",
-        content: response.text,
-        intent: response.intent,
-        enginesUsed: response.enginesUsed.join(","),
-        metadata: JSON.stringify({
-          confidence: response.confidence,
-          sources: response.sources,
-          understanding: response.understanding,
-          readings: turnEvidence(response.readings),
-        }),
-      },
-    });
+    // The grounded answer is stored before the stream opens (its text already
+    // exists); a model turn is stored after it finishes, because its text does
+    // not exist yet — and history only ever reads stored turns, so an unstored
+    // reply would vanish from the thread when the console reopens it.
+    const assistantMessage = response
+      ? await prisma.neuralMessage.create({
+          data: {
+            conversationId: conversation.id,
+            role: "assistant",
+            content: response.text,
+            intent: response.intent,
+            enginesUsed: response.enginesUsed.join(","),
+            metadata: JSON.stringify({
+              confidence: response.confidence,
+              sources: response.sources,
+              understanding: response.understanding,
+              readings: turnEvidence(response.readings),
+            }),
+          },
+        })
+      : null;
 
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
@@ -232,8 +262,8 @@ export async function POST(request: NextRequest) {
               JSON.stringify({
                 type: "metadata",
                 conversationId,
-                intent: response.intent,
-                enginesUsed: response.enginesUsed,
+                intent: response?.intent ?? agentPlan.intent,
+                enginesUsed: response?.enginesUsed ?? ["model"],
                 // Which engine answered this turn, and why. Surfaced rather than
                 // inferred, because "no tools ran" and "the tools were refused"
                 // look identical from the outside.
@@ -241,8 +271,8 @@ export async function POST(request: NextRequest) {
                 // What the brain understood, and what it grounded the answer in.
                 // Both are shown in the console: an answer whose evidence the
                 // operator cannot see is an answer they have to take on faith.
-                understanding: response.understanding,
-                readings: turnEvidence(response.readings),
+                understanding: response?.understanding,
+                readings: turnEvidence(response?.readings),
               }) + "\n"
             )
           );
@@ -254,13 +284,127 @@ export async function POST(request: NextRequest) {
           controller.enqueue(encoder.encode(JSON.stringify({ type: "hive", status: hiveStatus }) + "\n"));
 
           // A queued write is surfaced as its own event so the console can render
-          // an Approve / Reject card instead of the operator hunting for it.
-          if (pendingSince) {
+          // an Approve / Reject card instead of the operator hunting for it. On a
+          // model turn the tools have not run yet — that event comes after the
+          // stream, once proposeAction has had the chance to file anything.
+          if (!useModelTurn && pendingSince) {
             const pending = await pendingProposals().catch(() => []);
             const fresh = pending.filter((p) => new Date(p.createdAt).getTime() >= pendingSince);
             if (fresh.length > 0) {
               controller.enqueue(encoder.encode(JSON.stringify({ type: "proposals", proposals: fresh }) + "\n"));
             }
+          }
+
+          /*
+           * A model-first turn: stream the model's prose as it arrives.
+           *
+           * Real deltas from the gateway, not the chunked replay of finished
+           * text the grounded path below uses — the client vocabulary is the
+           * same `chunk` event either way. If the operator closes the tab
+           * mid-answer, the loop keeps draining so the stored transcript is
+           * what they actually read; only the emits stop.
+           */
+          if (useModelTurn && modelTarget) {
+            let clientGone = false;
+            const emit = (payload: string) => {
+              if (clientGone) return;
+              try {
+                controller.enqueue(encoder.encode(payload));
+              } catch {
+                clientGone = true;
+              }
+            };
+
+            const modelClient = createOpenAI({
+              apiKey: modelTarget.apiKey,
+              baseURL: modelTarget.baseUrl,
+              headers: modelTarget.extraHeaders,
+            });
+            const modelResult = streamText({
+              model: modelClient(modelTarget.model),
+              system: buildGeneralAgentPrompt({ toolNotes: GENERAL_AGENT_TOOL_NOTES }),
+              messages: composePromptHistory(history, [], asked),
+              // The same seven tools the public assistant gets: webSearch and
+              // readUrl for research (no approval — reading is free),
+              // proposeAction as the *only* door to a platform write.
+              tools: generalAgentTools({ userId }),
+              stopWhen: stepCountIs(5),
+              onError: ({ error }) => {
+                console.error("console model turn error:", error);
+              },
+            });
+
+            let modelText = "";
+            try {
+              for await (const delta of modelResult.textStream) {
+                if (!delta) continue;
+                modelText += delta;
+                emit(JSON.stringify({ type: "chunk", content: delta }) + "\n");
+              }
+            } catch (error) {
+              console.error("console model turn stream error:", error);
+            }
+
+            const toolsUsed = new Set<string>();
+            let steps: Awaited<typeof modelResult.steps> = [];
+            try {
+              steps = await modelResult.steps;
+            } catch {
+              // A gateway error mid-loop still leaves the partial answer worth storing.
+            }
+            for (const step of steps) {
+              for (const call of step.toolCalls) toolsUsed.add(call.toolName);
+            }
+
+            const directiveLead = saved
+              ? `📌 Directive saved and active.\n${saved.note}\n\nIt applies to every prediction from the next model pass onward. Revoke it any time from the Directives tab.\n\n`
+              : "";
+            const stored = directiveLead + (modelText.trim() || "(no reply)");
+
+            await prisma.neuralMessage
+              .create({
+                data: {
+                  conversationId,
+                  userId,
+                  role: "assistant",
+                  content: stored,
+                  intent: agentPlan.intent,
+                  enginesUsed: [...toolsUsed].join(","),
+                  metadata: JSON.stringify({
+                    route: "model",
+                    model: modelTarget.model,
+                    tools: [...toolsUsed],
+                  }),
+                },
+              })
+              .catch(() => {});
+            await prisma.neuralConversation
+              .update({ where: { id: conversationId }, data: { updatedAt: new Date() } })
+              .catch(() => {});
+
+            // Autonomous learning: research and reflection need no approval
+            // (AGENTS.md rule 12) — only platform writes go through the queue.
+            void neuralMind.learnFromInteraction(asked, agentPlan.intent, modelText).catch(() => {});
+
+            // Anything this turn's tools proposed, surfaced for the Approve /
+            // Reject card — checked after the tools, never before.
+            const pending = await pendingProposals().catch(() => []);
+            const fresh = pending.filter((p) => new Date(p.createdAt).getTime() >= pendingSince);
+            if (fresh.length > 0) emit(JSON.stringify({ type: "proposals", proposals: fresh }) + "\n");
+
+            emit(JSON.stringify({ type: "done", fullText: stored }) + "\n");
+            try {
+              controller.close();
+            } catch {
+              // The consumer is already gone; the transcript is stored above.
+            }
+            return;
+          }
+
+          if (!response) {
+            controller.enqueue(encoder.encode(JSON.stringify({ type: "error", message: "No answer engine available" }) + "\n"));
+            controller.close();
+            return;
           }
 
           const text = response.text;
@@ -301,7 +445,7 @@ export async function POST(request: NextRequest) {
             // The stored turn has to contain what the operator actually read, or the
             // next turn's history is missing the agent's half and the console will
             // contradict itself when the thread is reopened.
-            if (agentText.trim()) {
+            if (agentText.trim() && assistantMessage) {
               await prisma.neuralMessage
                 .update({
                   where: { id: assistantMessage.id },

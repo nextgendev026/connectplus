@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
 import { AppError, authenticationRequired, forbidden } from "@/lib/errors";
 import { hasSharedSecret } from "@/lib/shared-secret";
@@ -276,6 +277,32 @@ export async function requireReauthentication(
     throw new AppError("AUTHENTICATION_REQUIRED", "Please sign in again to confirm this action");
   }
   return authed;
+}
+
+/**
+ * `requireReauthentication` for the v0 routes that predate the response
+ * envelope: returns `null` when the caller may proceed, or the 401 to send.
+ *
+ * The throw-based helper belongs inside `apiHandler`, which renders an
+ * `AppError` as the canonical envelope. The payments, settings and password
+ * handlers answer with the flat `{ error: "…" }` shape their clients already
+ * read as a string, so converting the throw into a response *there* keeps
+ * every existing consumer rendering the message instead of `[object Object]`.
+ */
+export async function reauthOr401(
+  req: NextRequest,
+  principal: Principal,
+  options: { maxAgeSeconds?: number } = {}
+): Promise<NextResponse | null> {
+  try {
+    await requireReauthentication(req, principal, options);
+    return null;
+  } catch (error) {
+    if (error instanceof AppError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+    }
+    throw error;
+  }
 }
 
 /**

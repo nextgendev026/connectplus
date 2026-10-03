@@ -18,6 +18,11 @@ model User {
   coverImage    String?
   bio           String?
   role          String    @default("USER")
+  // Session revocation: every JWT carries the value it was issued with, and
+  // the session refresh compares it to this row — incrementing it (password
+  // change, "sign out everywhere") invalidates every outstanding session for
+  // that user at the next refresh, instead of waiting out a 30-day JWT.
+  tokenVersion  Int       @default(0)
   isVerified    Boolean   @default(false)
   node          String?
   emailVerified DateTime?

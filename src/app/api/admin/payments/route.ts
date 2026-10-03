@@ -5,6 +5,7 @@ import { createLogger } from "@/lib/logger";
 import { paymentProviders, settlementAmount, type PaymentProviderId } from "@/lib/payments";
 import { expireLapsedSubscriptions, paymentPipelineHealth, reconcileSubscription } from "@/lib/payments/lifecycle";
 import { grantSubscription } from "@/lib/payments/fulfill";
+import { principalFromSession, reauthOr401 } from "@/lib/policies";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -164,6 +165,12 @@ export async function POST(request: NextRequest) {
   const actorId = (session?.user as { id?: string } | undefined)?.id;
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!isAdmin(role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  // Tier-3: this endpoint grants subscriptions and moves money's bookkeeping.
+  // A valid-but-old session is not proof of who is at the keyboard now, so
+  // every action here demands a sign-in from the last 15 minutes.
+  const stale = await reauthOr401(request, principalFromSession(session));
+  if (stale) return stale;
 
   const body = await request.json().catch(() => null);
   if (!body?.action) return NextResponse.json({ error: "action is required" }, { status: 400 });

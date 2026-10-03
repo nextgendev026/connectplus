@@ -7,6 +7,7 @@ import {
   settingDef,
 } from "@/lib/settings";
 import { analyticsIdProblem, sanitizeIntegrationHtml } from "@/lib/integration-scripts";
+import { principalFromSession, reauthOr401 } from "@/lib/policies";
 
 /**
  * Settings that inject code into every page.
@@ -95,6 +96,12 @@ export async function PUT(request: NextRequest) {
           { status: 403 }
         );
       }
+      // Tier-3: `enforce` lets the brain mutate production without a human in
+      // the loop, so the flip demands a freshly issued session — a valid-but-
+      // old token (the stolen-session threat) is refused with a message that
+      // tells the operator to sign in again.
+      const stale = await reauthOr401(request, principalFromSession(session));
+      if (stale) return stale;
       const mode = validUpdates.brainSelfHeal.trim().toLowerCase();
       if (!["off", "observe", "enforce"].includes(mode)) {
         return NextResponse.json(

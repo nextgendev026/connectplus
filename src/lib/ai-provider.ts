@@ -260,6 +260,27 @@ const CONTENT_INTENTS: Intent[] = [
 ];
 
 /**
+ * The writing-act subset of `CONTENT_INTENTS` — deliberately **without**
+ * `general_chat` and `unknown`.
+ *
+ * Two different questions wear one list. "Should the LLM get a chance at this
+ * turn?" (CONTENT_INTENTS) includes casual conversation, because a fluent
+ * answer beats a deterministic one for "hello". "Does this turn want the
+ * *writing* prompt — act on the draft, don't describe the process?" does not:
+ * routing a greeting through the blogging assistant is how a console ends up
+ * answering basic conversation with platform-writing boilerplate instead of
+ * talking to the person.
+ */
+const WRITING_INTENTS: Intent[] = CONTENT_INTENTS.filter(
+  (intent) => intent !== "general_chat" && intent !== "unknown"
+);
+
+/** True when the turn is a piece of writing work rather than conversation. */
+export function isWritingIntent(intent: Intent): boolean {
+  return WRITING_INTENTS.includes(intent);
+}
+
+/**
  * Resolve the active AI provider. Priority: explicit `aiProvider` setting
  * (admin console) → env key → builtin deterministic brains. Returns
  * `{ provider: "builtin" }` when no key is configured so every caller can

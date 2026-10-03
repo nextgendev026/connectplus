@@ -1,4 +1,4 @@
-import { assessUrl, type SafeFetchReason } from "@/lib/safe-fetch";
+import { assessUrl, resolveHostChecked, type SafeFetchReason } from "@/lib/safe-fetch";
 
 /**
  * The redirect-validating half of an outbound audio request.
@@ -12,6 +12,10 @@ import { assessUrl, type SafeFetchReason } from "@/lib/safe-fetch";
  *
  * So this module reuses `assessUrl` and implements the redirect walk explicitly,
  * with `redirect: "manual"`, so every hop is inspected before it is followed.
+ * Each hop's hostname is also *resolved* and every answer checked against the
+ * refusal set (`resolveHostChecked`) — a public name that resolves to a
+ * private address used to walk straight past the string checks; that gap is
+ * closed here and in `safeFetch` by the same helper.
  */
 
 export type StreamGuardFailure = {
@@ -38,11 +42,9 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 /**
  * Refuse a stream URL before any connection is attempted.
  *
- * Cheap and synchronous, so a bad catalog entry costs nothing. Note what this
- * does *not* do: it does not resolve the hostname, so a public name that resolves
- * to a private address is not caught here. That is a real limit, stated rather
- * than implied — closing it needs a DNS check per hop, which is the next step for
- * this module and not a claim about the current one.
+ * Cheap and synchronous, so a bad catalog entry costs nothing. DNS is not part
+ * of this half — a lookup is async by nature — but `openValidatedStream`
+ * performs it before every hop it actually connects to.
  */
 export function guardStreamUrl(raw: string): { ok: true; url: string } | StreamGuardFailure {
   const assessment = assessUrl(raw);
@@ -74,10 +76,13 @@ export async function openValidatedStream(
   raw: string,
   options: {
     headers?: Record<string, string>;
+    method?: string;
     maxRedirects?: number;
     timeoutMs?: number;
     /** Injected for tests. */
     fetchImpl?: typeof fetch;
+    /** Injected for tests: DNS resolver. */
+    resolve?: (hostname: string) => Promise<string[]>;
   } = {}
 ): Promise<StreamGuardSuccess | StreamGuardFailure> {
   const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
@@ -96,11 +101,21 @@ export async function openValidatedStream(
         : { ok: false, reason: "redirect_blocked", detail: `redirect ${hop} → ${checked.detail}` };
     }
 
+    // Resolve before connecting: the string checks above cannot see what a name
+    // points at, and DNS answers are attacker-influenced by definition.
+    const resolution = await resolveHostChecked(new URL(checked.url).hostname, options.resolve);
+    if (!resolution.ok) {
+      return hop === 0
+        ? { ok: false, reason: resolution.reason, detail: resolution.detail }
+        : { ok: false, reason: "redirect_blocked", detail: `redirect ${hop} → ${resolution.detail}` };
+    }
+
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     let response: Response;
     try {
       response = await doFetch(checked.url, {
+        method: options.method ?? "GET",
         signal: ctrl.signal,
         // Manual, so a redirect is a decision rather than a fait accompli.
         redirect: "manual",

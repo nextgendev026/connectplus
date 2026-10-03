@@ -24,6 +24,7 @@
  */
 
 import { classifyIntent, isRecordIntent, type Intent } from "@/lib/neural-intent";
+import { isWritingIntent } from "@/lib/ai-provider";
 
 export interface TriggerDecision {
   run: boolean;
@@ -79,4 +80,35 @@ export function shouldRunAgent(message: string, explicit?: unknown): TriggerDeci
     reason: "No action was requested, so the grounded answer is used.",
     intent,
   };
+}
+
+/** Where the console's answer comes from. */
+export type ConsoleAnswerRoute = "agent" | "grounded" | "model";
+
+/**
+ * Which destination owns a console turn, once `shouldRunAgent` has spoken.
+ *
+ *   - `agent`    — the repo tool loop: action verbs and explicit tools-on.
+ *   - `grounded` — `appBrain.chat`'s record path. Record intents (numbers are
+ *                  read, never recalled), `mind_action` (the approval queue)
+ *                  and content-writing intents (their own tuned prompt) stay
+ *                  here, and so does any explicit tools-off turn.
+ *   - `model`    — everything conversational: greetings, questions, anything
+ *                  needing the live web. This destination did not exist once:
+ *                  without it the console answered "hello" and "what happened
+ *                  in the news" from deterministic platform readings, which
+ *                  is in-app by construction and has no tools to check the
+ *                  world with. The caller falls back to `grounded` when no
+ *                  model gateway is configured.
+ */
+export function consoleAnswerRoute(plan: TriggerDecision, explicit?: unknown): ConsoleAnswerRoute {
+  if (plan.run) return "agent";
+  if (explicit === false) return "grounded";
+  if (isRecordIntent(plan.intent)) return "grounded";
+  if (plan.intent === "mind_action") return "grounded";
+  // Writing work keeps its tuned prompt — but `general_chat` and `unknown`
+  // are conversation, not writing, and were the exact reason a greeting used
+  // to come back dressed as platform-writing boilerplate.
+  if (isWritingIntent(plan.intent)) return "grounded";
+  return "model";
 }

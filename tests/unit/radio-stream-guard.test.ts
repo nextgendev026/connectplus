@@ -31,6 +31,9 @@ function redirectResponse(location: string, status = 302): Response {
   return new Response(null, { status, headers: { location } });
 }
 
+/** DNS answers for injected fetches — offline tests must never resolve real names. */
+const publicResolve = async () => ["93.184.216.34"];
+
 describe("guardStreamUrl", () => {
   it("accepts an ordinary public https stream", () => {
     const result = guardStreamUrl("https://atunwadigital.streamguys1.com/capitalfm");
@@ -71,6 +74,7 @@ describe("openValidatedStream", () => {
     const fetchImpl = vi.fn(async () => streamResponse());
     const opened = await openValidatedStream("https://stream.example/live", {
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      resolve: publicResolve,
     });
 
     expect(opened.ok).toBe(true);
@@ -85,6 +89,7 @@ describe("openValidatedStream", () => {
     const fetchImpl = vi.fn(async () => streamResponse());
     const opened = await openValidatedStream("http://169.254.169.254/latest/meta-data/", {
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      resolve: publicResolve,
     });
 
     expect(opened.ok).toBe(false);
@@ -99,6 +104,7 @@ describe("openValidatedStream", () => {
       .mockResolvedValueOnce(streamResponse());
     const opened = await openValidatedStream("https://stream.example/live", {
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      resolve: publicResolve,
     });
 
     expect(opened.ok).toBe(true);
@@ -116,6 +122,7 @@ describe("openValidatedStream", () => {
       .mockResolvedValueOnce(redirectResponse("http://169.254.169.254/latest/meta-data/"));
     const opened = await openValidatedStream("https://stream.example/live", {
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      resolve: publicResolve,
     });
 
     expect(opened.ok).toBe(false);
@@ -130,6 +137,7 @@ describe("openValidatedStream", () => {
     const fetchImpl = vi.fn().mockResolvedValueOnce(redirectResponse("http://localhost:8080/admin"));
     const opened = await openValidatedStream("https://stream.example/live", {
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      resolve: publicResolve,
     });
     expect(opened.ok).toBe(false);
     if (!opened.ok) expect(opened.reason).toBe("redirect_blocked");
@@ -144,6 +152,7 @@ describe("openValidatedStream", () => {
       .mockResolvedValueOnce(streamResponse());
     const opened = await openValidatedStream("https://stream.example/radio/", {
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      resolve: publicResolve,
     });
 
     expect(opened.ok).toBe(true);
@@ -155,6 +164,7 @@ describe("openValidatedStream", () => {
     const fetchImpl = vi.fn(async () => redirectResponse("https://stream.example/next"));
     const opened = await openValidatedStream("https://stream.example/live", {
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      resolve: publicResolve,
       maxRedirects: 3,
     });
 
@@ -166,9 +176,24 @@ describe("openValidatedStream", () => {
     const fetchImpl = vi.fn().mockResolvedValueOnce(new Response(null, { status: 302 }));
     const opened = await openValidatedStream("https://stream.example/live", {
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      resolve: publicResolve,
     });
     expect(opened.ok).toBe(false);
     if (!opened.ok) expect(opened.reason).toBe("redirect_without_location");
+  });
+
+  it("refuses a public name that resolves to a private address", async () => {
+    // The gap the string checks cannot see: `looks-public.example` passes every
+    // hostname rule, but its A record is the metadata service. DNS is checked
+    // per hop, so the connection is never attempted.
+    const fetchImpl = vi.fn(async () => streamResponse());
+    const opened = await openValidatedStream("https://looks-public.example/live", {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      resolve: async () => ["169.254.169.254"],
+    });
+    expect(opened.ok).toBe(false);
+    if (!opened.ok) expect(opened.reason).toBe("address_blocked");
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("surfaces a transport failure as unreachable rather than throwing", async () => {
@@ -177,6 +202,7 @@ describe("openValidatedStream", () => {
     });
     const opened = await openValidatedStream("https://stream.example/live", {
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      resolve: publicResolve,
     });
     expect(opened.ok).toBe(false);
     if (!opened.ok) expect(opened.reason).toBe("unreachable");
@@ -189,6 +215,7 @@ describe("openValidatedStream", () => {
     const fetchImpl = vi.fn(async () => new Response(null, { status: 401 }));
     const opened = await openValidatedStream("https://stream.example/live", {
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      resolve: publicResolve,
     });
     expect(opened.ok).toBe(true);
     if (opened.ok) expect(opened.response.status).toBe(401);

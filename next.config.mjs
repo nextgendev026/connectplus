@@ -156,13 +156,15 @@ const nextConfig = {
       { protocol: "https", hostname: "**.unsplash.com" },
       { protocol: "https", hostname: "i.pravatar.cc" },
       { protocol: "https", hostname: "picsum.photos" },
-      // RSS ingestion pulls covers from any publisher domain on the web —
-      // allowlisting the open web through the optimizer (which re-serves
-      // everything as AVIF/WebP from our own origin) is what keeps every
-      // imported story illustrated. http sources get upgraded to https
-      // delivery, which also kills mixed-content warnings on mobile.
-      { protocol: "https", hostname: "**" },
-      { protocol: "http", hostname: "**" },
+      // The open-web `**` entries that used to live here ("RSS covers come
+      // from any publisher") are gone deliberately. With the custom loader in
+      // place this list is inert — the optimizer fetches nothing — but inert
+      // settings are exactly the ones that silently become live again: drop
+      // the loader in some future deployment and `hostname: "**"` would hand
+      // the built-in optimizer the open web, including http. Delivery of
+      // arbitrary publisher covers goes through /api/optimize, whose SSRF
+      // guard (image-proxy + radio-stream-guard, DNS and redirect hops
+      // checked) is the real boundary; unknown hosts now fail closed here.
     ],
     formats: ["image/avif", "image/webp"],
     deviceSizes: [640, 750, 828, 1080, 1200],

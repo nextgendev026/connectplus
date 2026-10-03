@@ -314,9 +314,76 @@ async function kvGetJson(env, key) {
   }
 }
 
+/* ── The daily KV write budget ─────────────────────────────────────────────
+
+   Cloudflare KV's free plan allows 1,000 *writes* a day, and the shard above
+   is the primary defence: in the normal case every durable write goes to the
+   remote tier and KV sees none of them. The case this guard exists for is the
+   abnormal one — the remote tier down while the tick ledger and the per-colo
+   snapshot fan-out keep firing, which previously spent the whole allowance in
+   a few hours and then failed until UTC midnight.
+
+   The accounting is deliberately conservative: each admitted write is charged
+   TWICE — once for the record, once for the counter increment itself — so the
+   total of every KV write this function ever performs stays at or below the
+   budget. The default (800) sits 200 below the plan's ceiling.
+
+   Honest limits, stated rather than implied: KV has no read-modify-write
+   atomicity, so concurrent colos can lose an increment and under-count. The
+   headroom absorbs that for this workload's concurrency; the shard remains the
+   real protection and this is the backstop under it. `KV_DAILY_WRITE_BUDGET=0`
+   (or any non-number) disables the guard entirely.
+──────────────────────────────────────────────────────────────────────────── */
+
+const KV_DAILY_WRITE_BUDGET_DEFAULT = 800;
+const kvBudgetKey = (day) => `kv-budget:${day}`;
+
+function kvBudgetFor(env) {
+  return Number(env && env.KV_DAILY_WRITE_BUDGET !== undefined
+    ? env.KV_DAILY_WRITE_BUDGET
+    : KV_DAILY_WRITE_BUDGET_DEFAULT);
+}
+
+/** Charge one attempt against today's budget; false means "do not write". */
+async function kvBudgetAllows(kv, budget) {
+  const day = new Date().toISOString().slice(0, 10);
+  const key = kvBudgetKey(day);
+  try {
+    const raw = await kv.get(key);
+    const used = Number(raw) || 0;
+    // +2: the counter increment we are about to perform and the record itself.
+    if (used + 2 > budget) return false;
+    await kv.put(key, String(used + 2), { expirationTtl: 172_800 });
+    return true;
+  } catch {
+    // Fail open: an unreachable counter means the store is already in trouble,
+    // and the budget's job is protecting the allowance — not blocking the
+    // ledger. The data write below will fail on its own if the store is down.
+    return true;
+  }
+}
+
+/** What `/__edge` reports so the budget is answerable without the dashboard. */
+async function kvBudgetStatus(env) {
+  const budget = kvBudgetFor(env);
+  const day = new Date().toISOString().slice(0, 10);
+  const kv = kvStore(env);
+  if (!kv || !(budget > 0)) return { day, budget: 0, used: 0, enabled: false };
+  const raw = await kv.get(kvBudgetKey(day)).catch(() => null);
+  return { day, budget, used: Number(raw) || 0, enabled: true };
+}
+
 async function kvPutJson(env, key, value, ttlSeconds) {
   const kv = kvStore(env);
   if (!kv) return false;
+  const budget = kvBudgetFor(env);
+  if (budget > 0 && !(await kvBudgetAllows(kv, budget))) {
+    console.log(
+      `edge-kv: write ${key} refused — daily KV write budget (${budget}) spent; ` +
+        "the record lives on its Cache API copy until the budget resets or the remote tier returns"
+    );
+    return false;
+  }
   try {
     // KV's floor is 60s; every snapshot TTL is above it.
     await kv.put(key, JSON.stringify(value), {
@@ -660,6 +727,12 @@ const NEVER_CACHE = [
   /^\/api\/cron/,
   // Per-reader sports state: favourites and reminders are scoped to a session.
   /^\/api\/sports\/(follows|reminders|track)/,
+  // Per-caller: the handler geolocates from the *request's* IP header, so one
+  // anonymous copy would hand every reader in the colo somebody else's city's
+  // weather for the JSON tier's 30s. Correctness first — the origin keeps its
+  // own 30-minute-per-IP geo cache, so the bypass costs one cheap function
+  // call, not a provider round trip per request.
+  /^\/api\/weather/,
   // The worker's own KV bridge: guarded by a shared secret, and a cache in
   // front of the cache it feeds would only ever answer with a stale copy of
   // the bookkeeping the freshness checks are trying to read.
@@ -994,6 +1067,10 @@ export default {
           shards: Object.fromEntries(
             SNAPSHOTS.map((s) => [s.id, prefersRemote(env, `snapshot:${s.id}`) ? "remote" : "kv"])
           ),
+          // Today's KV write spend, counting the counter: the question
+          // "are we going to hit the 1,000/day ceiling?" answered from
+          // outside the Cloudflare dashboard.
+          kvWriteBudget: await kvBudgetStatus(env),
         },
         schedules: SCHEDULES.map((s) => `${s.cron} → ${s.trigger}`),
         cronSecret: Boolean(env.CRON_SECRET),

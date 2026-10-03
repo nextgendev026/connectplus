@@ -1,0 +1,107 @@
+# Security gates, kept out of the build workflow on purpose.
+#
+# The build workflow (webpack.yml) earns its green by compiling and passing
+# tests; these earn a separate green for dependency health, secret hygiene,
+# static analysis and schema drift. Separate files means a failing gate marks
+# its own check red instead of either (a) being folded into the build's single
+# verdict or (b) making the whole workflow unparseable — the failure mode that
+# silently killed every run of this repository's CI for 50+ commits lived in a
+# job-level `if` expression, so every `if` here is written where the `env`
+# context is legal (step level) or avoided entirely.
+name: Security Gates
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    - cron: "0 6 * * 1"   # weekly Monday 06:00 UTC — catches advisories that land without a push
+
+# Least privilege by default; jobs that need more ask for it themselves.
+permissions:
+  contents: read
+
+# The drift check needs a live database. Like webpack.yml's migrate job, the
+# secret may be absent (it is, on this repository's Actions today) — the check
+# then skips at step level, where `env` is a legal context, rather than
+# failing or, worse, invalidating the workflow.
+env:
+  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      # Production dependencies must be clean at high+ — this is the gate.
+      # Dev-tooling advisories (test runners, bundlers) cannot reach the
+      # deployed runtime, so they are reported below rather than blocking;
+      # they still surface in the step summary instead of vanishing.
+      - name: npm audit (production, fail on high/critical)
+        run: npm audit --omit=dev --audit-level=high
+      - name: npm audit (all dependencies, informational)
+        if: always()
+        run: |
+          {
+            echo "## Full dependency audit (informational)"
+            echo '```'
+            npm audit --audit-level=high || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # gitleaks inspects history, not just the tree
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  codeql:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write   # upload the SARIF results
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+
+  migration-drift:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      # The live database and schema.prisma must agree; `--exit-code` makes
+      # divergence a red check instead of a surprise at deploy time. This is
+      # the same guard the npm db:* scripts enforce (assert-db-target), asked
+      # of the pull request as well.
+      - name: Check migration drift
+        if: env.DATABASE_URL != '' && env.DATABASE_URL != null
+        run: npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code

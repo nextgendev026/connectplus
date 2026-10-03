@@ -15,6 +15,8 @@ declare module "next-auth" {
     username?: string;
     avatar?: string | null;
     emailVerified?: Date | null;
+    /** The row's `tokenVersion` at issue time — see the jwt callback below. */
+    tokenVersion?: number;
   }
 
   interface Session {
@@ -180,6 +182,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           username: user.username,
           avatar: user.avatar,
           emailVerified,
+          tokenVersion: user.tokenVersion ?? 0,
         };
       },
     }),
@@ -238,6 +241,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           token.username = dbUser.username;
           token.avatar = dbUser.avatar ?? null;
           token.emailVerified = dbUser.emailVerified ?? null;
+          token.tokenVersion = dbUser.tokenVersion ?? 0;
           token.roleFetchedAt = Date.now();
           return token;
         }
@@ -248,6 +252,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.username = user.username;
         token.avatar = user.avatar ?? null;
         token.emailVerified = user.emailVerified ?? null;
+        token.tokenVersion = user.tokenVersion ?? 0;
         token.roleFetchedAt = Date.now();
       } else if (token.id) {
         // Keep role/username fresh: re-read from the DB at most once every five
@@ -259,9 +264,33 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           try {
             const fresh = await prisma.user.findUnique({
               where: { id: token.id as string },
-              select: { role: true, username: true, avatar: true, emailVerified: true },
+              select: { role: true, username: true, avatar: true, emailVerified: true, tokenVersion: true },
             });
             if (fresh) {
+              /*
+               * Session revocation. The token carries the tokenVersion it was
+               * issued with; a mismatch means the row moved on (password
+               * change, "sign out everywhere") and this session is dead.
+               * A missing claim reads as 0 — sessions issued before the
+               * column existed stay valid until the first real bump, rather
+               * than logging every user out on deploy.
+               *
+               * Checked on the same five-minute cadence as the role refresh,
+               * deliberately: a per-request lookup would put a database read
+               * on every authenticated request to save at most five minutes
+               * of exposure, on the free-tier database this app also has to
+               * keep inside its connection budget.
+               */
+              const claimedVersion = typeof token.tokenVersion === "number" ? token.tokenVersion : 0;
+              if (fresh.tokenVersion !== claimedVersion) {
+                logger.warn("session revoked: tokenVersion mismatch", {
+                  userId: token.id as string,
+                  claimed: claimedVersion,
+                  current: fresh.tokenVersion,
+                });
+                return null;
+              }
+              token.tokenVersion = fresh.tokenVersion;
               token.role = fresh.role;
               token.username = fresh.username ?? token.username;
               token.avatar = fresh.avatar ?? token.avatar;

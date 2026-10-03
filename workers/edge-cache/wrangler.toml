@@ -58,6 +58,13 @@ ORIGIN = "https://connectplusapp.vercel.app"
 # "Free tier" in README.md for the full distribution.
 REMOTE_KV_URL = "https://connectplusapp.vercel.app/api/edge/kv"
 
+# Backstop under the shard: the most KV writes this deployment will spend in
+# one UTC day, counting every write (record + counter). 800 leaves 200 of
+# headroom under the free plan's 1,000/day ceiling, so even the remote tier
+# going down for a full day cannot exhaust the namespace. Set to 0 to disable.
+# Reported live at /__edge → storage.kvWriteBudget.
+KV_DAILY_WRITE_BUDGET = "800"
+
 # Secrets (set with `wrangler secret put`, or by scripts/deploy-worker.mjs):
 #   CRON_SECRET — the same shared secret /api/cron verifies, so this worker can
 #                 drive the jobs it owns. Without it the pings are still sent but

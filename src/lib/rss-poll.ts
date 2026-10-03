@@ -5,6 +5,7 @@ import { autoTagPost } from "@/lib/auto-tag";
 import { evaluateFeedItem, type CategoryGuess } from "@/lib/rss-intelligence";
 import { createLogger } from "@/lib/logger";
 import { redisIncr } from "@/lib/redis";
+import { safeFetch } from "@/lib/safe-fetch";
 
 const log = createLogger("rss-poll");
 
@@ -84,45 +85,71 @@ async function fetchFeedXml(feed: {
   let lastStatus: FeedFetchStatus = "NETWORK_ERROR";
 
   for (let attempt = 1; attempt <= FETCH_ATTEMPTS; attempt++) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
     try {
       const headers: Record<string, string> = {
         "User-Agent": FETCH_UA,
-        Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
         "Accept-Language": "en-US,en;q=0.9,sw;q=0.8",
         "Cache-Control": "no-cache",
       };
       if (feed.httpEtag) headers["If-None-Match"] = feed.httpEtag;
       if (feed.httpLastModified) headers["If-Modified-Since"] = feed.httpLastModified;
 
-      const res = await fetch(feed.url, { signal: ctrl.signal, redirect: "follow", headers });
-      clearTimeout(timer);
+      // Through the SSRF guard: a feed URL is registered by an admin but its
+      // *content* redirects wherever the publisher points, and a feed that
+      // answers `302 → http://169.254.169.254/` used to be followed blind.
+      // Conditional validators are sent as before; a 304 comes back as a
+      // refusal with status 304 and is mapped below.
+      const result = await safeFetch(feed.url, {
+        timeoutMs: FETCH_TIMEOUT_MS,
+        maxBytes: 4 * 1024 * 1024,
+        headers,
+        // Wildcards keep parity with the old plain fetch, which accepted any
+        // content type a 200 carried — publishers serve feeds as everything
+        // from `application/rss+xml` to `application/octet-stream`.
+        accept: [
+          "application/rss+xml",
+          "application/atom+xml",
+          "application/xml",
+          "application/feed+json",
+          "application/json",
+          "text/xml",
+          "text/plain",
+          "text/html",
+          "text/*",
+          "application/*",
+        ],
+      });
 
-      if (res.status === 304) {
-        return { status: "NOT_MODIFIED", httpStatus: 304 };
-      }
-      if (!res.ok) {
-        lastStatus = "HTTP_ERROR";
-        lastError = `HTTP ${res.status} ${res.statusText}`.trim();
-        // 4xx (other than 429) will not fix itself — retrying wastes egress.
-        if (res.status >= 400 && res.status < 500 && res.status !== 429) break;
-      } else {
-        const xml = await res.text();
+      if (result.ok) {
         return {
           status: "OK",
-          xml,
-          etag: res.headers.get("etag"),
-          lastModified: res.headers.get("last-modified"),
-          httpStatus: res.status,
+          xml: result.text,
+          etag: result.headers["etag"] ?? null,
+          lastModified: result.headers["last-modified"] ?? null,
+          httpStatus: result.status,
         };
       }
+
+      if (result.status === 304) {
+        return { status: "NOT_MODIFIED", httpStatus: 304 };
+      }
+
+      if (result.reason === "not_ok") {
+        lastStatus = "HTTP_ERROR";
+        lastError = `HTTP ${result.status}`;
+        // 4xx (other than 429) will not fix itself — retrying wastes egress.
+        if (result.status >= 400 && result.status < 500 && result.status !== 429) break;
+      } else if (result.reason === "timeout") {
+        lastStatus = "TIMEOUT";
+        lastError = `timed out after ${FETCH_TIMEOUT_MS / 1000}s`;
+      } else {
+        lastStatus = "NETWORK_ERROR";
+        lastError = result.detail;
+      }
     } catch (err: unknown) {
-      clearTimeout(timer);
       const msg = err instanceof Error ? err.message : String(err);
-      const aborted = err instanceof Error && (err.name === "AbortError" || /aborted/i.test(msg));
-      lastStatus = aborted ? "TIMEOUT" : "NETWORK_ERROR";
-      lastError = aborted ? `timed out after ${FETCH_TIMEOUT_MS / 1000}s` : msg;
+      lastStatus = "NETWORK_ERROR";
+      lastError = msg;
     }
     if (attempt < FETCH_ATTEMPTS) await new Promise((r) => setTimeout(r, 700 * attempt));
   }
@@ -274,27 +301,35 @@ export function mediaFieldUrl(value: unknown): string | null {
 
 async function fetchOgImage(articleUrl: string): Promise<string | null> {
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000);
-    const res = await fetch(articleUrl, {
-      signal: controller.signal,
-      redirect: "follow",
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; ConnectPlus RSS Reader/1.0)",
-        Accept: "text/html",
-      },
+    // The article URL arrived inside a feed document — attacker-influenced by
+    // definition, which is exactly the shape `safeFetch` exists for: scheme and
+    // host checks, DNS of every answer, each redirect hop re-validated, body
+    // capped while being read.
+    const result = await safeFetch(articleUrl, {
+      timeoutMs: 6_000,
+      maxBytes: 2 * 1024 * 1024,
+      accept: ["text/html", "application/xhtml+xml", "text/plain", "text/*", "application/*"],
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; ConnectPlus RSS Reader/1.0)" },
     });
-    clearTimeout(timer);
-    if (!res.ok) return null;
-    const html = await res.text();
+    if (!result.ok) return null;
+    const html = result.text;
     const og = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
-    if (og?.[1]) return og[1];
+    if (og?.[1]) return resolveMaybeRelative(og[1], result.url);
     const image = html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i);
-    if (image?.[1]) return image[1];
+    if (image?.[1]) return resolveMaybeRelative(image[1], result.url);
     const firstImg = html.match(/<img[^>]+src=["']([^"']+)["']/i);
-    return firstImg?.[1] ?? null;
+    return firstImg?.[1] ? resolveMaybeRelative(firstImg[1], result.url) : null;
   } catch {
     return null;
+  }
+}
+
+/** Resolve a page-extracted URL against the page that actually answered (redirects included). */
+function resolveMaybeRelative(found: string, base: string): string {
+  try {
+    return new URL(found, base).toString();
+  } catch {
+    return found;
   }
 }
 

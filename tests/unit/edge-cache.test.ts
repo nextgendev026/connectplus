@@ -1005,4 +1005,60 @@ describe("edge cache — durable records sharded across two stores", () => {
     expect(kvOnly.storage.remote).toBe(false);
     expect(kvOnly.storage.tickLedger).toBe("kv");
   });
+
+  /*
+   * The daily KV write budget — the backstop under the shard.
+   *
+   * The shard sends routine writes to the remote tier; this guard is for the
+   * abnormal case where the remote tier is *down* and the fallback keeps
+   * firing. Without it, a remote outage spends KV's 1,000/day in a few hours
+   * and the namespace then fails until UTC midnight — losing every durable
+   * record rather than just their freshness.
+   */
+  const utcDay = () => new Date().toISOString().slice(0, 10);
+  type BudgetProbe = { storage: { kvWriteBudget: { day: string; budget: number; used: number; enabled: boolean } } };
+
+  it("charges the fallback write against today's budget, counter included", async () => {
+    remoteDown = true;
+
+    await worker.scheduled({ cron: "*/5 * * * *" } as never, ENV_SHARDED);
+    await settleBackground();
+
+    // The record is written (the ledger must never be lost) and the counter
+    // records 2 — the record's write plus the increment itself — so the sum of
+    // every KV write performed can never cross the budget, let alone 1,000.
+    expect(kvData.has("tick:v5")).toBe(true);
+    expect(kvData.get(`kv-budget:${utcDay()}`)).toBe("2");
+  });
+
+  it("refuses the KV fallback once the budget is spent instead of emptying the namespace", async () => {
+    remoteDown = true;
+    const env = { ...ENV_SHARDED, KV_DAILY_WRITE_BUDGET: "4" };
+    // Budget already spent by earlier fallbacks today.
+    kvData.set(`kv-budget:${utcDay()}`, "4");
+
+    await worker.scheduled({ cron: "*/5 * * * *" } as never, env);
+    await settleBackground();
+
+    // Refused: no KV data write happened (the counter was not touched either),
+    // the invocation did not throw, and the record survives on its Cache API
+    // copy until the budget resets or the remote tier returns.
+    expect(kvData.has("tick:v5")).toBe(false);
+    expect(kvData.get(`kv-budget:${utcDay()}`)).toBe("4");
+  });
+
+  it("reports today's spend on /__edge so the ceiling is answerable from outside", async () => {
+    const probe = (await (await edge("/__edge", ENV_SHARDED)).json()) as BudgetProbe;
+    expect(probe.storage.kvWriteBudget).toEqual({
+      day: utcDay(),
+      budget: 800,
+      used: 0,
+      enabled: true,
+    });
+
+    const off = (await (
+      await edge("/__edge", { ...ENV_SHARDED, KV_DAILY_WRITE_BUDGET: "0" })
+    ).json()) as BudgetProbe;
+    expect(off.storage.kvWriteBudget.enabled).toBe(false);
+  });
 });

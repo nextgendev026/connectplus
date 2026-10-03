@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldRunAgent } from "@/lib/ai/agent-trigger";
+import { consoleAnswerRoute, shouldRunAgent } from "@/lib/ai/agent-trigger";
 import { redactAgentEvent, readTurns, stripInternal } from "@/lib/ai/agent-loop";
 
 /**
@@ -51,6 +51,46 @@ describe("agent routing", () => {
     // stray payload into permission to run tools.
     expect(shouldRunAgent("Give me the hive mind report", "false").run).toBe(false);
     expect(shouldRunAgent("Fix the broken route", "true").run).toBe(true);
+  });
+});
+
+describe("console answer routing", () => {
+  it("sends plain conversation to the model, not the grounded path", () => {
+    // The defect this pins: "hello" used to be answered from deterministic
+    // platform readings — in-app by construction, with no way to check the
+    // world. Conversation is the model's destination.
+    const plan = shouldRunAgent("Hello, how are you today?");
+    expect(plan.run).toBe(false);
+    expect(consoleAnswerRoute(plan, undefined)).toBe("model");
+  });
+
+  it("keeps record questions on the grounded path", () => {
+    const plan = shouldRunAgent("Give me the hive mind report");
+    expect(consoleAnswerRoute(plan, undefined)).toBe("grounded");
+  });
+
+  it("keeps mind actions on the approval-queue path", () => {
+    expect(consoleAnswerRoute({ run: false, reason: "", intent: "mind_action" }, undefined)).toBe("grounded");
+  });
+
+  it("keeps content-writing intents on their tuned prompt", () => {
+    expect(consoleAnswerRoute({ run: false, reason: "", intent: "write_content" }, undefined)).toBe("grounded");
+  });
+
+  it("sends action verbs to the agent", () => {
+    const plan = shouldRunAgent("Fix the thumbnail route that falls back to a placeholder");
+    expect(consoleAnswerRoute(plan, undefined)).toBe("agent");
+  });
+
+  it("lets an explicit tools-off toggle pin a conversation to grounded", () => {
+    // A toggle a heuristic can overrule is not a toggle.
+    const plan = shouldRunAgent("Hello", false);
+    expect(consoleAnswerRoute(plan, false)).toBe("grounded");
+  });
+
+  it("lets an explicit tools-on toggle pin a record question to the agent", () => {
+    const plan = shouldRunAgent("Give me the hive mind report", true);
+    expect(consoleAnswerRoute(plan, true)).toBe("agent");
   });
 });
 
