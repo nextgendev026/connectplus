@@ -39,8 +39,10 @@ compatibility_date = "2026-09-01"
 workers_dev = true
 
 [vars]
-# The Vercel origin this worker fronts. Change here, or override per-environment.
-ORIGIN = "https://connectplusapp.vercel.app"
+# The origin this worker fronts. That is now the Cloudflare-hosted Next app
+# (`connectplus-app`, via OpenNext), not Vercel — the Vercel deployment is
+# paused and out of the request path. Change here, or override per-environment.
+ORIGIN = "https://connectplus-app.connectplusapp.workers.dev"
 
 # ── The second durable store (free-tier distribution) ────────────────────────
 # Cloudflare KV's free plan allows 1,000 *writes* a day. The worker's tick
@@ -56,7 +58,7 @@ ORIGIN = "https://connectplusapp.vercel.app"
 # then behaves exactly as before, KV first with a remote fallback.
 # It uses the same CRON_SECRET already configured for the cron pings. See
 # "Free tier" in README.md for the full distribution.
-REMOTE_KV_URL = "https://connectplusapp.vercel.app/api/edge/kv"
+REMOTE_KV_URL = "https://connectplus-app.connectplusapp.workers.dev/api/edge/kv"
 
 # Backstop under the shard: the most KV writes this deployment will spend in
 # one UTC day, counting every write (record + counter). 800 leaves 200 of

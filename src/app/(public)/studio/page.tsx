@@ -4,11 +4,10 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { extractKeywords } from "@/lib/neural-text";
 import Image from "next/image";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { apiErrorMessage } from "@/lib/errors/message";
-import { ArrowLeft, Eye, EyeOff, Upload, Loader2, X, PenLine, AlertCircle, Clock, AlignLeft, Wand2 } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, Upload, X, PenLine, AlertCircle, Clock, AlignLeft, Wand2 } from "lucide-react";
 import { StudioToolbar } from "@/components/studio/StudioToolbar";
 import { StudioPreview } from "@/components/studio/StudioPreview";
 import { StudioSidebar, type ArticleAssistState } from "@/components/studio/StudioSidebar";
@@ -21,7 +20,7 @@ import {
   hashComposerDocument,
   type SaveState,
 } from "@/lib/studio/composer";
-import { saveIdempotencyKey } from "@/lib/studio/save-ledger";
+import { saveIdempotencyKey } from "@/lib/studio/idempotency-key";
 import {
   applyPilotOps,
   reviewPilotEdits,
@@ -39,15 +38,29 @@ const AUTOSAVE_MS = 4000;
 const BACKUP_KEY = "connectplus:studio:new";
 interface Category { id: string; name: string; slug: string; }
 interface MyPost { id: string; title: string; status: string; slug: string; updatedAt: string; scheduledAt?: string | null; moderationStatus?: string | null; publishedAt?: string | null; }
-
-function timeAgo(iso: string): string {
-  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return minutes + "m ago";
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return hours + "h ago";
-  return Math.floor(hours / 24) + "d ago";
+/**
+ * The post shape the API actually returns — a superset of the list row.
+ *
+ * These three call sites used to annotate their callback argument as `any`,
+ * which meant a renamed field in the API response would surface as `undefined`
+ * in the editor rather than as a compile error. The fields are all optional
+except the identity ones because the list endpoint and the single-post
+ * endpoint return different subsets.
+ */
+interface ApiPost {
+  id: string;
+  title: string;
+  status: string;
+  slug: string;
+  updatedAt: string;
+  scheduledAt?: string | null;
+  moderationStatus?: string | null;
+  publishedAt?: string | null;
+  content?: string;
+  excerpt?: string;
+  coverImage?: string | null;
+  tags?: { slug: string }[];
+  category?: { id: string; name: string } | null;
 }
 
 function dateToLocalInput(value: string | null | undefined): string {
@@ -65,7 +78,9 @@ function parseTagList(value: string): string[] {
 export default function StudioPage() {
   const router = useRouter();
   const contentRef = useRef<HTMLTextAreaElement>(null);
-  const { data: session } = useSession();
+  // Subscribed for its side effect (the hook keeps the session fresh and
+  // re-renders after a token refresh); the value itself is not read here.
+  useSession();
   // Publishing no longer requires email verification — accounts are trusted
   // as verified (sign-up emails on this deployment are not live inboxes).
   const [title, setTitle] = useState("");
@@ -191,6 +206,7 @@ export default function StudioPage() {
 
   useEffect(() => {
     if (showPreview || content.trim().length < 40) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset derived from the preview toggle
       setWritingChecks(null);
       setChecksBusy(false);
       return;
@@ -281,15 +297,16 @@ export default function StudioPage() {
 
   const loadMyStories = useCallback(async () => {
     setStoriesLoading(true);
-    try { const res = await fetch("/api/posts?mine=true&limit=50"); if (res.status === 401) { setStoriesUnauth(true); setMyStories([]); return; } const data = await res.json(); if (!data?.posts) return; setMyStories(data.posts.map((p: any) => ({ id: p.id, title: p.title, status: p.status, slug: p.slug, updatedAt: p.updatedAt, scheduledAt: p.scheduledAt ?? null, moderationStatus: p.moderationStatus ?? null, publishedAt: p.publishedAt ?? null }))); setStoriesUnauth(false); } catch { setStoriesUnauth(false); } finally { if (mountedRef.current) setStoriesLoading(false); }
+    try { const res = await fetch("/api/posts?mine=true&limit=50"); if (res.status === 401) { setStoriesUnauth(true); setMyStories([]); return; } const data = await res.json(); if (!data?.posts) return; setMyStories(data.posts.map((p: ApiPost) => ({ id: p.id, title: p.title, status: p.status, slug: p.slug, updatedAt: p.updatedAt, scheduledAt: p.scheduledAt ?? null, moderationStatus: p.moderationStatus ?? null, publishedAt: p.publishedAt ?? null }))); setStoriesUnauth(false); } catch { setStoriesUnauth(false); } finally { if (mountedRef.current) setStoriesLoading(false); }
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount; see eslint.config.mjs
     loadCategories(); loadMyStories();
     let cancelled = false;
     const params = new URLSearchParams(window.location.search);
     const editId = params.get("edit");
-    if (editId) { fetch("/api/posts/" + editId).then((r) => (r.ok ? r.json() : null)).then((d) => { if (!d?.post || cancelled) return; setEditingId(editId); setTitle(d.post.title ?? ""); setContent(d.post.content ?? ""); setExcerpt(d.post.excerpt ?? ""); setCoverImage(d.post.coverImage ?? null); setTags((d.post.tags ?? []).map((t: any) => t.slug)); if (d.post.category) { setCategoryId(d.post.category.id); setCategoryName(d.post.category.name); } setEditStatus(d.post.status ?? null); setScheduledFor(dateToLocalInput(d.post.scheduledAt)); }).catch(() => {}); } else { const backup = localStorage.getItem(BACKUP_KEY); if (backup) { try { const saved = JSON.parse(backup); if (saved && typeof saved === "object") { if (saved.title) setTitle(saved.title); if (saved.content) setContent(saved.content); if (saved.excerpt) setExcerpt(saved.excerpt); if (Array.isArray(saved.tags)) setTags(saved.tags); if (saved.categoryId) setCategoryId(saved.categoryId); if (saved.coverImage) setCoverImage(saved.coverImage); } } catch {} } }
+    if (editId) { fetch("/api/posts/" + editId).then((r) => (r.ok ? r.json() : null)).then((d) => { if (!d?.post || cancelled) return; setEditingId(editId); setTitle(d.post.title ?? ""); setContent(d.post.content ?? ""); setExcerpt(d.post.excerpt ?? ""); setCoverImage(d.post.coverImage ?? null); setTags((d.post.tags ?? []).map((t: { slug: string }) => t.slug)); if (d.post.category) { setCategoryId(d.post.category.id); setCategoryName(d.post.category.name); } setEditStatus(d.post.status ?? null); setScheduledFor(dateToLocalInput(d.post.scheduledAt)); }).catch(() => {}); } else { const backup = localStorage.getItem(BACKUP_KEY); if (backup) { try { const saved = JSON.parse(backup); if (saved && typeof saved === "object") { if (saved.title) setTitle(saved.title); if (saved.content) setContent(saved.content); if (saved.excerpt) setExcerpt(saved.excerpt); if (Array.isArray(saved.tags)) setTags(saved.tags); if (saved.categoryId) setCategoryId(saved.categoryId); if (saved.coverImage) setCoverImage(saved.coverImage); } } catch {} } }
     return () => { cancelled = true; };
   }, [loadCategories, loadMyStories]);
 
@@ -898,7 +915,7 @@ export default function StudioPage() {
   function openStory(id: string) {
     setEditingId(id); window.history.replaceState(null, "", "/studio?edit=" + id);
     fetch("/api/posts/" + id).then((r) => (r.ok ? r.json() : null)).then((d) => {
-      if (!d?.post) return; setTitle(d.post.title ?? ""); setContent(d.post.content ?? ""); setExcerpt(d.post.excerpt ?? ""); setCoverImage(d.post.coverImage ?? null); setTags((d.post.tags ?? []).map((t: any) => t.slug));
+      if (!d?.post) return; setTitle(d.post.title ?? ""); setContent(d.post.content ?? ""); setExcerpt(d.post.excerpt ?? ""); setCoverImage(d.post.coverImage ?? null); setTags((d.post.tags ?? []).map((t: { slug: string }) => t.slug));
       if (d.post.category) { setCategoryId(d.post.category.id); setCategoryName(d.post.category.name); }
       setEditStatus(d.post.status ?? null); setScheduledFor(dateToLocalInput(d.post.scheduledAt)); setLastSaved(null);
     }).catch(() => {});

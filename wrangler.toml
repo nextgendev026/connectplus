@@ -1,0 +1,55 @@
+# Cloudflare Worker: the ConnectPlus Next.js app, via OpenNext.
+#
+# This is the primary publishing pipeline — front end and back end. The edge
+# worker (`workers/edge-cache`) stays in front of it as the cache/media plane;
+# this Worker is the origin it fronts.
+#
+# Built by `npm run cf:build` (opennextjs-cloudflare build) and deployed by
+# `npm run cf:deploy`. Secrets are pushed with `wrangler secret put` (see
+# scripts/cf-secrets.mjs) — never committed here.
+
+name = "connectplus-app"
+main = ".open-next/worker.js"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Served at https://connectplus-app.<subdomain>.workers.dev
+workers_dev = true
+
+[assets]
+directory = ".open-next/assets"
+binding = "ASSETS"
+
+# ── Observability ────────────────────────────────────────────────────────────
+# Workers Logs on the free plan keeps a bounded recent window, which is enough
+# to see a cold-start failure or a burst of 5xx right after a deploy. Without
+# it the only signal is the edge worker's probe.
+[observability]
+enabled = true
+
+# ── Non-secret configuration ─────────────────────────────────────────────────
+# Public values only. Everything sensitive (DATABASE_URL, NEXTAUTH_SECRET,
+# CRON_SECRET, the API keys) is set as a Worker secret, because [vars] lands in
+# the deployed source.
+#
+# NEXTAUTH_URL and the edge URL are here because they are not secrets and the
+# app needs them at boot to build absolute URLs and to reach the media plane.
+[vars]
+NEXTAUTH_URL = "https://connectplus-edge.connectplusapp.workers.dev"
+NEXT_PUBLIC_EDGE_URL = "https://connectplus-edge.connectplusapp.workers.dev"
+NODE_ENV = "production"
+
+# ── Optional: incremental cache on R2 (needs R2 enabled on the account) ──────
+# Uncomment once R2 is switched on and `npx wrangler r2 bucket create
+# connectplus-next-cache` has run. Until then the worker runs with OpenNext's
+# default (no persistent incremental cache), which is correct and cheap: the
+# edge worker already caches the public surface.
+#
+# [[r2_buckets]]
+# binding = "NEXT_INC_CACHE_R2_BUCKET"
+# bucket_name = "connectplus-next-cache"
+
+# ── Optional: Workers KV for tag revalidation ────────────────────────────────
+# [[kv_namespaces]]
+# binding = "NEXT_TAG_CACHE_KV"
+# id = "<namespace id>"

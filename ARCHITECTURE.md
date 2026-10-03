@@ -6,7 +6,7 @@ This document describes how ConnectPlus is built, why it is built that way, and 
 
 ## Overview
 
-ConnectPlus is a Next.js 16 App Router application backed by PostgreSQL (Supabase), with optional offloading to Convex for high-frequency view tracking and ad metrics. It runs as a single serverless deployment on Vercel, with a Cloudflare Worker providing the livescore data proxy and the edge cache.
+ConnectPlus is a Next.js 16 App Router application backed by PostgreSQL (Supabase), with optional offloading to Convex for high-frequency view tracking and ad metrics. It runs **on Cloudflare Workers** (via the OpenNext adapter) as a single deployment that serves both the front end and every route handler, with a second Cloudflare Worker (`connectplus-edge`) in front of it providing the livescore data proxy, the edge cache and the media plane. Inngest owns the scheduled work. Vercel is paused (usage limits exhausted) and is no longer in the request path; see `DEPLOYING.md`.
 
 **Stack:**
 
@@ -20,7 +20,7 @@ ConnectPlus is a Next.js 16 App Router application backed by PostgreSQL (Supabas
 | AI | OpenRouter (free tier) · OpenCode Zen · deterministic builtin fallback | Content generation, analysis, copilot. The `openaiApiKey` / `anthropicApiKey` settings exist but are **not** routable by the gateway — see `docs/MODERNIZATION-AUDIT.md` F-04 |
 | Push | Web Push (VAPID) | Browser notifications, sports alerts |
 | Media | Image optimizer (`/api/optimize`) | Resizing, compression, AVIF/WebP negotiation |
-| Scheduler | Inngest (owns every cadence) · Vercel safety-net cron · Cloudflare Worker cron triggers · cron-job.org (legacy) | RSS intake, feed health, nightly sweeps, live scores. All four derive from `src/lib/cron-schedule.ts` |
+| Scheduler | Inngest (owns every cadence) · Cloudflare Worker cron triggers (the five high-frequency jobs) · cron-job.org (legacy) | RSS intake, feed health, nightly sweeps, live scores. All derive from `src/lib/cron-schedule.ts` |
 
 ---
 
@@ -210,10 +210,10 @@ behind", and the console's "engines not green" count mixed faults with things no
 
 | Scheduler | Owns |
 | --- | --- |
-| Inngest | every cadence — the intended owner |
-| Vercel cron (`vercel.json`) | exactly one entry: `/api/cron/safety-net`, daily at 00:15 UTC |
-| Cloudflare Worker (`workers/edge-cache`) | the five high-frequency jobs, every 2–360 minutes |
+| Inngest | every cadence — the intended owner, and now the owner of the daily safety-net sweep too |
+| Cloudflare Worker (`workers/edge-cache`) | the five high-frequency jobs, every 2–360 minutes, plus the `/api/cron/safety-net?scope=all` catch-all sweep |
 | cron-job.org | legacy external trigger for `/api/cron?trigger=<id>` |
+| `vercel.json` cron | one legacy entry, inert while the Vercel deployment is paused |
 
 A job that exists in the registry but not in the Inngest wiring is caught by a test, and the Vercel
 cron count is pinned by another. Before Phase A this section said Inngest was the only scheduler,
@@ -256,4 +256,14 @@ Run `npm test` for the full suite. Run `npx vitest run tests/unit/brain-approval
 
 ## Deployment
 
-See [DEPLOYING.md](./DEPLOYING.md) for the deployment process, pre-flight checks, and rollback plan.
+The publishing pipeline is **Cloudflare Workers, front end and back end**:
+`npm run cf:build` builds the Next app with `@opennextjs/cloudflare` and
+`npm run cf:deploy` ships it to the `connectplus-app` Worker, which
+`connectplus-edge` fronts. Environment variables are Worker secrets, pushed
+from the local `.env` by `npm run cf:secrets`. Prisma runs on Workers through
+`@prisma/adapter-pg` (see `src/lib/prisma.ts`); the Node build keeps the default
+client, so the same code serves both runtimes during the move.
+
+See [DEPLOYING.md](./DEPLOYING.md) for the deployment process, pre-flight
+checks, and rollback plan, and [docs/FREE-TIER-BUDGET.md](./docs/FREE-TIER-BUDGET.md)
+for the per-platform allowances this all has to fit inside.

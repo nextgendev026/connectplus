@@ -34,39 +34,21 @@
 
 import { prisma } from "@/lib/prisma";
 import { createLogger } from "@/lib/logger";
+// The pure helpers live in their own dependency-free module so the Studio's
+// client bundle can import the key formula without dragging the Prisma → `pg`
+// graph into the browser (which breaks the Cloudflare build — see the comment
+// in that file). Re-exported here so every existing import keeps working.
+import { CLAIM_WINDOW_MS, readIdempotencyKey, saveIdempotencyKey } from "./idempotency-key";
+
+export { CLAIM_WINDOW_MS, readIdempotencyKey, saveIdempotencyKey };
 
 const log = createLogger("studio-save-ledger");
-
-/**
- * How long a claim protects a save attempt.
- *
- * Generous relative to the operation it guards — a create takes milliseconds —
- * because the cost of being wrong is asymmetric. Too short and a retry after a
- * slow request creates a duplicate, which is the bug. Too long and a writer who
- * abandons a draft and starts a genuinely new one within the window could have
- * their new draft answered with the old one; ten minutes makes that require
- * abandoning a draft and re-typing it to the same revision and hash, which is the
- * same document by definition.
- */
-export const CLAIM_WINDOW_MS = 10 * 60 * 1000;
 
 export type ClaimResult =
   | { status: "claimed" }
   | { status: "existing"; postId: string }
   | { status: "in_flight" }
   | { status: "unavailable"; reason: string };
-
-/**
- * The idempotency key for a save.
- *
- * Derived from the session, the revision and the document hash, so an identical
- * retry of the same intent produces the same key while a new edit produces a new
- * one. A key including only the session would make every save after the first
- * look like a retry; a random key would make every retry look like a first save.
- */
-export function saveIdempotencyKey(input: { sessionId: string; revision: number; contentHash: string }): string {
-  return `${input.sessionId}:${input.revision}:${input.contentHash.slice(0, 24)}`;
-}
 
 /**
  * Claim a draft-creation attempt.
@@ -197,16 +179,9 @@ export async function sweepClaims(limit = 5_000): Promise<number> {
  * Read the idempotency key from a request without trusting its shape.
  *
  * Bounded and character-restricted: the key becomes a primary key value, and an
- * arbitrary header is not a safe thing to put there.
+ * arbitrary header is not a safe thing to put there. Implemented in
+ * `./idempotency-key` and re-exported above.
  */
-export function readIdempotencyKey(request: { headers: { get(name: string): string | null } }): string | null {
-  const raw = request.headers.get("idempotency-key") ?? request.headers.get("x-idempotency-key");
-  if (!raw) return null;
-  const key = raw.trim();
-  if (key.length < 8 || key.length > 200) return null;
-  if (!/^[A-Za-z0-9:_-]+$/.test(key)) return null;
-  return key;
-}
 
 /** Prisma's unique-constraint violation, without importing its error classes. */
 function isUniqueViolation(err: unknown): boolean {

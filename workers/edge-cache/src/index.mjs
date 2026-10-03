@@ -396,6 +396,204 @@ async function kvPutJson(env, key, value, ttlSeconds) {
   }
 }
 
+/* ── The media plane: uploads and image serving on Cloudflare's free tier ────
+
+   Supabase's free plan allows 5 GB of egress a month and serves every stored
+   image directly from its own origin — so a content site blows that inside
+   days and the project then answers 402 `exceed_egress_quota` to *every*
+   storage call: uploads fail and every already-stored image stops rendering.
+   That is the outage this plane exists to end.
+
+   Images instead live in an R2 bucket when the account has R2 enabled (10 GB
+   free, zero egress fees, 10M Class A + 10M Class B ops a month), or in a
+   dedicated KV namespace when it does not (1 GB, 100k reads a day — enough to
+   carry the site until R2 is enabled with one click in the dashboard). Either
+   way reads are fronted by the per-colo Cache API, so the durable store sees
+   one read per image per colo, not one per view.
+
+   Write path: the app's authenticated /api/optimize-style upload route PUTs
+   here with the CRON_SECRET it already holds; the key is `<kind>/<owner>/
+   <uuid>.<ext>`, so every object is content-immutable and can be cached for a
+   year under its own URL. Reads are public, writes are secret.
+──────────────────────────────────────────────────────────────────────────── */
+
+const MEDIA_PREFIX = "/__media/";
+const MEDIA_MAX_BYTES = 15 * 1024 * 1024;
+/** Last Cache-API mirror outcome, for /__edge. */
+const mediaMirrorState = { last: "not-attempted" };
+const MEDIA_MIME = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+  gif: "image/gif",
+  mp4: "video/mp4",
+  webm: "video/webm",
+};
+
+/** Validate a media key: printable, no traversal, an extension we serve. */
+function mediaKeyFromPath(pathname) {
+  const key = pathname.slice(MEDIA_PREFIX.length);
+  if (!key || key.length > 512) return null;
+  if (!/^[A-Za-z0-9][A-Za-z0-9/._-]*$/.test(key)) return null;
+  if (key.split("/").some((seg) => seg === ".." || seg === ".")) return null;
+  const dot = key.lastIndexOf(".");
+  const ext = dot === -1 ? "" : key.slice(dot + 1).toLowerCase();
+  const type = MEDIA_MIME[ext];
+  if (!type) return null;
+  return { key, ext, type };
+}
+
+/** Length-independent-ish secret comparison — the write path's only gate. */
+function secretMatches(provided, expected) {
+  const a = String(provided ?? "");
+  const b = String(expected ?? "");
+  if (!b || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/**
+ * The durable media store: R2 when bound, a KV namespace otherwise.
+ *
+ * Both are surfaced behind one get/put shape so the handler does not care
+ * which tier the deployment actually got. KV puts are charged against the
+ * daily KV budget — media is exactly the kind of write the budget exists to
+ * meter, and R2 (10M ops/month) needs no such meter.
+ */
+function mediaStore(env) {
+  if (env && env.MEDIA && typeof env.MEDIA.get === "function") {
+    return {
+      kind: "r2",
+      async get(key) {
+        const obj = await env.MEDIA.get(key);
+        return obj ? { body: obj.body, contentType: (obj.httpMetadata && obj.httpMetadata.contentType) || null } : null;
+      },
+      async put(key, bytes, contentType) {
+        await env.MEDIA.put(key, bytes, { httpMetadata: { contentType } });
+      },
+    };
+  }
+  const kv = env && env.MEDIA_KV;
+  if (kv && typeof kv.get === "function") {
+    return {
+      kind: "kv",
+      kv,
+      async get(key) {
+        const bytes = await kv.get(key, "arrayBuffer");
+        return bytes === null ? null : { body: bytes, contentType: null };
+      },
+      async put(key, bytes, _contentType) {
+        const budget = kvBudgetFor(env);
+        if (budget > 0 && !(await kvBudgetAllows(kv, budget))) {
+          throw new Error("kv-budget");
+        }
+        await kv.put(key, bytes);
+      },
+    };
+  }
+  return null;
+}
+
+/** GET/PUT /__media/<key> — the media plane's whole surface. */
+async function handleMedia(request, env, url) {
+  const parsed = mediaKeyFromPath(url.pathname);
+  if (!parsed) return new Response("Not found", { status: 404 });
+  const store = mediaStore(env);
+  if (!store) {
+    return new Response(JSON.stringify({ error: "Media store not configured" }), {
+      status: 503,
+      headers: { "Content-Type": "application/json", "X-Edge-Media": "off" },
+    });
+  }
+
+  if (request.method === "GET" || request.method === "HEAD") {
+    const cached = await caches.default.match(request).catch(() => undefined);
+    if (cached) {
+      const hit = new Response(request.method === "HEAD" ? null : cached.body, cached);
+      hit.headers.set("X-Edge-Cache", "HIT");
+      hit.headers.set("X-Edge-Media", store.kind);
+      return hit;
+    }
+
+    const got = await store.get(parsed.key).catch(() => null);
+    if (!got) {
+      return new Response("Not found", {
+        status: 404,
+        headers: { "X-Edge-Media": store.kind, "Cache-Control": "public, max-age=60" },
+      });
+    }
+    const headers = {
+      "Content-Type": got.contentType || parsed.type,
+      // Keys are uuid-named and never rewritten in place, so one URL is one
+      // immutable object — a year of edge caching cannot serve a stale avatar.
+      "Cache-Control": "public, max-age=31536000, immutable",
+      "X-Edge-Cache": "MISS",
+      "X-Edge-Media": store.kind,
+      "Access-Control-Allow-Origin": "*",
+      "Cross-Origin-Resource-Policy": "cross-origin",
+    };
+    if (request.method === "HEAD") {
+      if (got.body && typeof got.body.cancel === "function") got.body.cancel().catch(() => {});
+      return new Response(null, { status: 200, headers });
+    }
+    const res = new Response(got.body, { status: 200, headers });
+    // Mirror into the per-colo Cache API so the durable store sees one read
+    // per image per colo, not one per view. Awaited, and the failure (if any)
+    // is surfaced on /__edge — a silently non-caching mirror is indistinguish-
+    // able from a cold colo, which is the exact ambiguity that wastes KV reads.
+    try {
+      await caches.default.put(request, res.clone());
+      mediaMirrorState.last = "ok";
+    } catch (err) {
+      mediaMirrorState.last = shortError(err) || "unknown";
+    }
+    return res;
+  }
+
+  if (request.method === "PUT") {
+    const provided = (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+    if (!secretMatches(provided, env.CRON_SECRET)) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    const bytes = await request.arrayBuffer();
+    if (bytes.byteLength === 0) {
+      return new Response(JSON.stringify({ error: "Empty body" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (bytes.byteLength > MEDIA_MAX_BYTES) {
+      return new Response(JSON.stringify({ error: "Media too large" }), {
+        status: 413,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    try {
+      await store.put(parsed.key, bytes, parsed.type);
+    } catch (err) {
+      const budget = /kv-budget/.test(shortError(err) || "");
+      return new Response(JSON.stringify({ error: budget ? "kv-budget" : "write failed" }), {
+        status: budget ? 429 : 502,
+        headers: { "Content-Type": "application/json", "X-Edge-Media": store.kind },
+      });
+    }
+    return new Response(
+      JSON.stringify({ ok: true, key: parsed.key, bytes: bytes.byteLength, storage: store.kind }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  return new Response("Method not allowed", {
+    status: 405,
+    headers: { Allow: "GET, HEAD, PUT", "Content-Type": "text/plain" },
+  });
+}
+
 /* ── The durable-record tier, sharded across two stores ──────────────────────
 
    Cloudflare KV is where the worker's bookkeeping lives, and the free plan
@@ -1022,7 +1220,10 @@ async function recordTick(env, record) {
   return store;
 }
 
-export default {
+// Named before it is exported: an anonymous `export default { … }` is what the
+// `import/no-anonymous-default-export` rule flags, and the name is also what
+// makes the handler findable in a stack trace from a Worker tail.
+const worker = {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const origin = (env.ORIGIN || DEFAULT_ORIGIN).replace(/\/+$/, "");
@@ -1074,7 +1275,20 @@ export default {
         },
         schedules: SCHEDULES.map((s) => `${s.cron} → ${s.trigger}`),
         cronSecret: Boolean(env.CRON_SECRET),
+        // Which media tier this deployment actually got: r2 (10GB, zero
+        // egress), kv (1GB stop-gap) or off.
+        media: {
+          backend: mediaStore(env) ? mediaStore(env).kind : "off",
+          maxBytes: MEDIA_MAX_BYTES,
+          mirror: mediaMirrorState.last,
+        },
       });
+    }
+
+    // The media plane answers before the cache pipeline: its own Cache API
+    // handling and its own auth are the point, not a layer under it.
+    if (url.pathname.startsWith(MEDIA_PREFIX)) {
+      return handleMedia(request, env, url);
     }
 
     const isLiveAlias = url.pathname === "/__livescore";
@@ -1333,3 +1547,5 @@ export default {
     await recordTick(env, tick);
   },
 };
+
+export default worker;

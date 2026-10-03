@@ -27,7 +27,7 @@ export interface StoredMedia {
   filename: string;
   bytes: number;
   mimeType: string;
-  storage: "supabase" | "local";
+  storage: "edge" | "supabase" | "local";
 }
 
 /** Extensions accepted per MIME type. Video is included for generated clips. */
@@ -64,6 +64,52 @@ export async function storeMediaBytes(input: {
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_KEY;
   const bucket = process.env.SUPABASE_STORAGE_BUCKET?.trim() || "uploads";
+
+  /*
+   * The edge media plane first: Cloudflare R2 behind the worker's /__media
+   * (zero egress, 10GB free), or its KV stop-gap until R2 is enabled.
+   *
+   * Supabase free tier answers 402 `exceed_egress_quota` once its 5 GB/month
+   * of image *serving* runs out — which a content site burns in days — and the
+   * restriction takes uploads down along with every stored image. Serving from
+   * the edge also puts the per-colo Cache API in front of every read, so image
+   * views stop costing the origin anything at all. The URL shape
+   * (`<edge>/__media/<kind>/<owner>/<file>`) is identical on both tiers, so
+   * moving between them later is a redeploy with no data migration.
+   */
+  const edge = (process.env.EDGE_URL ?? "").trim().replace(/\/+$/, "");
+  if (edge) {
+    const key = `${input.kind}/${input.ownerId}/${filename}`;
+    try {
+      const res = await fetch(`${edge}/__media/${key}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${process.env.CRON_SECRET ?? ""}`,
+          "Content-Type": input.mimeType,
+        },
+        // `Buffer.from` re-narrows the Uint8Array to an ArrayBuffer-backed
+        // view that fetch's BodyInit accepts (same reason as the Supabase branch).
+        body: Buffer.from(input.bytes),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (res.ok) {
+        return {
+          url: `${edge}/__media/${key}`,
+          filename,
+          bytes: input.bytes.length,
+          mimeType: input.mimeType,
+          storage: "edge",
+        };
+      }
+      const detail = await res.text().catch(() => "");
+      log.error("edge media upload failed", { status: res.status, detail: detail.slice(0, 200) });
+    } catch (err) {
+      log.error("edge media upload error", { error: err instanceof Error ? err.message : String(err) });
+    }
+    // Falls through: the legacy stores below still answer for deployments
+    // without an edge, and their failure is the honest 502 rather than a
+    // silent loss of the member's upload.
+  }
 
   if (supabaseUrl && serviceKey) {
     const objectKey = `${input.kind}/${input.ownerId}/${filename}`;

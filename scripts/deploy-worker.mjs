@@ -30,7 +30,11 @@ const MODULE = "index.mjs";
 const TOKEN = process.env.CLOUDFLARE_API_TOKEN;
 const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID;
 const NAME = process.env.WORKER_NAME ?? "connectplus-edge";
-const ORIGIN = process.env.ORIGIN ?? "https://connectplusapp.vercel.app";
+// The origin the edge worker fronts. This is now the Cloudflare-hosted Next app
+// (`connectplus-app`), not Vercel — the Vercel deployment is paused and no
+// longer in the request path. Override with ORIGIN=... when pointing at a
+// preview or a rollback deployment.
+const ORIGIN = process.env.ORIGIN ?? "https://connectplus-app.connectplusapp.workers.dev";
 const CRON_SECRET = (process.env.CRON_SECRET ?? "").trim();
 // Where the worker's high-frequency durable records go, because the KV write
 // allowance is not the right budget for them. Derived from ORIGIN by default:
@@ -146,6 +150,78 @@ async function resolveKvNamespace() {
 
 const kvNamespaceId = await resolveKvNamespace();
 
+/**
+ * The media binding: an R2 bucket when the account has R2 enabled, otherwise
+ * a dedicated KV namespace.
+ *
+ * Supabase free tier answers 402 `exceed_egress_quota` once its 5 GB/month of
+ * image serving runs out — which takes days on a content site — and takes
+ * uploads and every already-stored image down with it. R2 is the destination
+ * (10 GB, zero egress, 10M ops/month), but enabling it is a dashboard click
+ * this script cannot make (API error 10042). Until then the same keys live in
+ * a KV namespace (1 GB, 100k reads/day) and the hand-over later is a redeploy
+ * with no app-side change: the URL shape is identical.
+ *
+ * MEDIA_BINDING=off deploys without any media tier (the worker then answers
+ * 503 on /__media and the app falls back to its next configured store).
+ */
+const MEDIA_BUCKET = process.env.MEDIA_R2_BUCKET ?? `${NAME}-media`;
+const MEDIA_OFF = process.env.MEDIA_BINDING === "off";
+
+async function resolveMediaBinding() {
+  if (MEDIA_OFF) return null;
+
+  // Does this account have R2 at all? The list call answers 10042 when it is
+  // not enabled, which is the branch that matters.
+  const listed = await api(`/accounts/${ACCOUNT}/r2/buckets`);
+  const listBody = await listed.json().catch(() => ({}));
+  if (listBody.success) {
+    const has = (listBody.result?.buckets ?? []).some((b) => b.name === MEDIA_BUCKET);
+    if (!has) {
+      const created = await api(`/accounts/${ACCOUNT}/r2/buckets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: MEDIA_BUCKET }),
+      });
+      const createdBody = await created.json().catch(() => ({}));
+      if (!createdBody.success && created.status !== 409) {
+        console.log("media:", created.status, "r2 bucket create failed —", JSON.stringify(createdBody.errors ?? createdBody));
+      }
+    }
+    console.log(`media: r2 bucket "${MEDIA_BUCKET}" (10GB, zero egress)`);
+    return { type: "r2_bucket", name: "MEDIA", bucket_name: MEDIA_BUCKET };
+  }
+
+  // R2 is not enabled (code 10042) — fall back to a KV namespace so uploads
+  // work today; enable R2 in the dashboard and redeploy to switch.
+  const title = `${NAME}-media`;
+  const kvList = await api(`/accounts/${ACCOUNT}/storage/kv/namespaces?per_page=100`);
+  const kvBody = await kvList.json().catch(() => ({}));
+  let id = "";
+  if (kvBody.success) {
+    id = (kvBody.result ?? []).find((ns) => ns.title === title)?.id ?? "";
+  }
+  if (!id) {
+    const created = await api(`/accounts/${ACCOUNT}/storage/kv/namespaces`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    const createdBody = await created.json().catch(() => ({}));
+    id = createdBody.success ? createdBody.result?.id ?? "" : "";
+    if (!id) {
+      console.log("media:", created.status, "no media tier could be created — deploying without one:", JSON.stringify(createdBody.errors ?? createdBody));
+      return null;
+    }
+  }
+  console.log(
+    `media: KV namespace "${title}" (${id}) — R2 not enabled; enable it in the Cloudflare dashboard (error 10042) and redeploy to move to zero-egress R2. Note KV serves 100k reads/day and holds 1GB.`
+  );
+  return { type: "kv_namespace", name: "MEDIA_KV", namespace_id: id };
+}
+
+const mediaBinding = await resolveMediaBinding();
+
 const metadata = {
   main_module: MODULE,
   compatibility_date: "2026-09-01",
@@ -164,6 +240,8 @@ const metadata = {
     // Omitted when unset, which leaves the shard map preferring KV — the same
     // behaviour as before this existed.
     ...(REMOTE_KV_URL ? [{ type: "plain_text", name: "REMOTE_KV_URL", text: REMOTE_KV_URL }] : []),
+    // The media plane: R2 (or its KV stop-gap) behind /__media.
+    ...(mediaBinding ? [mediaBinding] : []),
   ],
 };
 

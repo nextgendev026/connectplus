@@ -79,6 +79,50 @@ jobs:
         path: playwright-report
         retention-days: 7
 
+  deploy-cloudflare:
+    # The publishing pipeline. Vercel is paused (usage exhausted) and no longer
+    # in the request path: this job builds the Next app with the OpenNext
+    # Cloudflare adapter and deploys it to the `connectplus-app` Worker, which
+    # the `connectplus-edge` Worker fronts as the cache and media plane.
+    #
+    # Runs after `check` (so a red typecheck/lint/test never publishes) and only
+    # on main. Skips cleanly when the Cloudflare secrets are absent, so a fork
+    # without them is not a failing build.
+    needs: check
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Use Node.js 22.x
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22.x
+        cache: npm
+
+    - name: Install dependencies
+      if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+      run: npm ci
+
+    - name: Generate Prisma client
+      if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+      run: npx prisma generate
+
+    - name: Build for Cloudflare Workers
+      if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+      env:
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        NEXTAUTH_SECRET: ${{ secrets.AUTH_SECRET || 'ci-build-only-secret' }}
+      run: npx opennextjs-cloudflare build
+
+    - name: Deploy to Cloudflare
+      if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+      run: npx opennextjs-cloudflare deploy
+
   migrate:
     needs: check
     runs-on: ubuntu-latest

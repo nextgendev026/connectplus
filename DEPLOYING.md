@@ -6,16 +6,54 @@ This document covers how ConnectPlus gets from a developer's machine to producti
 
 ## How Deployment Works
 
-ConnectPlus deploys automatically on every push to `main`. The flow is:
+**Cloudflare Workers is the publishing pipeline — front end and back end.** The
+Vercel deployment is paused (usage limits exhausted, `DEPLOYMENT_DISABLED`) and
+is no longer in the request path.
 
 ```
 git push origin main
   → GitHub Actions (quality checks)
-    → Vercel build (serverless functions + static pages)
-      → Production (connectplusapp.vercel.app)
+    → OpenNext build → connectplus-app Worker   (Next.js: pages + all route handlers)
+      → connectplus-edge Worker                 (cache + media plane, in front)
+        → Production (https://connectplus-edge.connectplusapp.workers.dev)
 ```
 
-There is no manual deploy step. Vercel detects the push, builds the project, and makes it live. The whole process takes 2-5 minutes.
+The `deploy-cloudflare` CI job does this on every push to `main`, after the
+`check` job passes. There is no manual step for a normal deploy. The whole
+process takes 3-6 minutes.
+
+### Two Workers, two roles
+
+| Worker | Source | Role |
+|---|---|---|
+| `connectplus-app` | `wrangler.toml` + `open-next.config.ts` | The Next.js app — every page and route handler, via `@opennextjs/cloudflare` |
+| `connectplus-edge` | `workers/edge-cache/` | Cache in front of the app, plus the media plane (`/__media`) and the five cron triggers |
+
+`connectplus-edge`'s `ORIGIN` var points at `connectplus-app`'s `workers.dev`
+URL. To point it somewhere else (a preview, a rollback), set `ORIGIN=...` when
+running `scripts/deploy-worker.mjs`.
+
+### Manual deploy
+
+```bash
+# Build and deploy the app Worker
+npm run cf:build      # prisma migrate deploy + generate + opennextjs-cloudflare build
+npm run cf:deploy     # opennextjs-cloudflare deploy
+
+# Push environment variables to it as Worker secrets (write-only)
+npm run cf:secrets    # reads .env, pushes every key the app needs
+
+# Redeploy the edge worker (cache + media + crons)
+node --env-file=.env scripts/deploy-worker.mjs
+```
+
+### Why the app builds on CI but may not on Windows
+
+The OpenNext build's last step symlinks `node_modules` into
+`.open-next/middleware/`. Windows requires Developer Mode or elevation for
+symlink creation and fails with `EPERM`. That is a local-environment limitation,
+not a code problem: the Linux CI runner completes the same build. On Windows,
+either enable Developer Mode or run the build under WSL.
 
 ---
 
@@ -27,7 +65,9 @@ Before pushing to `main`, run these in order:
 # 1. Type checking — catches type errors before they ship
 npm run typecheck
 
-# 2. Linting — catches code quality issues
+# 2. Linting — catches code quality issues. Runs with `--max-warnings 0`, so a
+#    single new warning fails this step; fix the warning or, if the pattern is
+#    deliberate, add a targeted `eslint-disable-next-line` with a reason.
 npm run lint
 
 # 3. Unit tests — catches regressions in business logic
@@ -260,13 +300,20 @@ This is harder and should be avoided. If you must:
 
 ## Environment Variables
 
-Environment variables are set in the Vercel dashboard under Settings → Environment Variables. They are **not** in the repository.
+Environment variables live as **Cloudflare Worker secrets** on `connectplus-app`,
+pushed from the local `.env` by `npm run cf:secrets`. They are **not** in the
+repository. Non-secret configuration (URLs, `NODE_ENV`) lives in the `[vars]`
+block of `wrangler.toml`.
 
 ### Adding a new environment variable
 
 1. Add the variable to `.env.example` (with a placeholder value)
-2. Set the actual value in Vercel dashboard
-3. Deploy — the variable is available immediately
+2. Add its name to the `SECRETS` list in `scripts/cf-secrets.mjs`
+3. Put the real value in `.env` and run `npm run cf:secrets`
+4. If the value is not a secret, put it in `wrangler.toml` `[vars]` instead
+
+Cloudflare secrets are write-only — the API will not read them back. The local
+`.env` (and the dashboards that issued the values) remain the source of truth.
 
 ### Required variables (without these, the app fails to start)
 
