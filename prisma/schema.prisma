@@ -1,5 +1,10 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  // Driver adapters expose the `adapter` option on PrismaClient, which the
+  // Cloudflare Workers deployment needs (no query-engine binary at the edge —
+  // see src/lib/prisma.ts). Node deployments ignore the option entirely, so
+  // enabling it here is inert on Vercel and local dev.
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
@@ -23,6 +28,17 @@ model User {
   // change, "sign out everywhere") invalidates every outstanding session for
   // that user at the next refresh, instead of waiting out a 30-day JWT.
   tokenVersion  Int       @default(0)
+  // TOTP multi-factor auth. Enforced for ADMIN/SUPER_ADMIN at sign-in once
+  // enabled (see the jwt callback in src/lib/auth.ts). The secret is stored
+  // AES-256-GCM encrypted at rest — a leaked database dump alone must not be
+  // enough to mint valid codes. `mfaBackupCodes` holds one-way hashes, never
+  // the plaintext codes. A null secret with mfaEnabled false means "not
+  // enrolled"; the pending secret lives in mfaSecret until verify confirms it.
+  mfaEnabled    Boolean   @default(false)
+  mfaSecret     String?
+  mfaBackupCodes String[] @default([])
+  mfaEnrolledAt DateTime?
+  mfaLastUsedAt DateTime?
   isVerified    Boolean   @default(false)
   node          String?
   emailVerified DateTime?

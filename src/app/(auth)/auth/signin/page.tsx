@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   ArrowRight,
   Loader2,
+  KeyRound,
 } from "lucide-react";
 
 export default function SignInPage() {
@@ -26,6 +27,11 @@ export default function SignInPage() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [unverified, setUnverified] = useState(false);
+  // Revealed only after a first attempt reports that the account needs a second
+  // factor. Showing it always would tell every visitor which accounts have MFA
+  // and put a field in the way of the majority who do not.
+  const [needsCode, setNeedsCode] = useState(false);
+  const [code, setCode] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,6 +42,10 @@ export default function SignInPage() {
       setError("Please enter both your email and password.");
       return;
     }
+    if (needsCode && !code.trim()) {
+      setError("Enter the 6-digit code from your authenticator app.");
+      return;
+    }
 
     setIsLoading(true);
 
@@ -43,10 +53,28 @@ export default function SignInPage() {
       const result = await signIn("credentials", {
         email: email.trim(),
         password,
+        code: code.trim(),
         redirect: false,
       });
 
       if (result?.error) {
+        // Auth.js surfaces the thrown error's code in the redirect URL. The two
+        // MFA codes are the only ones worth a distinct message; everything else
+        // stays deliberately vague so a wrong password and a wrong code are not
+        // distinguishable beyond what the member already knows.
+        const detail = String(result.error);
+        if (detail.includes("MFA_REQUIRED")) {
+          setNeedsCode(true);
+          setError(null);
+          setIsLoading(false);
+          return;
+        }
+        if (detail.includes("MFA_INVALID")) {
+          setNeedsCode(true);
+          setError("That code is not valid. Check your authenticator app and try again.");
+          setIsLoading(false);
+          return;
+        }
         setError("Invalid email or password. Please try again.");
         setIsLoading(false);
         return;
@@ -184,6 +212,31 @@ export default function SignInPage() {
                 </button>
               </div>
             </div>
+
+            {/* Second factor — only present once the server has asked for it. */}
+            {needsCode && (
+              <div className="animate-slide-down">
+                <label className="block text-xs font-medium text-surface-400 mb-1.5">
+                  Authenticator code
+                </label>
+                <div className="relative">
+                  <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-600" />
+                  <input
+                    type="text"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    placeholder="123456 or a backup code"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    autoFocus
+                    className="w-full rounded-xl bg-surface-800/50 border border-surface-700/50 pl-10 pr-4 py-3 text-sm text-surface-50 tracking-[0.2em] placeholder:tracking-normal placeholder:text-surface-600 focus:outline-none focus:border-brand-500/50 focus:bg-surface-800/80 transition-all"
+                  />
+                </div>
+                <p className="mt-1.5 text-[11px] text-surface-500">
+                  Lost your device? Enter one of your saved backup codes instead.
+                </p>
+              </div>
+            )}
 
             {/* Submit */}
             <button

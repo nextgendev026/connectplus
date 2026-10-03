@@ -6,6 +6,7 @@ import { compare, hash } from "bcryptjs";
 import { randomUUID } from "crypto";
 import { prisma } from "./prisma";
 import { createLogger } from "./logger";
+import { decryptSecret, matchBackupCode, verifyTotp } from "./mfa";
 
 const logger = createLogger("auth");
 
@@ -17,6 +18,8 @@ declare module "next-auth" {
     emailVerified?: Date | null;
     /** The row's `tokenVersion` at issue time — see the jwt callback below. */
     tokenVersion?: number;
+    /** Whether a second factor was presented during this sign-in. */
+    mfaVerified?: boolean;
   }
 
   interface Session {
@@ -133,6 +136,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
+        // Optional: required only when the account has TOTP enabled. The sign-in
+        // form reveals this field after a first attempt answers MFA_REQUIRED.
+        code: { label: "Code", type: "text" },
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) {
@@ -162,6 +168,46 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           throw new Error("Invalid credentials");
         }
 
+        /*
+         * Second factor. Checked *after* the password so an attacker without it
+         * learns nothing about whether MFA is enabled for the account.
+         *
+         * A null return from authorize is a generic credential failure, which
+         * would be indistinguishable from a wrong password — so the reason is
+         * carried out through a thrown error that the client maps to a distinct
+         * message. `MFA_REQUIRED` tells the form to reveal the code field;
+         * `MFA_INVALID` means the code was wrong. Neither discloses the secret.
+         */
+        if (user.mfaEnabled && user.mfaSecret) {
+          const submitted = typeof credentials.code === "string" ? credentials.code.trim() : "";
+          if (!submitted) throw new Error("MFA_REQUIRED");
+
+          let codeOk = false;
+          try {
+            codeOk = verifyTotp(decryptSecret(user.mfaSecret, user.id), submitted);
+          } catch {
+            // Undecryptable secret (key rotation gone wrong) — refuse rather
+            // than silently letting the account through with one factor.
+            logger.error("mfa secret could not be decrypted", { userId: user.id });
+            throw new Error("Invalid credentials");
+          }
+
+          if (!codeOk) {
+            // A backup code is the recovery path when the phone is lost. On a
+            // match it is consumed — single use, rewritten without that entry.
+            const backupIndex = await matchBackupCode(user.mfaBackupCodes, submitted);
+            if (backupIndex === -1) throw new Error("MFA_INVALID");
+            const remaining = user.mfaBackupCodes.filter((_, i) => i !== backupIndex);
+            await prisma.user
+              .update({ where: { id: user.id }, data: { mfaBackupCodes: remaining, mfaLastUsedAt: new Date() } })
+              .catch(() => {});
+          } else {
+            await prisma.user
+              .update({ where: { id: user.id }, data: { mfaLastUsedAt: new Date() } })
+              .catch(() => {});
+          }
+        }
+
         // All accounts are recognised as verified: sign-up emails on this
         // deployment are not live inboxes, so a verification wall would lock
         // people out of publishing. Self-heal any legacy null on sign-in.
@@ -183,6 +229,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           avatar: user.avatar,
           emailVerified,
           tokenVersion: user.tokenVersion ?? 0,
+          mfaVerified: user.mfaEnabled ? true : false,
         };
       },
     }),
@@ -215,9 +262,32 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         logger.warn("rejected Google sign-in: unverified email claim", { email });
         return false;
       }
+
+      /*
+       * A privileged account that has enrolled TOTP must not be able to sidestep
+       * it by signing in with Google: the OAuth flow has no second-factor step, so
+       * allowing it would make the stronger sign-in the weaker one. Refused here,
+       * before a session is minted, with the remedy named in the log.
+       */
+      const local = await prisma.user
+        .findUnique({ where: { email }, select: { role: true, mfaEnabled: true } })
+        .catch(() => null);
+      const privileged = local?.role === "ADMIN" || local?.role === "SUPER_ADMIN";
+      if (privileged && local?.mfaEnabled) {
+        logger.warn("rejected Google sign-in for MFA-protected privileged account", { email });
+        return false;
+      }
       return true;
     },
     async jwt({ token, user, account }) {
+      // Session issuance for a credential sign-in that presented a second factor.
+      if (user) {
+        // Set before the branch below so both credential and OAuth paths record
+        // it. OAuth has no TOTP step here, so an admin who enrolled TOTP and
+        // then signs in with Google would otherwise skip the factor — the
+        // `signIn` callback refuses that combination for privileged roles.
+        token.mfaVerified = (user as { mfaVerified?: boolean }).mfaVerified === true;
+      }
       // OAuth first sign-in: resolve (or create) the local row and key the JWT
       // to ITS id, never the raw provider profile id.
       if (account?.provider === "google" && user) {
@@ -243,6 +313,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           token.emailVerified = dbUser.emailVerified ?? null;
           token.tokenVersion = dbUser.tokenVersion ?? 0;
           token.roleFetchedAt = Date.now();
+          // OAuth cannot satisfy TOTP, so this is false for privileged accounts
+          // that have it enrolled — see the signIn callback, which refuses them
+          // before reaching here.
+          token.mfaVerified = false;
           return token;
         }
       }
@@ -322,6 +396,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session.user.username = (token.username as string) ?? "";
         session.user.avatar = (token.avatar as string | null) ?? null;
         session.user.emailVerified = (token.emailVerified as Date | null) ?? null;
+        (session.user as { mfaVerified?: boolean }).mfaVerified = token.mfaVerified === true;
       }
       return session;
     },

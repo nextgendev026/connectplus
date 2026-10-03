@@ -9,6 +9,7 @@ import { SettingsForm } from "@/components/settings/SettingsForm";
 import { VerifiedWriterCard } from "@/components/settings/VerifiedWriterCard";
 import { SubscriptionManager } from "@/components/subscription/SubscriptionManager";
 import { NotificationSoundSettings } from "@/components/notifications/NotificationSoundSettings";
+import { MfaCard } from "@/components/settings/MfaCard";
 
 export const dynamic = "force-dynamic";
 
@@ -79,6 +80,10 @@ export default async function SettingsPage() {
         </section>
 
         <NotificationSoundSettings />
+
+        <div className="h-6" />
+
+        <MfaCard />
 
         <SettingsForm
           user={{
