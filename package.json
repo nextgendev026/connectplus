@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:intent": "vitest run tests/intent",
@@ -31,10 +31,16 @@
     "db:migrate:deploy": "npm run db:guard -- \"deploy migrations\" && prisma migrate deploy",
     "db:backfill-money": "ts-node --project scripts/tsconfig.script.json scripts/backfill-money-minor.ts",
     "db:money-preflight": "ts-node --project scripts/tsconfig.script.json scripts/money-migration-preflight.ts",
-    "vercel-build": "npm run db:guard -- \"deploy migrations\" && prisma migrate deploy && prisma generate && npm run db:ensure && next build"
+    "vercel-build": "npm run db:guard -- \"deploy migrations\" && prisma migrate deploy && prisma generate && npm run db:ensure && next build",
+    "cf:build": "npm run db:guard -- \"deploy migrations\" && prisma migrate deploy && prisma generate && opennextjs-cloudflare build",
+    "cf:preview": "opennextjs-cloudflare preview",
+    "cf:deploy": "opennextjs-cloudflare deploy",
+    "cf:secrets": "node --env-file=.env scripts/cf-secrets.mjs",
+    "cf:types": "wrangler types"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.74",
+    "@prisma/adapter-pg": "^6.19.3",
     "@prisma/client": "^6.6.0",
     "@sentry/nextjs": "^10.75.0",
     "ai": "^7.0.113",
@@ -50,6 +56,8 @@
     "lucide-react": "^1.41.0",
     "next": "^16.3.4",
     "next-auth": "^5.0.0-beta.32",
+    "otpauth": "^9.5.2",
+    "pg": "^8.23.1",
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "recharts": "^2.15.0",
@@ -62,6 +70,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "^1.20.8",
     "@playwright/test": "^1.63.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
@@ -72,10 +81,11 @@
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.3.4",
     "postcss": "^8",
-    "prisma": "^6.6.0",
+    "prisma": "^6.19.3",
     "tailwindcss": "^3.4.1",
     "ts-node": "^10.9.2",
     "typescript": "^5",
-    "vitest": "^2.1.9"
+    "vitest": "^2.1.9",
+    "wrangler": "^4.147.0"
   }
 }
