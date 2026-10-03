@@ -470,17 +470,26 @@ export default function ScoresBoard({
             reader moved. Both now live in a single block parked exactly at the
             navbar's height, which is what makes the toolbar feel attached to
             the board rather than to the hero above it. */}
-        <div className="sports-toolbar sticky -mx-3 border-b border-surface-900/60 bg-surface-950/95 px-3 pb-1.5 pt-2 backdrop-blur sm:-mx-6 sm:px-6 lg:static lg:border-t lg:pt-3">
+        <div className="sports-toolbar sticky -mx-3 border-b border-surface-900/60 bg-surface-950/95 px-3 pb-2 pt-2 backdrop-blur sm:-mx-6 sm:px-6 lg:static lg:border-t lg:pt-3">
         <div className="flex items-center gap-2 lg:gap-3">
           <button
             onClick={() => setDayOffset((d) => Math.max(-DAYS_BACK, d - 1))}
             disabled={dayOffset <= -DAYS_BACK}
-            className="rounded-lg border border-surface-800 p-1.5 text-surface-400 transition hover:text-surface-50 disabled:opacity-30"
+            className="rounded-lg border border-surface-800 p-2 text-surface-400 transition hover:text-surface-50 disabled:opacity-30"
             aria-label="Earlier day"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
-          <div ref={dayStrip} className="flex flex-1 gap-1.5 overflow-x-auto pb-0.5 lg:overflow-visible lg:flex-wrap lg:justify-start lg:gap-2">
+          {/*
+            A fixed-width strip that scrolls sideways, at every width.
+
+            It used to wrap into rows from `lg` up (`lg:flex-wrap lg:overflow-visible`),
+            so the desktop day picker reflowed into a different shape than the
+            phone's — which is the "stretched out on mobile, rearranged on
+            desktop" inconsistency that made the board feel like two pages. One
+            shape everywhere, scrolled, is both simpler and stable.
+          */}
+          <div ref={dayStrip} className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto pb-0.5">
             {Array.from({ length: DAYS_BACK + DAYS_FORWARD + 1 }, (_, i) => i - DAYS_BACK).map((offset) => {
               const d = new Date();
               d.setDate(d.getDate() + offset);
@@ -500,11 +509,10 @@ export default function ScoresBoard({
                   aria-current={dayOffset === offset ? "date" : undefined}
                   aria-label={d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}
                   className={cn(
-                    "flex min-w-[62px] shrink-0 flex-col items-center rounded-xl border px-2.5 py-1.5 transition",
+                    "flex min-w-[62px] shrink-0 flex-col items-center rounded-xl border px-3 py-2 transition",
                     dayOffset === offset
                       ? "border-brand-500 bg-brand-500/15 text-brand-200"
-                      : "border-surface-800 text-surface-400 hover:border-surface-700 hover:text-surface-50",
-                    "lg:min-w-0 lg:flex-auto lg:flex-none lg:p-1.5 lg:py-1 lg:w-auto lg:justify-center"
+                      : "border-surface-800 text-surface-400 hover:border-surface-700 hover:text-surface-50"
                   )}
                 >
                   <span className="text-[10px] font-medium uppercase tracking-wide">{label}</span>
@@ -529,12 +537,11 @@ export default function ScoresBoard({
           fixture — controls the reader sees before they see a single score.
           On desktop the row wraps into a compact grid instead of scrolling.
         */}
-        <div className="mt-2 flex items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:none] lg:overflow-visible lg:flex-wrap lg:gap-2 lg:mt-1.5">
+        <div className="mt-2 flex items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:none] lg:flex-wrap lg:overflow-visible">
           <span
             className={cn(
               "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold",
-              (hub?.liveCount ?? 0) > 0 ? "bg-red-500/15 text-red-400" : "bg-surface-800 text-surface-400",
-              "lg:px-2 lg:py-0.5"
+              (hub?.liveCount ?? 0) > 0 ? "bg-red-500/15 text-red-400" : "bg-surface-800 text-surface-400"
             )}
           >
             <CircleDot className={cn("h-3.5 w-3.5", (hub?.liveCount ?? 0) > 0 && "animate-pulse")} />
@@ -565,8 +572,7 @@ export default function ScoresBoard({
               "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition",
               liveOnly
                 ? "border-red-500 bg-red-500/15 text-red-300"
-                : "border-surface-800 text-surface-400 hover:text-surface-50",
-              "lg:px-2.5 lg:py-1"
+                : "border-surface-800 text-surface-400 hover:text-surface-50"
             )}
           >
             <CircleDot className={cn("h-3.5 w-3.5", liveOnly && "animate-pulse")} />
@@ -580,8 +586,7 @@ export default function ScoresBoard({
                 "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition",
                 onlyFollowed
                   ? "border-amber-500 bg-amber-500/15 text-amber-300"
-                  : "border-surface-800 text-surface-400 hover:text-surface-50",
-                "lg:px-2.5 lg:py-1"
+                  : "border-surface-800 text-surface-400 hover:text-surface-50"
               )}
             >
               <Star className={cn("h-3.5 w-3.5", onlyFollowed && "fill-amber-400 text-amber-400")} />
@@ -611,8 +616,7 @@ export default function ScoresBoard({
               "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition",
               alertsOn
                 ? "border-emerald-500 bg-emerald-500/15 text-emerald-300"
-                : "border-surface-800 text-surface-400 hover:text-surface-50",
-              "lg:px-2.5 lg:py-1"
+                : "border-surface-800 text-surface-400 hover:text-surface-50"
             )}
           >
             {alertsOn ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
@@ -622,7 +626,7 @@ export default function ScoresBoard({
           <button
             onClick={() => void load({ fresh: true })}
             disabled={refreshing}
-            className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-surface-800 bg-surface-900/70 px-3 py-2 text-xs font-medium text-surface-300 transition hover:text-surface-50 disabled:opacity-60 lg:ml-0 lg:px-3 lg:py-1.5"
+            className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-surface-800 bg-surface-900/70 px-3 py-2 text-xs font-medium text-surface-300 transition hover:text-surface-50 disabled:opacity-60 lg:ml-0"
           >
             <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
             Refresh
@@ -713,13 +717,17 @@ export default function ScoresBoard({
       </div>
 
       {/*
-        Sticky on desktop so the rail and its ads stay beside the list instead of
-        scrolling away from it — the single biggest difference between how the
-        wide view and the phone view feel. Capped to the viewport so a tall rail
-        can never leave content stranded below the fold, and released below `lg`
-        where it stacks under the list anyway.
+        A plain column, not a pinned one.
+
+        The rail used to be `lg:sticky` with its own scrollbar and a viewport cap,
+        which on a desktop produced a second scrolling region beside the board and
+        a rail that appeared to hang in place while the list moved under it. The
+        request that produced this change was explicit — no stickiness anywhere in
+        the desktop view — and the simpler shape is also the better one: the rail
+        is short (an ad and two referral cards), so pinning it bought nothing and
+        cost a nested scroller.
       */}
-      <aside className="space-y-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto lg:pr-1">
+      <aside className="space-y-4">
         {sidebarAd ? <div>{sidebarAd}</div> : null}
         <ReferralCards placement="sports-sidebar" />
       </aside>

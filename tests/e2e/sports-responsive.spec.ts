@@ -19,11 +19,14 @@ import { test, expect, type Page } from "@playwright/test";
 // budget, which then reads as a timeout instead of a layout failure.
 test.setTimeout(90_000);
 
+// Three boards, matching SportsHub's TABS. The old fourth (“fixtures”,
+// `?tab=calendar`) is gone: its fixture list duplicated the scores board's
+// day-striped list and the analysis board's rail, so the board was removed and
+// this entry with it.
 const BOARDS = [
   { name: "scores", url: "/sports" },
   { name: "analysis", url: "/sports?tab=analysis" },
   { name: "tips", url: "/sports?tab=tips" },
-  { name: "fixtures", url: "/sports?tab=calendar" },
 ];
 
 const PHONES = [

@@ -156,7 +156,6 @@ describe("sports desk type scale", () => {
 describe("sports desk chrome", () => {
   const surfaces = [
     "src/components/sports/ScoresBoard.tsx",
-    "src/components/sports/MatchCalendar.tsx",
     "src/components/sports/BettingTips.tsx",
     "src/components/sports/MatchCentre.tsx",
   ];
@@ -232,24 +231,14 @@ describe("horizontal chrome stays contained", () => {
     expect(tips).toMatch(/scrollbar-hide[^"]*overflow-x-auto|overflow-x-auto[^"]*scrollbar-hide/);
   });
 
-  it("gives every day in the mobile week rail its own width", () => {
-    const calendar = read("src/components/sports/MatchCalendar.tsx");
-    // Seven `flex-1` cells split what is left after the week buttons — about
-    // 34px each on a 320px phone, which a 12.5px weekday and a 17.5px date do
-    // not fit into. A fixed basis plus a scroller is the de-squeeze.
-    expect(calendar).toContain("snap-x");
-    expect(calendar).toMatch(/shrink-0 basis-\[2\.5rem\] snap-start/);
-    // The rail also has to keep the selected day in view. `scrollLeft` is set
-    // directly: `scrollIntoView` may scroll the page as well as the rail.
-    expect(calendar).toContain("weekRail.current");
-    expect(calendar).not.toMatch(/\.scrollIntoView\(/);
-  });
-
-  it("lets the fixture toolbar wrap rather than push the page sideways", () => {
-    const calendar = read("src/components/sports/MatchCalendar.tsx");
-    // Month stepper + Today + Refresh is ~384px of content; on a 320px screen a
-    // nowrap row of it overflowed by 49px.
-    expect(calendar).toContain("flex flex-wrap items-center gap-x-2 gap-y-1.5");
+  it("keeps the day strip's cells a fixed width with a scroller, not flex-1", () => {
+    // The Scores board's day strip is now the only day navigation, so its
+    // de-squeeze is the one that must hold: a `flex-1` strip squeezed seven
+    // cells into ~34px on a 320px phone, which a weekday and a date do not fit
+    // into. Fixed width plus a horizontal scroller is the shape that fits.
+    const scores = read("src/components/sports/ScoresBoard.tsx");
+    expect(scores).toMatch(/min-w-\[62px\][^"]*shrink-0|shrink-0[^"]*min-w-\[62px\]/);
+    expect(scores).toMatch(/overflow-x-auto/);
   });
 });
 

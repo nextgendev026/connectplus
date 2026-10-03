@@ -2,16 +2,26 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Activity, ArrowRight, CalendarDays, LineChart, Radio, Sparkles, Trophy } from "lucide-react";
+import { Activity, ArrowRight, LineChart, Radio, Sparkles, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ScoresBoard from "./ScoresBoard";
 import BettingTips from "./BettingTips";
 import MatchCentre from "./MatchCentre";
-import MatchCalendar from "./MatchCalendar";
 import LiveTicker from "./LiveTicker";
 
-type Tab = "scores" | "analysis" | "tips" | "calendar";
-const TABS: Tab[] = ["scores", "analysis", "tips", "calendar"];
+/**
+ * Three boards, not four.
+ *
+ * The fourth was a `Fixtures` calendar board whose list was a third rendering of
+ * the same fixtures the Scores board already lists (with its own day strip) and
+ * the Analysis board already lists (with its own searchable rail). Three boards
+ * showing the same rows is what made the page feel duplicated and repetitive;
+ * the calendar's month stepper was the only thing it owned, and the Scores day
+ * strip covers the navigation people actually used. Consolidating here is the
+ * de-duplication: one live board, one deep-dive board, one picks board.
+ */
+type Tab = "scores" | "analysis" | "tips";
+const TABS: Tab[] = ["scores", "analysis", "tips"];
 
 /**
  * The four boards, described the way a reader would describe them.
@@ -23,17 +33,16 @@ const TAB_META: Record<Tab, { label: string; hint: string; icon: typeof Activity
   scores: { label: "Scores", hint: "Live now", icon: Activity },
   analysis: { label: "Analysis", hint: "Deep dive", icon: LineChart },
   tips: { label: "Tips", hint: "Picks + why", icon: Sparkles },
-  calendar: { label: "Fixtures", hint: "What's on", icon: CalendarDays },
 };
 
 /**
  * Sports hub shell.
  *
- * Four boards share one frame: **Scores** (the live board), **Analysis** (the
- * match centre, where fixtures are pinned side by side), **Tips** (the model's
- * picks, each with the reasons behind it) and **Fixtures** (the calendar). The
- * active tab lives in the URL (`?tab=tips`) so any view can be shared or linked
- * from a notification.
+ * Three boards share one frame: **Scores** (the live board, with the day strip),
+ * **Analysis** (the match centre, where fixtures are pinned side by side) and
+ * **Tips** (the model's picks, each with the reasons behind it). The active tab
+ * lives in the URL (`?tab=tips`) so any view can be shared or linked from a
+ * notification.
  *
  * The switcher is a sibling of the hero, not a child of it, and that is load
  * bearing: a `position: sticky` element only pins inside its nearest scrolling
@@ -50,7 +59,7 @@ const TAB_META: Record<Tab, { label: string; hint: string; icon: typeof Activity
  *
  * ## Why the switcher moves
  *
- * A four-tab bar that just swaps a background colour tells the reader nothing
+ * A tab bar that just swaps a background colour tells the reader nothing
  * about where they are relative to the other boards. Here the highlight is a
  * single element that *travels* to the tab you picked, the tab you picked lifts
  * its icon, and the bar answers the arrow keys and a sideways swipe on a phone.
@@ -351,8 +360,6 @@ export default function SportsHub({
           <ScoresBoard inlineAd={inlineAd} sidebarAd={sidebarAd} />
         ) : tab === "analysis" ? (
           <MatchCentre />
-        ) : tab === "calendar" ? (
-          <MatchCalendar />
         ) : (
           <BettingTips inlineAd={inlineAd} sidebarAd={sidebarAd} />
         )}

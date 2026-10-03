@@ -181,16 +181,18 @@ export default function MatchCentre() {
       {/*
         Fixture rail.
 
-        Sticks beside the analysis on desktop so the fixture you are studying
-        never scrolls out of reach. On a phone it moves *below* the board: it was
-        first in the DOM, so a reader who had already pinned two matches scrolled
-        through a 70vh fixture list before reaching the analysis they came for.
-        The order only flips once something is pinned — with an empty board the
-        list is the useful thing to see first.
+        Sits beside the analysis on desktop, and moves *below* the board on a
+        phone: it was first in the DOM, so a reader who had already pinned two
+        matches scrolled through a 70vh fixture list before reaching the analysis
+        they came for. The order only flips once something is pinned — with an
+        empty board the list is the useful thing to see first. Deliberately not
+        `sticky` on desktop any more; see the note in ScoresBoard.
       */}
       <aside
         className={cn(
-          "min-w-0 lg:order-1 lg:sticky lg:top-4 lg:self-start",
+          // Not pinned on desktop: the rail has its own max-height scroller, and
+          // pairing that with `sticky` produced two nested scrolling regions.
+          "min-w-0 lg:order-1 lg:self-start",
           pinned.length > 0 ? "order-2" : "order-1"
         )}
       >

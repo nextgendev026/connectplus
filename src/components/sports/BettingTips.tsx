@@ -443,7 +443,9 @@ export default function BettingTips({
       </div>
 
       {/* Sticky on desktop, released below `lg` — see ScoresBoard for the reasoning. */}
-      <aside className="space-y-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto lg:pr-1">
+      {/* A plain column — the desktop rail is deliberately not pinned (see the
+          matching note in ScoresBoard). */}
+      <aside className="space-y-4">
         {sidebarAd ? <div>{sidebarAd}</div> : null}
         <ReferralCards placement="sports-sidebar" />
       </aside>
