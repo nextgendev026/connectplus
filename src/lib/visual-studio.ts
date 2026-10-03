@@ -2,6 +2,7 @@ import { createLogger } from "@/lib/logger";
 import { getSettings } from "@/lib/settings";
 import { storeMediaBytes, type StoredMedia } from "@/lib/media-storage";
 
+
 /**
  * Real asset generation for the mind's visual tool.
  *
@@ -22,8 +23,6 @@ import { storeMediaBytes, type StoredMedia } from "@/lib/media-storage";
  * Video is a separate story and is deliberately not pointed at the obvious
  * provider — see `generateVideo`.
  */
-
-const log = createLogger("visual-studio");
 
 export type ImageSize = "1024x1024" | "1536x1024" | "1024x1536";
 

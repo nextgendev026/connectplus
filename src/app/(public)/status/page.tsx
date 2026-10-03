@@ -196,14 +196,13 @@ export default function StatusPage() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount; see eslint.config.mjs
     load(true);
     const t = setInterval(() => load(), 30_000);
     return () => clearInterval(t);
   }, [load]);
 
   const overall = data ? OVERALL_META[data.overall] : null;
-  const hasHistory =
-    data && Object.values(data.history ?? {}).some((days) => days.some((d) => d.worst !== "nodata"));
   const crons = data?.crons ?? [];
 
   return (

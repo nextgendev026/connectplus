@@ -1,4 +1,4 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 
 /**
@@ -11,19 +11,17 @@ import { v } from "convex/values";
  * console keeps reporting the stale number.
  */
 const SHARDS = 8;
-/** `SHARDS`, plus room for the pre-shard rows a deployment may still carry. */
-const MAX_COUNTER_ROWS = 64;
 
 function pickShard(): number {
   return Math.floor(Math.random() * SHARDS);
 }
 
-async function bump(ctx: { db: any }, adId: string, field: "impressions" | "clicks") {
+async function bump(ctx: MutationCtx, adId: string, field: "impressions" | "clicks") {
   const now = Date.now();
   const shard = pickShard();
   const existing = await ctx.db
     .query("adStats")
-    .withIndex("by_ad_shard", (q: any) => q.eq("adId", adId).eq("shard", shard))
+    .withIndex("by_ad_shard", (q) => q.eq("adId", adId).eq("shard", shard))
     .first();
 
   if (existing) {

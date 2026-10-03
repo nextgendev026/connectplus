@@ -2,7 +2,6 @@
 
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { redisIncr } from "@/lib/redis";
 
 interface FeedLiveRefreshProps {
   /** Minimum interval between full refreshes (default 5 min — not 2 min). */

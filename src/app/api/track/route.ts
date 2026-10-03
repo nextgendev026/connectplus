@@ -58,7 +58,6 @@ export async function POST(request: NextRequest) {
     userId = null;
   }
 
-  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
   const country =
     request.headers.get("x-vercel-ip-country") ?? request.headers.get("cf-ipcountry");
   const city = request.headers.get("x-vercel-ip-city");

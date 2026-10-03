@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { X, Loader2, BadgeCheck, MapPin } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { ViewCount } from "@/components/ui/ViewCount";
 
 interface UserItem {
@@ -65,6 +64,7 @@ export function ProfileListModal({
   // Reset on open/tab change
   useEffect(() => {
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset derived from the open prop
       setItems([]);
       setPage(1);
       setHasMore(true);
@@ -88,8 +88,8 @@ export function ProfileListModal({
         if (cancelled) return;
 
         setItems((prev) => {
-          const existing = new Set(prev.map((i: any) => i.id));
-          const newItems = (data.items as any[]).filter(
+          const existing = new Set(prev.map((i) => i.id));
+          const newItems = data.items.filter(
             (i) => !existing.has(i.id)
           );
           return [...prev, ...newItems];
@@ -191,7 +191,7 @@ export function ProfileListModal({
   );
 }
 
-function renderUserItems(items: UserItem[], tab: ModalTab) {
+function renderUserItems(items: UserItem[], _tab: ModalTab) {
   return items.map((user) => {
     const initials = (user.name ?? user.username)
       .split(/\s+/)

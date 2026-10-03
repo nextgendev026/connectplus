@@ -2,11 +2,8 @@
 "use strict";
 const { spawnSync } = require("node:child_process");
 const { writeFileSync } = require("node:fs");
-const { join } = require("node:path");
 
 const OUT = process.env.MIGCHECK_OUT;
-const CWD = "E:\\dev.nyash\\connectplus";
-const CLI = join(CWD, "node_modules", "prisma", "build", "index.js");
 
 const checkSrc = `
 const { PrismaClient } = require("@prisma/client");

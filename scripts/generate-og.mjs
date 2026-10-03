@@ -11,7 +11,7 @@
 //
 // Run: node scripts/generate-og.mjs
 import sharp from "sharp";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 

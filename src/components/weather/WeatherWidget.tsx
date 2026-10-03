@@ -354,6 +354,7 @@ export function WeatherWidget({ compact = false }: { compact?: boolean }) {
   // hero chip or grants permission elsewhere on the page).
   useEffect(() => {
     if (trackedLoc && trackedLoc.source === "gps" && (coords?.lat !== trackedLoc.lat || coords?.lon !== trackedLoc.lon)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- refetch on the tracked location changing
       loadWeather({ lat: trackedLoc.lat, lon: trackedLoc.lon, source: "gps", accuracy: trackedLoc.accuracy });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

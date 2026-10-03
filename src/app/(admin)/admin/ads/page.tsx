@@ -110,6 +110,7 @@ export default function AdminAdsPage() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount; see eslint.config.mjs
     void load();
   }, [load]);
 

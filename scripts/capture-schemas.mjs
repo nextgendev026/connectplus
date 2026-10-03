@@ -6,7 +6,7 @@
 //   OLD_PAT=... OLD_PROJECT=eligxvxirkfnqqkywxhv DATABASE_URL=... \
 //     node scripts/capture-schemas.mjs old-schema.jsonl new-schema.jsonl
 
-import { writeFileSync, appendFileSync } from "node:fs";
+import { appendFileSync } from "node:fs";
 import pg from "pg";
 
 const [OLD_SCHEMA, NEW_SCHEMA] = process.argv.slice(2);
@@ -29,7 +29,7 @@ async function management(sql) {
   return r.json();
 }
 
-const qInfo = (capitalize) => `
+const qInfo = (_capitalize) => `
 select table_name, column_name, ordinal_position, data_type, udt_name, is_nullable,
   column_default, character_maximum_length
 from information_schema.columns c

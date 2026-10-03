@@ -264,7 +264,7 @@ export function equals(a: Money, b: Money): boolean {
 export function amountMismatch(
   expected: number | string | null | undefined,
   received: number | string | null | undefined,
-  currency: Currency
+  _currency: Currency
 ): { mismatch: boolean; expectedMinor: number | null; receivedMinor: number | null; reason?: string } {
   const expectedMinor = expected === null || expected === undefined ? null : toMinorUnits(expected);
   const receivedMinor = received === null || received === undefined ? null : toMinorUnits(received);

@@ -1,6 +1,6 @@
 import { analyzeSeo, type SeoAnalysis } from "./seo-analyzer";
 import { checkPlagiarism, type PlagiarismResult } from "./plagiarism-checker";
-import { extractKeywords, analyzeSentiment, wordCount, stripHtml } from "./neural-text";
+import { wordCount, stripHtml } from "./neural-text";
 
 export interface OptimizationResult {
   overallScore: number;

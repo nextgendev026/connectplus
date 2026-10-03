@@ -114,7 +114,7 @@ describe("addition and subtraction stay in one currency", () => {
     const kes = money(100, "KES");
     const usd = money(100, "USD");
     expect(() => {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+       
       const sum = kes.amountMinor + usd.amountMinor;
       expect(sum).toBe(200); // the numbers add; the money does not
     }).not.toThrow();

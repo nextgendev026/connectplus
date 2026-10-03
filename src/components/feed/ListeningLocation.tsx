@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
  * realtime when the user grants location access.
  */
 export function ListeningLocation() {
-  const { location, state, refresh } = useTrackedLocation({ watch: true });
+  const { location, refresh } = useTrackedLocation({ watch: true });
   const [busy, setBusy] = useState(false);
 
   const place = location?.place;

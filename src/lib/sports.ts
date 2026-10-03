@@ -487,7 +487,7 @@ const sportsDbProvider: SportsProvider = {
   priority: 2,
   keyless: SPORTSDB_API_KEY === "3",
   supportsDate: true,
-  async fetchMatches({ date, sport }) {
+  async fetchMatches({ date }) {
     const isToday = date.toISOString().slice(0, 10) === new Date().toISOString().slice(0, 10);
     const day = date.toISOString().slice(0, 10);
 
@@ -1555,7 +1555,6 @@ export async function resolveEspnEventId(input: {
   // The desk resolves ESPN ids for football only, so the request's `sport` is
   // deliberately not read: there is no second product to address.
   const sport = SPORTS_SCOPE;
-  const path = ESPN_SPORT_PATH;
 
   const kickoff = input.kickoff ? new Date(input.kickoff) : null;
   const day = kickoff && !Number.isNaN(kickoff.getTime()) ? espnDay(kickoff) : null;

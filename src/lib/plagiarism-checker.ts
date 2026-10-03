@@ -114,7 +114,6 @@ export async function checkPlagiarism(
     if (overallSim < 0.05) continue; // Skip if very dissimilar
 
     const matchedSentences: string[] = [];
-    let totalSentenceSim = 0;
 
     for (const draftSentence of draftSentences) {
       let bestSim = 0;
@@ -136,7 +135,6 @@ export async function checkPlagiarism(
           matchSource: bestSource?.slice(0, 100) ?? null,
         });
       }
-      totalSentenceSim += bestSim;
     }
 
     if (matchedSentences.length > 0 || overallSim > 0.15) {

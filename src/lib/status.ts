@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { redisAvailable, redisSetEx, redisGetRaw, cacheGet, cacheSet, redisProbeError } from "@/lib/redis";
+import { redisAvailable, redisSetEx, redisGetRaw, cacheGet, redisProbeError } from "@/lib/redis";
 import { STATIONS } from "@/lib/radio-stations";
 
 export type ServiceStatus = "operational" | "degraded" | "down" | "unconfigured";
@@ -436,7 +436,6 @@ interface InngestFunctionRun {
  */
 export async function fetchCronRuns(): Promise<CronRun[]> {
   const mgmtKey = process.env.INNGEST_MANAGEMENT_KEY;
-  const envId = process.env.INNGEST_ENV_ID ?? "prod";
   if (!mgmtKey) return [];
 
   const watched = [

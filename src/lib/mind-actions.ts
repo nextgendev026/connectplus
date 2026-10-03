@@ -24,8 +24,6 @@ import { visualStudio, buildImagePrompt } from "@/lib/visual-studio";
  *    report "that post no longer exists" instead of a stack trace.
  */
 
-const log = createLogger("mind-actions");
-
 export interface ActionResult {
   ok: boolean;
   action: string;

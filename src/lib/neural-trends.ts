@@ -1,9 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { createLogger } from "@/lib/logger";
-import { extractKeywords, extractEntities, analyzeSentiment, stripHtml } from "@/lib/neural-text";
+import { extractKeywords, analyzeSentiment } from "@/lib/neural-text";
 import { research, type ResearchFinding } from "@/lib/web-research";
-
-const log = createLogger("neural-trends");
 
 export interface PlatformSignal {
   subject: string;

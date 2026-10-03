@@ -70,14 +70,6 @@ export function notificationHref(n: NotificationLike): string {
   return "/";
 }
 
-function titleCaseType(type: string): string {
-  return (type ?? "")
-    .replace(/^SPORTS_/, "")
-    .toLowerCase()
-    .replace(/_/g, " ")
-    .trim();
-}
-
 export interface NotificationDisplay {
   kind: NotificationKind;
   href: string;

@@ -61,6 +61,17 @@ export function StudioToolbar({
     [onInsert, disabled]
   );
 
+  /*
+   * The image button's click lives in a `useCallback`, not in an inline arrow
+   * inside the `actions` array. Reading `fileInputRef.current` from a closure
+   * built during render is what the React-19 `refs` rule flags — the read is
+   * deferred to click time either way, but only the `useCallback` form is
+   * recognisable as an event handler rather than a render-time access.
+   */
+  const openImagePicker = useCallback(() => {
+    if (!uploading) fileInputRef.current?.click();
+  }, [uploading]);
+
   const handleImageSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -175,7 +186,7 @@ export function StudioToolbar({
     {
       icon: uploading ? Loader2 : ImageIcon,
       label: uploading ? "Uploading..." : "Image",
-      action: () => !uploading && fileInputRef.current?.click(),
+      action: openImagePicker,
     },
     {
       icon: Minus,
@@ -274,6 +285,11 @@ export function StudioToolbar({
         className
       )}
     >
+      {/* The `refs` rule traces a ref read through the `actions` array and flags
+          this consumption site; every ref access in it is deferred into a
+          callback (see `openImagePicker`), so nothing actually reads a ref
+          during render. */}
+      {/* eslint-disable-next-line react-hooks/refs -- ref reads are deferred into the action callbacks */}
       {actions.map((item, i) => (
         <span key={i} className="contents">
           <button

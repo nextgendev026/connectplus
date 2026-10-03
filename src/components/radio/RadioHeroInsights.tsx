@@ -87,7 +87,7 @@ function ForexPanel() {
     load();
     const t = setInterval(() => load(true), 5 * 60_000);
     return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount; `load` is recreated every render
+     
   }, []);
 
   if (loading && !data) {

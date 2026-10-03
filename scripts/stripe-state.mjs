@@ -22,7 +22,7 @@ try {
       SELECT count(*)::int AS n FROM information_schema.tables
       WHERE table_schema='public' AND table_name='StripeEvent'`;
     nCols = se[0].n;
-  } catch (e) { nCols = -2; if (false) {} }
+  } catch { nCols = -2; }
   enc(JSON.stringify({ q: "StripeEvent_table_count", n: nCols }));
 
   const cols = await prisma.$queryRaw`

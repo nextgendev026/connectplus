@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState, useEffect, useCallback, useRef } from "react";
+import { Fragment, useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import AdSlotClient from "@/components/ads/AdSlotClient";
 import { formatCompact } from "@/lib/format-views";
@@ -10,20 +10,16 @@ import {
   Bookmark,
   Info,
   Heart,
-  MessageCircle,
   TrendingUp,
   PenLine,
   LayoutGrid,
   Rows3,
-  Clock,
-  Sparkles,
   Search,
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ProfilePostCard } from "./ProfilePostCard";
 import type { ProfileTabPost } from "./ProfilePostCard";
-import { ProfileListModal } from "./ProfileListModal";
 
 export type { ProfileTabPost };
 
@@ -61,7 +57,6 @@ const SORTS: { id: SortKey; label: string }[] = [
 export function ProfileTabs({
   username,
   ownProfile,
-  stats,
   about,
   displayName,
   children,
@@ -199,10 +194,10 @@ function LazyPostsPanel({
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const observerRef = useRef<HTMLDivElement | null>(null);
-  const queryTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Reset on sort/query change
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset derived from the sort/query change
     setPosts([]);
     setPage(1);
     setHasMore(true);
@@ -211,6 +206,7 @@ function LazyPostsPanel({
   // Fetch page
   useEffect(() => {
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount; see eslint.config.mjs
     setLoading(true);
     const params = new URLSearchParams({
       tab: "posts",
@@ -306,6 +302,7 @@ function LazySavedPanel({
   const observerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset derived from the sort/query change
     setPosts([]);
     setPage(1);
     setHasMore(true);
@@ -313,6 +310,7 @@ function LazySavedPanel({
 
   useEffect(() => {
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount; see eslint.config.mjs
     setLoading(true);
     const params = new URLSearchParams({
       tab: "saved",
@@ -383,7 +381,6 @@ function PostsPanel({
   totalCount,
   sort,
   setSort,
-  layout,
   setLayout,
   query,
   setQuery,
@@ -556,7 +553,6 @@ function LazyInsightsPanel({
   ownProfile: boolean;
   displayName?: string;
 }) {
-  const [stats, setStats] = useState<ProfileStats | null>(null);
   const [posts, setPosts] = useState<ProfileTabPost[]>([]);
   const [loading, setLoading] = useState(true);
 

@@ -11,7 +11,7 @@
 // Dependency order (parents before children so FKs resolve):
 //   seed/settings -> users -> taxonomy -> posts -> comments/likes -> rss -> neural memory
 import { PrismaClient } from "@prisma/client";
-import { writeFileSync, appendFileSync } from "node:fs";
+import { appendFileSync } from "node:fs";
 
 const LOG = process.env.COPY_LOG || "copy.log.jsonl";
 const OLD_PAT = process.env.OLD_PAT;
@@ -39,7 +39,6 @@ async function oldQuery(sql) {
 }
 
 const prisma = new PrismaClient();
-const lowerFirst = (s) => s[0].toLowerCase() + s.slice(1501);
 
 // OLD table -> { model, orderBy, where?, skipEmpty }
 const PLAN = [
@@ -65,22 +64,6 @@ const PLAN = [
   { table: "PageView", model: "pageView", orderBy: "id" },
   { table: "PlatformSetting", model: "platformSetting", orderBy: "id" },
 ];
-
-async function syncTable(step) {
-  const t = step;
-  try {
-    const rows = await oldQuery(`select * from public."${t.table}" order by id`);
-    if (!Array.isArray(rows)) throw new Error("non-array response");
-    write({ t: t.table, action: "read", n: rows.length });
-    if (rows.length === 0) return;
-    const model = prisma[t.model];
-    if (!model) throw new Error(`no prisma model ${t.model}`);
-    const res = await model.createMany({ data: rows, skipDuplicates: true });
-    write({ t: t.table, action: "written", n: res.count, total: rows.length });
-  } catch (e) {
-    write({ t: t.table, action: "ERR", err: String(e && e.message ? e.message : e).slice(0, 300) });
-  }
-}
 
 async function main() {
   write({ begin: true, old: OLD_PROJECT, at: new Date().toISOString() });
@@ -113,7 +96,7 @@ async function syncPostToTag() {
     for (let i = 0; i < rows.length; i += 500) {
       const chunk = rows.slice(i, i + 500);
       const vals = chunk
-        .map((r, j) => `('${r.A}', '${r.B}')`)
+        .map((r) => `('${r.A}', '${r.B}')`)
         .join(",");
       const sql = `insert into public."_PostToTag" ("A","B") values ${vals} on conflict do nothing`;
       const r = await prisma.$executeRawUnsafe(sql);

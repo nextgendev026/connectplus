@@ -22,8 +22,6 @@ import { research, type ResearchFinding } from "@/lib/web-research";
  *     individually caught and each has a hard timeout.
  */
 
-const log = createLogger("platform-intelligence");
-
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** The East African cities the platform frames itself around. */
@@ -66,7 +64,6 @@ const LANGUAGE_MARKERS: Record<string, string[]> = {
 
 export function inferLanguage(text: string): { language: string; confidence: number; breakdown: Record<string, number> } {
   const words = text.toLowerCase().match(/[a-zà-ÿ']+/g) ?? [];
-  const total = Math.max(words.length, 1);
   const breakdown: Record<string, number> = {};
   const bag = new Set(words);
 

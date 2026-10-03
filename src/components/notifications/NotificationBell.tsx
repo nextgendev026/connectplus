@@ -8,7 +8,6 @@ import { cn, timeAgo } from "@/lib/utils";
 import {
   announceNotification,
   notificationPermissionState,
-  playNotificationSound,
   requestNotificationPermission,
   showSystemNotification,
   subscribeToPush,

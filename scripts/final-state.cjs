@@ -2,7 +2,6 @@
 "use strict";
 const { spawnSync } = require("node:child_process");
 const { writeFileSync } = require("node:fs");
-const { join } = require("node:path");
 const OUT = process.env.FINAL_OUT;
 
 const worker = String.raw`

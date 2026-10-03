@@ -5,6 +5,16 @@ import { auth } from "@/lib/auth";
 import { cacheGet, cacheSet } from "@/lib/redis";
 import { ProfileHeader } from "@/components/profile/ProfileHeader";
 import { ProfileTabs } from "@/components/profile/ProfileTabs";
+import type { Prisma } from "@prisma/client";
+
+/**
+ * The shape of a profiled user as this page loads them: the row plus its post
+ * count, and nothing else. Replacing the two `any`s that used to stand here with
+ * the actual `Prisma.UserGetPayload` keeps the cache and the live read in
+ * agreement — a field added to one and not the other is now a type error instead
+ * of a runtime `undefined` on a page nobody re-tested.
+ */
+type ProfileUser = Prisma.UserGetPayload<{ include: { _count: { select: { posts: true } } } }>;
 
 /**
  * Rendered per request, never prerendered — a profile shows live follower and
@@ -74,12 +84,12 @@ export default async function ProfilePage({
   // Cache profile metadata for 5 minutes to reduce DB hits
   const profileCacheKey = `profile:${username}`;
   const cachedProfile = await cacheGet<{
-    user: any;
+    user: ProfileUser;
     totalViews: number;
     totalLikes: number;
   }>(profileCacheKey);
 
-  let user: any;
+  let user: ProfileUser | null;
   let totalViews: number;
   let totalLikes: number;
 
@@ -94,6 +104,7 @@ export default async function ProfilePage({
         _count: { select: { posts: true } },
       },
     });
+
 
     if (!user) notFound();
 

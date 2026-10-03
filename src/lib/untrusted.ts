@@ -227,7 +227,7 @@ export function frameSources(sources: UntrustedSource[], opts: { maxCharsPerSour
  */
 export function sanitizeForPrompt(text: string, marker: string): string {
   return text
-    // eslint-disable-next-line no-control-regex
+     
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
     .replace(/<<<\s*\/?\s*(END-)?UNTRUSTED-DATA[^>]*>>>/gi, "[delimiter removed]")
     .replace(new RegExp(escapeRegExp(marker), "g"), "[marker removed]")

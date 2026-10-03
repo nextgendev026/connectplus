@@ -3,7 +3,6 @@ import type { Prisma } from "@prisma/client";
 import { extractKeywords, analyzeSentiment, extractEntities, summarizeText, stripHtml } from "@/lib/neural-text";
 import { createLogger } from "@/lib/logger";
 import { generateText } from "@/lib/ai-provider";
-import { rankMemories } from "@/lib/knowledge-retention";
 import { retrieveMemories } from "@/lib/retrieval";
 import type { Audience } from "@/lib/memory-provenance";
 

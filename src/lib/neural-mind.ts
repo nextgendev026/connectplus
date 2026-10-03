@@ -776,7 +776,7 @@ class NeuralMindEngine {
       }
 
       case "user_analysis": {
-        const { users, visits, findings, intentInfo } = data as {
+        const { users, visits, findings } = data as {
           users: UserAnalysis;
           visits: Awaited<ReturnType<typeof hiveBrain.getVisitAnalytics>>;
           findings: ResearchFinding[];
@@ -824,7 +824,7 @@ class NeuralMindEngine {
         if (findings && findings.length > 0) {
           lines.push("");
           lines.push("**Live web context:**");
-          findings.slice(0, 3).forEach((f, i) => lines.push(`• **${f.title}** — ${f.text.slice(0, 200)}`));
+          findings.slice(0, 3).forEach((f) => lines.push(`• **${f.title}** — ${f.text.slice(0, 200)}`));
         }
 
         lines.push("");
@@ -1089,7 +1089,7 @@ class NeuralMindEngine {
       }
 
       case "recommendation": {
-        const { recommended, engagement, findings, intentInfo } = data as {
+        const { recommended, engagement, findings } = data as {
           recommended: { post: { title: string }; reason: string }[];
           engagement: EngagementSnapshot;
           findings: ResearchFinding[];
@@ -1507,7 +1507,7 @@ class NeuralMindEngine {
     hiveTotal: number,
     recall: { content: string; source: string; category: string }[],
     findings: ResearchFinding[],
-    intentInfo: { keywords: string[]; entities: { value: string; type: string }[]; sentiment: { sentiment: string; score: number }; toneSeverity?: "positive" | "negative" | "neutral" } | null
+    _intentInfo: { keywords: string[]; entities: { value: string; type: string }[]; sentiment: { sentiment: string; score: number }; toneSeverity?: "positive" | "negative" | "neutral" } | null
   ): string {
     const lower = input.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
     const seed = input.slice(0, 200);
@@ -1594,11 +1594,6 @@ class NeuralMindEngine {
       understood.push(`I parsed **${input.trim().slice(0, 60)}** as your core question`);
     }
 
-    const toneSeverity: "positive" | "negative" | "neutral" = sentiment.sentiment === "positive"
-      ? "positive"
-      : sentiment.sentiment === "negative"
-        ? "negative"
-        : "neutral";
     const tone =
       sentiment.sentiment === "positive"
         ? "good energy to build on"

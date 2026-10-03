@@ -71,6 +71,7 @@ export function TrendingTopics({ limit = 6 }: { limit?: number }) {
 
   useEffect(() => {
     mountedRef.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount; see eslint.config.mjs
     load();
     const interval = setInterval(() => load(false), 60_000);
     return () => {

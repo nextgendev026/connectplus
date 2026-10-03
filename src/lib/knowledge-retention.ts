@@ -28,8 +28,6 @@ import { createLogger } from "@/lib/logger";
  * copies were merged so the merge is auditable.
  */
 
-const log = createLogger("knowledge-retention");
-
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Categories whose contents are learnings, not facts. Never consolidated away. */

@@ -6,8 +6,6 @@ import { validateBody } from "@/lib/api-validation";
 import { ChangePasswordSchema } from "@/lib/schemas/validators";
 import { principalFromSession, reauthOr401 } from "@/lib/policies";
 
-const MIN_LEN = 8;
-
 export async function POST(request: NextRequest) {
   try {
     const session = await auth();

@@ -23,7 +23,7 @@
 // Run: node scripts/generate-brand.mjs
 import sharp from "sharp";
 import { deflateSync } from "node:zlib";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
