@@ -2,7 +2,10 @@
 // the build warns about it on every run. It stops working in Sentry v11, so this
 // is the kind of warning that becomes a broken build on a dependency bump rather
 // than at the moment someone changes the code.
-import { cpus as osCpus } from "node:os";
+// Static-page builds used to size their worker pool from os.cpus(). We now pin
+// `cpus: 1` below to limit parallel Prisma pool pressure during the 73-page SSG
+// prerender (the source of the pool-timeout warnings under the Cloudflare build's
+// two-core runner), so the os import is gone too.
 import { withSentryConfig } from "@sentry/nextjs/config";
 
 /** @type {import('next').NextConfig} */
@@ -221,8 +224,14 @@ const nextConfig = {
      * developer machine still gets four) and stops the builder from being asked
      * for parallelism it does not have. On a two-core builder that is 2 workers ×
      * 5 pooled connections instead of 20.
+     *
+     * Reduces the Prisma connection-pool pressure during SSG: the 73-page
+     * prerender opens and pools many connections in parallel, and a smaller worker
+     * count means fewer simultaneous pool waiters — which is what produces the
+     * "Timed out fetching a new connection from the connection pool" warnings
+     * the Cloudflare build logs when DATABASE_URL is underprovisioned.
      */
-    cpus: Math.min(4, osCpus().length || 1),
+    cpus: 1,
   },
   /**
    * The auth URLs people actually type.
