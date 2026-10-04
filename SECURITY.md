@@ -25,7 +25,7 @@ Cloudflare Worker for the edge cache in front of it).
 - All outbound fetches of URLs the application did not choose go through the
   SSRF guard in `src/lib/safe-fetch.ts` (scheme and hostname rules, DNS
   resolution of every answer, redirect hops re-validated, body capped).
-- Cookie-authenticated mutations are origin-checked in `src/proxy.ts`.
+- Cookie-authenticated mutations are origin-checked in `src/middleware.ts`.
 - Anonymous rate limits are keyed by platform-set headers with a shared
   ceiling for unattributable traffic — not by client-supplied `x-forwarded-for`.
 - Writes proposed from chat or the brain are filed into an approval queue

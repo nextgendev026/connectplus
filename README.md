@@ -563,7 +563,7 @@ connectPlus/
 │   │                          #   ads, feed-ranker, hive-brain, cron-schedule, job-heartbeat,
 │   │                          #   throttled-job, push, mind-knowledge, notification-display, etc.)
 │   ├── inngest/               # Inngest functions (rss poll + drain, sports live/notify/intel, etc.)
-│   └── proxy.ts               # Rate limiting middleware
+│   └── middleware.ts          # Rate limiting middleware
 ├── convex/                    # Convex functions (views, ads — offloaded from Supabase)
 ├── workers/edge-cache/        # Cloudflare Worker: edge cache + livescore tier
 ├── prisma/                    # Schema, migrations, seed

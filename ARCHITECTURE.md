@@ -87,7 +87,7 @@ src/
 │   ├── settings.ts             # Platform settings (cached)
 │   ├── schemas/validators.ts   # Zod schemas for all API input
 │   └── ...
-├── proxy.ts                    # Middleware (rate limiting, security headers)
+├── middleware.ts               # Middleware (rate limiting, security headers)
 ├── inngest/                    # Inngest function definitions
 └── prisma/                     # Schema + migrations
 ```
