@@ -1,0 +1,13 @@
+# Cloudflare static-asset headers.
+#
+# Content-hashed build output: the filename changes whenever the bytes change,
+# so it is safe — and the point — to cache it forever. The adapter's asset
+# binding serves these files directly, before the Worker runs, so this is what
+# keeps a repeat visitor from paying for a Worker invocation to receive an
+# unchanged stylesheet.
+#
+# See https://opennext.js.org/cloudflare/howtos/assets for the source of these
+# values.
+
+/_next/static/*
+  Cache-Control: public,max-age=31536000,immutable

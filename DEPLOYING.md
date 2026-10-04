@@ -47,13 +47,49 @@ npm run cf:secrets    # reads .env, pushes every key the app needs
 node --env-file=.env scripts/deploy-worker.mjs
 ```
 
+### Cloudflare Workers Build (connected to the git repo)
+
+If the Worker is connected to this repository so Cloudflare builds on every
+push, the build settings must produce `.open-next/worker.js` before wrangler
+uploads. The defaults do **not**: a bare `npm run build` is only `next build`, so
+the upload fails with
+
+```
+✘ [ERROR] The entry-point file at ".open-next/worker.js" was not found.
+```
+
+Set, in the Worker's **Settings → Build** pane:
+
+| Setting | Value |
+| --- | --- |
+| Build command | `npx opennextjs-cloudflare build` |
+| Deploy command | `npx wrangler deploy` |
+
+`wrangler.toml` also carries a `[build] command`, so a `npx wrangler deploy` or
+`wrangler versions upload` invoked on its own runs the OpenNext step first —
+but the pane's build command still runs ahead of it, and setting it as above
+keeps the two from disagreeing.
+
+**Build variables.** The build prerenders 73 pages, and pages whose data comes
+from Postgres need a database to render into real HTML. Add these as *build*
+variables (not only runtime secrets), or the prerender logs
+`Environment variable not found: DATABASE_URL` for every query and those pages
+ship degraded:
+
+- `DATABASE_URL` (and `DIRECT_URL`)
+- `NEXTAUTH_SECRET` — read at build time to sign static-render output
+
+They are the same values `npm run cf:secrets` pushes as runtime secrets; a build
+variable is a separate slot that the build step reads.
+
 ### Why the app builds on CI but may not on Windows
 
-The OpenNext build's last step symlinks `node_modules` into
-`.open-next/middleware/`. Windows requires Developer Mode or elevation for
-symlink creation and fails with `EPERM`. That is a local-environment limitation,
-not a code problem: the Linux CI runner completes the same build. On Windows,
-either enable Developer Mode or run the build under WSL.
+The OpenNext build's bundle step symlinks `node_modules` into
+`.open-next/server-functions/` (and, for a Node middleware, `.open-next/middleware/`).
+Windows requires Developer Mode or elevation for symlink creation and fails with
+`EPERM`. That is a local-environment limitation, not a code problem: the Linux CI
+runner and the Cloudflare build complete the same step. On Windows, either enable
+Developer Mode or run the build under WSL.
 
 ---
 

@@ -11,14 +11,36 @@
 name = "connectplus-app"
 main = ".open-next/worker.js"
 compatibility_date = "2026-09-01"
-compatibility_flags = ["nodejs_compat"]
+# nodejs_compat: the Node APIs the Next server runtime expects.
+# global_fetch_strictly_public: the adapter's documented flag — it keeps
+# `fetch()` public-only, which is what stops a request from accidentally
+# reaching an internal service (including this Worker itself) and looping.
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 
 # Served at https://connectplus-app.<subdomain>.workers.dev
 workers_dev = true
 
+# The command the Cloudflare Workers Build (and `wrangler deploy`) runs to
+# produce `.open-next/worker.js`. Without it a Workers Build falls back to
+# `npm run build` — a bare `next build` — and `wrangler versions upload` then
+# fails with "entry-point file at .open-next/worker.js was not found", because
+# the OpenNext step never ran. Keep this in step with `npm run cf:build`.
+[build]
+command = "npx opennextjs-cloudflare build"
+
 [assets]
 directory = ".open-next/assets"
 binding = "ASSETS"
+
+# ── Self-reference (ISR / on-demand revalidation) ────────────────────────────
+# Several pages carry a revalidate window (`/` at 1m, `/about` at 5m), and
+# Next's ISR revalidation re-fetches the rendered page from the Worker itself.
+# Without this binding that fetch fails and those pages stop refreshing — the
+# site still renders, but it silently serves a stale copy forever. It is part
+# of the adapter's documented configuration for exactly that reason.
+[[services]]
+binding = "WORKER_SELF_REFERENCE"
+service = "connectplus-app"
 
 # ── Observability ────────────────────────────────────────────────────────────
 # Workers Logs on the free plan keeps a bounded recent window, which is enough
