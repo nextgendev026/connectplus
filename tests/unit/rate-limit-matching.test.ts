@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rateLimitKeyFor, DEFAULT_API_LIMIT } from "../../src/proxy";
+import { rateLimitKeyFor, DEFAULT_API_LIMIT } from "../../src/middleware";
 
 /**
  * Which rate-limit bucket an API path lands in.

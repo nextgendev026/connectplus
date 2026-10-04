@@ -1,3 +1,22 @@
+/**
+ * Request middleware: CSRF origin checks and per-identity rate limiting.
+ *
+ * ## Why this is `middleware.ts` and not `proxy.ts`
+ *
+ * Next 16 renamed this convention to `proxy.ts` and pinned it to the **Node.js
+ * runtime** — the runtime option is not configurable there. `@opennextjs/cloudflare`
+ * can only bundle Node middleware experimentally, and its tracing step cannot
+ * even resolve Next's optional `@opentelemetry/api` peer for that bundle. The
+ * legacy `middleware.ts` convention still defaults to the **Edge Runtime**, which
+ * the adapter builds natively for workerd, so it is the supported path on
+ * Cloudflare and the one this file uses. The deprecation is a rename, not a
+ * removal; when the adapter's Node-middleware support matures this can move back
+ * to `proxy.ts` with no logic change.
+ *
+ * Running on the edge runtime is also why the rate limiter (`@/lib/rate-limit`)
+ * talks to Redis over REST instead of TCP: `ioredis` opens raw sockets, which
+ * workerd does not provide.
+ */
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -389,7 +408,7 @@ function requestIdOf(request: NextRequest): string {
   return crypto.randomUUID();
 }
 
-export async function proxy(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const requestId = requestIdOf(request);
 
   if (isCrossSiteMutation(request)) {

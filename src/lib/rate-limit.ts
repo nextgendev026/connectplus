@@ -1,29 +1,32 @@
 /**
- * Distributed rate limiter backed by Redis, with an in-memory fallback.
+ * Rate limiter for the edge middleware (`proxy.ts`).
  *
- * The in-memory limiter in `proxy.ts` works for a single serverless instance,
- * but with 5+ Vercel instances, the same user can hit an endpoint 500 times per
- * minute (5 instances × 100 limit). This module uses Redis's INCR + EXPIRE to
- * maintain a single counter across all instances.
+ * This module is deliberately free of `@/lib/redis`. That module imports
+ * `ioredis`, which opens raw TCP sockets — something the Cloudflare Workers
+ * runtime cannot do — and pulling it into the middleware's import graph makes
+ * Next compile the proxy as *Node.js* middleware, which OpenNext supports only
+ * experimentally (and which cannot even be bundled on Windows without a
+ * symlink privilege). The middleware therefore talks to the cache tier over
+ * HTTPS only: the Upstash / Vercel KV REST API when its credentials are present,
+ * and a per-instance in-memory counter otherwise. The server-side cache
+ * (`@/lib/redis`) keeps the full TCP + REST tier for pages and route handlers.
  *
- * When Redis is unavailable (down, misconfigured, or not set), the limiter falls
- * back to the in-memory Map. This is a graceful degradation: a single instance's
- * rate limiting is better than no rate limiting at all.
- *
- * Design choices:
+ * Design choices, unchanged from the TCP version:
  *   • Sliding window counter (INCR + EXPIRE) rather than sorted sets: simpler,
  *     cheaper on free-tier Redis, and accurate enough for the limits we use.
  *   • One key per IP + endpoint, namespaced under `cp:rl:` so it doesn't collide
  *     with cache keys.
  *   • TTL is set on first hit, not renewed: the window starts when the first
- *     request arrives, not when the limit is checked. This is intentional — a
- *     burst at the end of a window should not extend the window.
+ *     request arrives. A burst at the end of a window does not extend it.
  */
 
-import { redisSetEx, redisIncr, activeCacheBackend } from "@/lib/redis";
-import { createLogger } from "@/lib/logger";
-
-const log = createLogger("rate-limit");
+const log = {
+  warn: (message: string, meta?: unknown) => {
+    // Kept local so this module has no dependency on the Node-flavoured logger,
+    // which is also what keeps it loadable in an edge runtime.
+    console.warn(`[rate-limit] ${message}`, meta ?? "");
+  },
+};
 
 export interface RateLimitResult {
   /** Whether the request should be blocked. */
@@ -53,9 +56,54 @@ function ensureCleanup() {
       if (now > entry.resetTime) memoryStore.delete(key);
     }
   }, 60_000);
-  // Don't let the timer keep the process alive.
+  // Don't let the timer keep a Node process alive. Edge runtimes return a
+  // number here, where `unref` does not exist and the check is simply skipped.
   if (typeof cleanupTimer === "object" && "unref" in cleanupTimer) {
-    cleanupTimer.unref();
+    (cleanupTimer as { unref: () => void }).unref();
+  }
+}
+
+/** The REST tier's credentials, read once per instance. */
+const restUrl =
+  process.env.UPSTASH_REDIS_REST_URL ||
+  process.env.KV_REST_API_URL ||
+  process.env.KV_URL ||
+  "";
+const restToken =
+  process.env.UPSTASH_REDIS_REST_TOKEN ||
+  process.env.KV_REST_API_TOKEN ||
+  "";
+
+function restAvailable(): boolean {
+  // `CACHE_BACKEND=redis` forces the *server-side* TCP path, which the
+  // middleware cannot use — it degrades to in-memory instead of pretending.
+  const preference = (process.env.CACHE_BACKEND ?? "auto").trim().toLowerCase();
+  if (preference === "redis" || preference === "tcp") return false;
+  return Boolean(restUrl && restToken);
+}
+
+/**
+ * One command against the REST tier, in pipeline form. Answers `null` for every
+ * failure — a rejected token, a non-200, a thrown fetch — so a caller can tell
+ * "the store answered" from "the command was sent".
+ */
+async function restCommand<T>(...args: (string | number)[]): Promise<T | null> {
+  if (!restAvailable()) return null;
+  try {
+    const res = await fetch(`${restUrl}/pipeline`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${restToken}` },
+      body: JSON.stringify(args.map((a) => [a])),
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as unknown[];
+    const first = data[0];
+    if (Array.isArray(first) && first[0] === "OK") return first[1] as T;
+    if (Array.isArray(first) && (first[1] as string | null) !== null) return first[1] as T;
+    return null;
+  } catch {
+    return null;
   }
 }
 
@@ -74,29 +122,26 @@ export async function checkRateLimit(
 ): Promise<RateLimitResult> {
   const key = `cp:rl:${identifier}`;
   const ttlSeconds = Math.ceil(windowMs / 1000);
-  const backend = activeCacheBackend();
 
-  // Try Redis first when available.
-  if (backend !== "none") {
+  // Try the distributed REST tier first when it is configured.
+  if (restAvailable()) {
     try {
-      const count = await redisIncr(key);
-      if (count === 1) {
-        // First hit in this window — set the expiry.
-        await redisSetEx(key, ttlSeconds, "1");
+      const count = await restCommand<number>("INCR", key);
+      if (count !== null) {
+        // First hit in this window — set the expiry. A TTL just misses on the
+        // first INCR, so the two commands race benignly: if EXPIRE is lost the
+        // key simply lives until the next window's INCR+EXPIRE resets it.
+        if (count === 1) await restCommand("EXPIRE", key, ttlSeconds);
+        return {
+          limited: count > limit,
+          remaining: Math.max(0, limit - count),
+          resetAfter: ttlSeconds,
+          source: "redis",
+        };
       }
-      const remaining = Math.max(0, limit - count);
-      const resetAfter = ttlSeconds;
-      return {
-        limited: count > limit,
-        remaining,
-        resetAfter,
-        source: "redis",
-      };
+      log.warn("rest rate limit unavailable, falling back to memory");
     } catch (error) {
-      // Redis failure: log and fall through to in-memory.
-      log.warn("redis rate limit failed, falling back to memory", {
-        error: String(error),
-      });
+      log.warn("rest rate limit failed, falling back to memory", { error: String(error) });
     }
   }
 

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-import { isCrossSiteMutation, proxy, resolveRateIdentity } from "@/proxy";
+import { isCrossSiteMutation, middleware, resolveRateIdentity } from "@/middleware";
 
 /**
  * The middleware's two jobs, tested where they were previously wrong.
@@ -276,7 +276,7 @@ describe("mutations that arrive through the Cloudflare edge worker", () => {
 
 describe("the middleware answers in the API's own envelope", () => {
   it("refuses a cross-site mutation with 403 and a request id", async () => {
-    const response = await proxy(
+    const response = await middleware(
       req("http://localhost/api/posts", {
         method: "POST",
         headers: { cookie: "session=abc", origin: "https://evil.example" },
@@ -293,7 +293,7 @@ describe("the middleware answers in the API's own envelope", () => {
     db.token = { sub: "user-1" };
     db.checkRateLimit.mockResolvedValue({ limited: true, resetAfter: 30 });
 
-    const response = await proxy(req("http://localhost/api/posts", { method: "POST" }));
+    const response = await middleware(req("http://localhost/api/posts", { method: "POST" }));
     const body = await response.json();
 
     expect(response.status).toBe(429);
@@ -306,7 +306,7 @@ describe("the middleware answers in the API's own envelope", () => {
     // The point of the fix: a spoofed or absent address still runs into a bucket
     // it cannot rotate out of.
     db.checkRateLimit.mockResolvedValue(null);
-    await proxy(req("http://localhost/api/posts", { headers: { "x-forwarded-for": "1.2.3.4" } }));
+    await middleware(req("http://localhost/api/posts", { headers: { "x-forwarded-for": "1.2.3.4" } }));
 
     const keys = db.checkRateLimit.mock.calls.map((call) => String(call[0]));
     expect(keys.some((key) => key.startsWith("unverified:1.2.3.4"))).toBe(true);
@@ -316,7 +316,7 @@ describe("the middleware answers in the API's own envelope", () => {
   it("does not apply the shared ceiling to an attributed caller", async () => {
     db.token = { sub: "user-1" };
     db.checkRateLimit.mockResolvedValue(null);
-    await proxy(req("http://localhost/api/posts"));
+    await middleware(req("http://localhost/api/posts"));
 
     const keys = db.checkRateLimit.mock.calls.map((call) => String(call[0]));
     expect(keys.some((key) => key.startsWith("shared:"))).toBe(false);
