@@ -1,4 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
 
 /**
@@ -31,14 +30,31 @@ import type { NextRequest } from "next/server";
  * "did the shared secret arrive, and is it right?".
  */
 
-/** Compare two strings without leaking their contents through timing. */
+/**
+ * Compare two strings without leaking their contents through timing.
+ *
+ * Hand-rolled from `TextEncoder` rather than `node:crypto`, because this module
+ * is reached from the Edge middleware: the edge bundler (webpack, which CI
+ * builds with) refuses `node:crypto` outright — "UnhandledSchemeError: Reading
+ * from node:crypto is not handled by plugins" — and `node:crypto` is not part of
+ * the edge runtime anyway. `TextEncoder` is a platform global in both runtimes,
+ * so the same code is correct on the Node server and on the edge.
+ *
+ * The loop XORs every byte into one accumulator with no early exit, which is the
+ * property that matters: a difference anywhere produces the same non-zero result
+ * and the same work, so the comparison time does not reveal *where* the bytes
+ * first differ. The length check short-circuits, which is safe — length is not
+ * the secret.
+ */
 function equal(a: string, b: string): boolean {
-  const left = Buffer.from(a, "utf8");
-  const right = Buffer.from(b, "utf8");
-  // Length is compared first because `timingSafeEqual` throws on a mismatch.
-  // Length is not the secret — the bytes are — so this is safe to short-circuit.
+  const left = new TextEncoder().encode(a);
+  const right = new TextEncoder().encode(b);
   if (left.length !== right.length) return false;
-  return timingSafeEqual(left, right);
+  let diff = 0;
+  for (let i = 0; i < left.length; i += 1) {
+    diff |= left[i]! ^ right[i]!;
+  }
+  return diff === 0;
 }
 
 /** True when this single value is the configured shared secret. */

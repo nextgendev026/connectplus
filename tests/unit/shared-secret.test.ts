@@ -59,13 +59,19 @@ describe("shared secret", () => {
     const { join } = await import("node:path");
     const source = readFileSync(join(process.cwd(), "src/lib/shared-secret.ts"), "utf8");
     // Structural, because a timing assertion in a unit test is noise: what
-    // matters is that the compare goes through the constant-time primitive and
-    // that no `===` against a secret sneaks back in. Comments are stripped
-    // first — this module's own prose names the comparison it replaced.
+    // matters is that the compare folds every byte with no early exit and that
+    // no `===` against a secret sneaks back in. Comments are stripped first —
+    // this module's own prose names the comparison it replaced.
     const code = source
       .replace(/^[ \t]*\/\*[\s\S]*?\*\//gm, "")
       .replace(/^[ \t]*\/\/.*$/gm, "");
-    expect(code).toContain("timingSafeEqual");
+    // Not `node:crypto`: this module is bundled into the Edge middleware, and the
+    // edge runtime (and the webpack edge bundler) has no `node:crypto`.
+    expect(code).not.toContain("node:crypto");
+    expect(code).toContain("TextEncoder");
+    // No early exit — every byte XORs into one accumulator, so the comparison
+    // does the same work wherever the first difference falls.
+    expect(code).toMatch(/diff\s*\|=/);
     expect(code).not.toMatch(/[=!]==\s*secret\b/);
   });
 });
